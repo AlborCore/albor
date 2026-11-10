@@ -16,6 +16,11 @@ flag and a render-dirty flag. A paint-only change never relayouts. A resize — 
 window's metrics — forces a layout pass regardless of the flags, so a size no handler
 invalidated cannot leave a stale bound behind.
 
+**A height cap is what turns a growing element into a scrolling one.** A multi-line `TextField`
+measures to its wrapped run, so it grows as lines are added; give it a `SizedBox { height: … }`
+and the extra lines scroll inside the box instead. Only the constraint makes the difference: the
+field scrolls because something capped it, not because it was wrapped in a viewport.
+
 ## Units
 
 | written | meaning |

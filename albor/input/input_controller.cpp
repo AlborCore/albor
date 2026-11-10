@@ -161,7 +161,14 @@ namespace albor
         if (event.kind == EventKind::KeyDown && event.key == Key::Escape) {
             // a live drag is the first escape target, because it owns the pointer until it aborts (§8.3)
             if (m_capture != nullptr) {
+                // the captured node is told the drag is over, because a node clears its drag flags on a release (§8.3)
+                UiNode* captured = m_capture;
+                // the capture is dropped first, so a release that asks the controller sees no capture left (§8.3)
                 m_capture = nullptr;
+                // the release is what makes the node forget the drag, which an escape otherwise leaves armed (§8.3)
+                Event release{.kind = EventKind::PointerUp};
+                InputDispatcher::dispatch_to_focused(*m_root, release, captured);
+                // the escape itself is claimed, because it cancelled the drag the pointer owned (§8.3)
                 event.handled = true;
                 return;
             }

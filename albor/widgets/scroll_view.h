@@ -5,23 +5,11 @@
 #include <span>
 
 #include "albor/core/scrollable_content.h"
+#include "albor/core/scrollbar_visibility.h"
 #include "albor/widgets/widget.h"
 
 namespace albor
 {
-    // when a scrollbar is drawn, which is a per instance decision rather than a global one (§8)
-    enum class ScrollbarVisibility
-    {
-        // the bar appears only while the content exceeds the viewport (§8)
-        AsNeeded,
-
-        // the content still scrolls, with no visible indicator at all (§8)
-        AlwaysOff,
-
-        // the bar is drawn whether or not the content overflows (§8)
-        AlwaysOn
-    };
-
     // the viewport over content larger than it shows, which clips, scrolls and reports its own offset (§8, AD-13)
     class ScrollView final : public Widget
     {
@@ -139,9 +127,6 @@ namespace albor
         [[nodiscard]] Rect clip_child_damage(const Rect& damage) const override;
 
     private:
-        // hand out the amount one wheel notch moves the content, which is the conversion this view owns (§8.3)
-        [[nodiscard]] float wheel_scale(const Event& event) const;
-
         // hand out the width the theme declares, which is what the measure and the content viewport reserve (§8.2)
         [[nodiscard]] float bar_extent() const;
 
@@ -151,8 +136,8 @@ namespace albor
         // report whether the current policy reserves a gutter, which the viewport and the bar both read (§8)
         [[nodiscard]] bool bar_reserved() const;
 
-        // measure the content against a width and hand back the extent it reports (§8.2, AD-13)
-        [[nodiscard]] Size measure_content(float width);
+        // measure the content against a width and a height ceiling, and hand back the extent it reports (§8.2, AD-13)
+        [[nodiscard]] Size measure_content(float width, float height);
 
         // hand out the strip the bar is drawn in, which is the area a scroll damages (§6.1)
         [[nodiscard]] Rect scrollbar_track_rect() const;

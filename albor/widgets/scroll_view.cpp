@@ -5,18 +5,12 @@
 #include <limits>
 
 #include "albor/commands/command.h"
+#include "albor/core/self_scrolling_content.h"
+#include "albor/widgets/scroll_thumb.h"
+#include "albor/widgets/scroll_wheel.h"
 
 namespace albor
 {
-    // the extent one wheel notch moves the content when no theme is installed (§8.3)
-    constexpr float SCROLL_LINE_EXTENT = 40.0f;
-
-    // the width a scrollbar is drawn when no theme is installed (§6.1)
-    constexpr float SCROLLBAR_EXTENT = 10.0f;
-
-    // the smallest thumb a scrollbar draws when no theme is installed (§6.1)
-    constexpr float SCROLLBAR_THUMB_MINIMUM = 24.0f;
-
     ScrollView::ScrollView(BindingEngine* engine, std::string explicit_id) :
         Widget(engine, std::move(explicit_id)),
         // the offset registers with the engine, which scopes its identifier (§7.2)
@@ -51,13 +45,13 @@ namespace albor
         // the full width probe is what decides whether an as needed bar has to reserve a gutter (§8.2)
         bool reserved = forced;
         // the content extent is measured against the width the policy leaves it (§8.2)
-        Size measured_extent = measure_content(forced ? content_width : viewport.width);
+        Size measured_extent = measure_content(forced ? content_width : viewport.width, viewport.height);
         // the as needed policy reserves only when a bar wider than nothing has to draw a gutter (§8)
         if (m_visibility == ScrollbarVisibility::AsNeeded && bar_extent() > 0.0f && measured_extent.height > viewport.height) {
             // the bar is needed, so its gutter is reserved and the content is measured inside the rest (§8.2)
             reserved = true;
             // the second pass is what keeps wrapping and height consistent with the visible width (§8.2)
-            measured_extent = measure_content(content_width);
+            measured_extent = measure_content(content_width, viewport.height);
         }
         // the decision is stored, because the clip and the pushed window both read the same one (§8.2)
         m_bar_reserved = reserved;
@@ -137,7 +131,8 @@ namespace albor
             if (disabled())
                 return;
             // a positive wheel turns toward the start, so it subtracts from the offset (§8.3)
-            const bool moved = scroll_by(-event.scroll * wheel_scale(event));
+            const float line = theme() != nullptr ? theme()->metrics().scroll_line_extent : SCROLL_LINE_EXTENT;
+            const bool moved = scroll_by(-event.scroll * wheel_scale(event, line));
             // a notch that found an edge stays unclaimed, so an enclosing viewport takes it (§8.3)
             event.handled = moved;
             return;
@@ -194,27 +189,29 @@ namespace albor
         // the paging keys are the ones a viewport answers, and each names where the offset lands (§8.3)
         if (event.key != Key::ArrowDown && event.key != Key::ArrowUp && event.key != Key::PageDown && event.key != Key::PageUp && event.key != Key::Home && event.key != Key::End)
             return;
-        // the event is claimed, so no ancestor reacts to the same key (§8.3)
-        event.handled = true;
         // a line key moves one step and a page key moves a viewport, which is the difference a key name carries (§8.3)
         const float line = theme() != nullptr ? theme()->metrics().scroll_line_extent : SCROLL_LINE_EXTENT;
+        // the move is claimed only where the offset landed, so an enclosing viewport takes a key at the edge (§8.3)
+        bool moved = false;
         if (event.key == Key::ArrowDown)
-            scroll_by(line);
+            moved = scroll_by(line);
         // the other line key moves the same distance the other way (§8.3)
         else if (event.key == Key::ArrowUp)
-            scroll_by(-line);
+            moved = scroll_by(-line);
         // a page key moves a whole viewport, which is what paging means (§8.3)
         else if (event.key == Key::PageDown)
-            scroll_by(content_viewport().height);
+            moved = scroll_by(content_viewport().height);
         // the other page key moves a whole viewport the other way (§8.3)
         else if (event.key == Key::PageUp)
-            scroll_by(-content_viewport().height);
+            moved = scroll_by(-content_viewport().height);
         // the home key goes to the leading edge, which is the only place the content starts (§8.3)
         else if (event.key == Key::Home)
-            scroll_to(0.0f);
+            moved = scroll_to(0.0f);
         // the end key goes to the trailing edge, which is the furthest the content can be scrolled (§8.3)
         else
-            scroll_to(maximum_offset());
+            moved = scroll_to(maximum_offset());
+        // the event is claimed when the viewport moved, which is the same rule the wheel follows (§8.3)
+        event.handled = moved;
         return;
     }
 
@@ -421,16 +418,6 @@ namespace albor
 
     bool ScrollView::watches() const { return static_cast<bool>(m_on_scroll); }
 
-    float ScrollView::wheel_scale(const Event& event) const {
-        // the policy is the themed distance a notch moves the content, which is what this view owns (§8.3)
-        const float line = theme() != nullptr ? theme()->metrics().scroll_line_extent : SCROLL_LINE_EXTENT;
-        // a trackpad already counts points, so the delta is the distance; a notched wheel counts notches (§8.3)
-        if (event.precision == ScrollPrecision::Point)
-            return 1.0f;
-        // the notched wheel moves a whole line, which is the policy the theme states (§8.3)
-        return line;
-    }
-
     Rect ScrollView::content_viewport() const {
         // a reserved bar takes its gutter from the content, which keeps the content out of it (§8.2)
         const float width = std::max(0.0f, m_bounds.width - (bar_reserved() ? bar_extent() : 0.0f));
@@ -455,14 +442,17 @@ namespace albor
         return std::min(bar_extent(), m_bounds.width);
     }
 
-    Size ScrollView::measure_content(float width) {
-        // the content is measured with no height ceiling, because a tall content scrolls (§8.2)
-        const SizeConstraints content_constraints = SizeConstraints::at_most(Size{.width = width, .height = std::numeric_limits<float>::infinity()});
+    Size ScrollView::measure_content(float width, float height) {
         // the reported extent starts empty, because a content child is what names it (§8.2)
         Size measured_extent{};
-        // each child measures against that ceiling, so the content keeps its natural height (§8.2)
+        // each child measures against the ceiling its own kind implies, so a tall content keeps its natural height (§8.2)
         for (const auto& child : children()) {
-            // the child measures against the width the gutter leaves it (§8.2)
+            // a child that scrolls itself keeps the viewport height, because a taller one collapses its range (§8.2)
+            const auto* self_scrolling = dynamic_cast<const SelfScrollingContent*>(child.get());
+            // the ceiling is the viewport for a self scrolling child, and none for the content a viewport scrolls (§8.2)
+            const float ceiling = self_scrolling != nullptr && self_scrolling->owns_vertical_scroll() ? height : std::numeric_limits<float>::infinity();
+            // the child measures against the width the gutter leaves it and the ceiling its kind implies (§8.2)
+            const SizeConstraints content_constraints = SizeConstraints::at_most(Size{.width = width, .height = ceiling});
             Size child_size{};
             // the measure settles the size the child reports, which is what the extent below reads (§8.2)
             child->measure(content_constraints, child_size);
@@ -502,21 +492,10 @@ namespace albor
     }
 
     Rect ScrollView::thumb_rect() const {
-        // the width is the gutter the bounds can hold, which is the strip the thumb rides in (§8.2)
-        const float extent = drawn_bar_extent();
         // the smallest thumb is what the theme says, or the value the bar always drew with (§6.1)
         const float floor = theme() != nullptr ? theme()->metrics().scrollbar_thumb_minimum : SCROLLBAR_THUMB_MINIMUM;
-        // the thumb takes the share of the track the viewport takes of the content, which is what the ratio means (§8.2)
-        const float travel = m_bounds.height;
-        // the share is clamped, because a forced bar may be drawn before the content has any travel (§8.2)
-        const float share = std::clamp(travel / std::max(1.0f, m_content_extent.height), 0.0f, 1.0f);
-        // the thumb never shrinks below the grabbable floor, which is what keeps a long content reachable (§8.2)
-        const float height = std::min(travel, std::max(floor, travel * share));
-        // the thumb sits where the offset puts it, which is the whole of what a bar reports (§8.2)
-        const float maximum = maximum_offset();
-        // the fraction is zero while there is nothing to scroll, so the thumb stays at the leading edge (§8.2)
-        const float fraction = maximum > 0.0f ? std::clamp(offset() / maximum, 0.0f, 1.0f) : 0.0f;
-        return Rect::from_origin_size(Point{.x = m_bounds.x + m_bounds.width - extent, .y = m_bounds.y + (travel - height) * fraction}, Size{.width = extent, .height = height});
+        // the thumb takes the strip the gutter reserved, at the travel the offset reports (§8.2)
+        return scroll_thumb_rect(offset(), maximum_offset(), scrollbar_track_rect(), floor);
     }
 
     void ScrollView::drag_to(Point logical_position) {

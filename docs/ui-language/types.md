@@ -60,11 +60,12 @@ scrollbar policies are written with:
 | set | members | used by |
 | --- | --- | --- |
 | `Align` | `start`, `center`, `end`, `stretch` | `horizontal_align`, `vertical_align` on every element |
-| `Scrollbar` | `as_needed`, `off`, `on` | `Scrollbar` policy on [ScrollView](../components/scroll-view.md) |
+| `Scrollbar` | `as_needed`, `off`, `on` | the `scrollbar` policy on [ScrollView](../components/scroll-view.md) and [TextField](../components/text-field.md) |
 
 ```text
 Label { horizontal_align: Align.stretch; }
 ScrollView { scrollbar: Scrollbar.off; }
+TextField { multiline: true; scrollbar: Scrollbar.off; }
 ```
 
 On a container's main axis, `stretch` also declares a **flexible** child: it absorbs the

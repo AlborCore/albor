@@ -179,6 +179,34 @@ namespace albor::compiler
             return nullptr;
         }
 
+        // report whether a set name is one the runtime resolves, which is what a named value crosses the IR as (§12.1)
+        bool builtin_value_set(std::string_view name) { return name == "Align" || name == "Scrollbar"; }
+
+        // find the named value member an assignment carries, which is a static value the runtime applies (§11.1)
+        std::optional<std::string> named_value_member(const Expression& expression, const ValueType* type) {
+            // a member is a field access, because the language reaches a set member through the dot (§11.1)
+            const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression);
+            // a value that is not a member names nothing the runtime resolves (§11.1)
+            if (access == nullptr)
+                return std::nullopt;
+            // the object has to name a set the language declares, because a record field is a binding (§11.1)
+            const auto* object = dynamic_cast<const PropertyExpression*>(access->object.get());
+            // a record read and a set the runtime cannot resolve are both refused (§11.1, §12.1)
+            if (object == nullptr || !builtin_value_set(object->name))
+                return std::nullopt;
+            // a checked assignment has to agree with the set its object names, which is what AD-25 asks (§11.1)
+            if (type != nullptr && type->kind() != TypeKind::Align && type->kind() != TypeKind::Scrollbar)
+                return std::nullopt;
+            // the member is the field the author wrote, which is the spelling the runtime reads (§11.1)
+            return access->field;
+        }
+
+        // hand out the type a checked assignment carries, which is what names its set (§11.1)
+        const ValueType* assignment_type(const CheckedAssignment& assignment) { return &assignment.type; }
+
+        // hand out no type for an unchecked assignment, because no type pass resolved it (§12.1)
+        const ValueType* assignment_type(const PropertyAssignment&) { return nullptr; }
+
         // report whether every node of a tree is an element the IR can represent (§12.1)
         bool representable(const TreeNode& node) {
             // a repeat, a condition or a slot has no IR form, so a tree carrying one cannot be serialized (§12.1)
@@ -235,9 +263,15 @@ namespace albor::compiler
                 bool negative = false;
                 // the literal is the value, when the assignment is a static one (§12.1)
                 const LiteralExpression* literal = find_literal(*assignment.value, negative);
-                // a binding or a computation is not representable in the IR (§12.1)
-                if (literal == nullptr)
+                // a named value member is static too, so it joins the node as the member the author wrote (§12.1)
+                if (literal == nullptr) {
+                    // the resolved type names the set, and the set name does when no type pass ran (§11.1)
+                    if (std::optional<std::string> member = named_value_member(*assignment.value, assignment_type(assignment))) {
+                        // the member joins the node in written order (§12.1)
+                        ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::move(*member)});
+                    }
                     continue;
+                }
                 // the literal is converted to the spelling the reader parses (§12.1)
                 std::optional<std::string> value = literal_value(*literal, negative);
                 // a value the reader cannot parse is dropped rather than written wrong (§12.1)
@@ -309,9 +343,15 @@ namespace albor::compiler
                 bool negative = false;
                 // the literal is the value, when the assignment is a static one (§12.1)
                 const LiteralExpression* literal = find_literal(*assignment.value, negative);
-                // a binding or a computation is not representable in the IR (§12.1)
-                if (literal == nullptr)
+                // a named value member is static too, so it joins the node as the member the author wrote (§12.1)
+                if (literal == nullptr) {
+                    // the resolved type names the set, and the set name does when no type pass ran (§11.1)
+                    if (std::optional<std::string> member = named_value_member(*assignment.value, assignment_type(assignment))) {
+                        // the member joins the node in written order (§12.1)
+                        ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::move(*member)});
+                    }
                     continue;
+                }
                 // the literal is converted to the spelling the reader parses (§12.1)
                 std::optional<std::string> value = literal_value(*literal, negative);
                 // a value the reader cannot parse is dropped rather than written wrong (§12.1)

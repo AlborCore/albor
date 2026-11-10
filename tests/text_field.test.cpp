@@ -10,9 +10,11 @@
 #include "albor/commands/command.h"
 #include "albor/core/clipboard.h"
 #include "albor/focus/focus_manager.h"
+#include "albor/layout/column_layout.h"
 #include "albor/render/frame_scene.h"
 #include "albor/runtime/binding_engine.h"
 #include "albor/ui/scene_builder.h"
+#include "albor/widgets/scroll_view.h"
 #include "albor/widgets/text_field.h"
 #include "netlist_editor.h"
 
@@ -91,7 +93,7 @@ namespace
                 // a hard break shapes no glyph, which is what the real engines drop (§9.1)
                 if (text[index] == '\n') {
                     // the line ends past the break, which is the byte a caret stops at (§9.1)
-                    lines.back().end_byte = index;
+                    lines.back().end_byte = index + 1;
                     // the next line begins past the break byte (§9.1)
                     lines.push_back(ShapedRun::Line{});
                     lines.back().start_byte = index + 1;
@@ -1562,11 +1564,11 @@ TEST(TextFieldMultiLineChecks, AMultiLineFieldWrapsAtTheOfferedWidth) {
     // act
     Size wrapped{};
     field.measure(SizeConstraints::at_most(Size{80.0f, 400.0f}), wrapped);
-    // assert the run broke at the ceiling, which is three lines of the double (§9.1)
-    ASSERT_EQ(field.layout().run->lines().size(), 4u);
+    // assert the run broke at the ceiling less the gutter, which is six of the double's characters a line (§9.1)
+    ASSERT_EQ(field.layout().run->lines().size(), 5u);
     // assert every line spans its own bytes, which is what the caret maps against (§9.1)
     EXPECT_EQ(field.layout().run->lines().front().start_byte, 0u);
-    EXPECT_EQ(field.layout().run->lines()[1].start_byte, 7u);
+    EXPECT_EQ(field.layout().run->lines()[1].start_byte, 6u);
 }
 
 TEST(TextFieldMultiLineChecks, AWrappedRunGrowsThePlateHeight) {
@@ -1811,9 +1813,9 @@ TEST(TextFieldMultiLineChecks, ABlankLineIsARealLineToTheCaret) {
     Event up{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
     field.dispatch_event(up);
     // assert the blank row holds a caret stop, which the byte map places (§9.1)
-    EXPECT_EQ(below_blank, 3u);
-    // assert the way back to the blank row stands on the byte the row begins at (§9.1)
-    EXPECT_EQ(field.caret(), 2u);
+    EXPECT_EQ(below_blank, 2u);
+    // assert the way back leaves the blank row for the row above it (§9.1)
+    EXPECT_EQ(field.layout().run->line_at_byte(field.caret()), 0u);
 }
 
 TEST(TextFieldMultiLineChecks, ASelectionSpansTwoLinesAndPaintsBoth) {
@@ -2280,7 +2282,7 @@ TEST(TextFieldImeChecks, TheMarkDrawsTheUnderlineBar) {
 }
 
 TEST(TextFieldImeChecks, AMarkThatWrapsUnderlinesEveryLineItCovers) {
-    // arrange a multi line field whose composed run crosses three rows (§9.1)
+    // arrange a multi line field whose composed run crosses four rows (§9.1)
     EditingTextEngine engine;
     TextField field(nullptr, &engine, "abcdefghijklmnopqrstuvwxyz0123456789");
     field.set_multiline(true);
@@ -2298,10 +2300,11 @@ TEST(TextFieldImeChecks, AMarkThatWrapsUnderlinesEveryLineItCovers) {
     for (const Rect& rect : rect_commands(*recorder.scene()))
         if (rect.height == 1.0f)
             bars.push_back(rect);
-    ASSERT_EQ(bars.size(), 3u);
-    EXPECT_FLOAT_EQ(bars[0].width, 20.0f);
-    EXPECT_FLOAT_EQ(bars[1].width, 40.0f);
-    EXPECT_FLOAT_EQ(bars[2].width, 20.0f);
+    ASSERT_EQ(bars.size(), 4u);
+    EXPECT_FLOAT_EQ(bars[0].width, 10.0f);
+    EXPECT_FLOAT_EQ(bars[1].width, 30.0f);
+    EXPECT_FLOAT_EQ(bars[2].width, 30.0f);
+    EXPECT_FLOAT_EQ(bars[3].width, 10.0f);
     EXPECT_FLOAT_EQ(bars[1].y - bars[0].y, EditingTextEngine::HEIGHT);
 }
 
@@ -3670,4 +3673,668 @@ TEST(TextFieldKeyboardChecks, AMultilineReturnInsertsABreakAndClaimsTheKey) {
     // assert the break is the edit the key asked for, which is what claims it (§8.3)
     EXPECT_TRUE(event.handled);
     EXPECT_EQ(field.value(), "val\nue");
+}
+
+TEST(TextFieldWheelChecks, ANotchedWheelMovesTheRunByTheThemedLineExtent) {
+    // arrange an eight line field in a three line plate, which is what a document surface is (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act a notch toward the end, which the platform reports as a negative delta (§8.3)
+    Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 10.0f, .y = 10.0f}, .scroll = -1.0f};
+    field.dispatch_event(wheel);
+    // assert the notch moved a themed line and claimed the event (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 40.0f);
+}
+
+TEST(TextFieldWheelChecks, ATrackpadWheelMovesByItsOwnDelta) {
+    // arrange a field with travel, because a point delta needs somewhere to move (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act a trackpad delta, which already counts points rather than notches (§8.3)
+    Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 10.0f, .y = 10.0f}, .scroll = -25.0f, .precision = ScrollPrecision::Point};
+    field.dispatch_event(wheel);
+    // assert the delta is the distance, because a trackpad owns its own scale (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 25.0f);
+}
+
+TEST(TextFieldWheelChecks, AnUpNotchMovesTowardTheLeadingEdge) {
+    // arrange a field scrolled away from the top, because an up notch has to return it (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    field.scroll_to(40.0f);
+    // act a notch toward the start, which the platform reports as a positive delta (§8.3)
+    Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 10.0f, .y = 10.0f}, .scroll = 1.0f};
+    field.dispatch_event(wheel);
+    // assert the offset moved back by one line (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldWheelChecks, ANutchAtTheLeadingEdgeIsLeftToAParent) {
+    // arrange a field already at the start, where an up notch has nowhere to go (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 10.0f, .y = 10.0f}, .scroll = 1.0f};
+    field.dispatch_event(wheel);
+    // assert the notch was not claimed, so an enclosing viewport takes it (§8.3)
+    EXPECT_FALSE(wheel.handled);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldWheelChecks, AWheelOverADisabledFieldIsNotClaimed) {
+    // arrange a disabled field, which refuses everything a field would answer (§18.7)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    field.set_disabled(true);
+    // act
+    Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 10.0f, .y = 10.0f}, .scroll = -1.0f};
+    field.dispatch_event(wheel);
+    // assert the disabled field neither claimed nor moved (§18.7)
+    EXPECT_FALSE(wheel.handled);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldWheelChecks, AReadOnlyFieldStillScrollsUnderTheWheel) {
+    // arrange a read only document, which is still something a reader scrolls (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_read_only(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 10.0f, .y = 10.0f}, .scroll = -1.0f};
+    field.dispatch_event(wheel);
+    // assert reading a document is not editing it, so the wheel still moves (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 40.0f);
+}
+
+TEST(TextFieldWheelChecks, ASingleLineFieldLeavesTheWheelUnclaimed) {
+    // arrange a single line field, which has no range whatever the plate (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdefghijklmnopqrstuvwxyz");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 10.0f, .y = 10.0f}, .scroll = -1.0f};
+    field.dispatch_event(wheel);
+    // assert the wheel belongs to whatever encloses the field (§8.3)
+    EXPECT_FALSE(wheel.handled);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldPagingChecks, APageDownMovesTheCaretAndTheRunTogether) {
+    // arrange a ten line field in a three line plate, which is what paging is measured against (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    // act
+    Event key{.kind = EventKind::KeyDown, .key = Key::PageDown};
+    field.dispatch_event(key);
+    // assert the page covered two lines of sixteen in a forty eight plate, plus the caret move (§8.3)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(field.caret(), 4u);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 32.0f);
+}
+
+TEST(TextFieldPagingChecks, APageUpMovesTheCaretAndTheRunBack) {
+    // arrange a field whose caret already sits below the window (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.set_caret(8);
+    ASSERT_GT(field.scroll_offset(), 0.0f);
+    // act
+    Event key{.kind = EventKind::KeyDown, .key = Key::PageUp};
+    field.dispatch_event(key);
+    // assert the page walked back two lines and carried the run with it (§8.3)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(field.caret(), 4u);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldPagingChecks, APageDownWithTheCaretBelowTheWindowRevealsIt) {
+    // arrange the caret on the last line while the run was scrolled back to its leading edge (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.set_caret(18);
+    field.scroll_to(0.0f);
+    // act
+    Event key{.kind = EventKind::KeyDown, .key = Key::PageDown};
+    field.dispatch_event(key);
+    // assert the page reached the caret's line, which a page never leaves off screen (§8.3)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(field.caret(), 18u);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 112.0f);
+}
+
+TEST(TextFieldPagingChecks, APageDownAtTheEndIsLeftToAParent) {
+    // arrange the caret on the last line with the run already at its maximum offset (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.set_caret(18);
+    field.scroll_to(field.maximum_scroll_offset());
+    // act
+    Event key{.kind = EventKind::KeyDown, .key = Key::PageDown};
+    field.dispatch_event(key);
+    // assert nothing moved, so an enclosing viewport takes the key (§8.3)
+    EXPECT_FALSE(key.handled);
+    EXPECT_EQ(field.caret(), 18u);
+}
+
+TEST(TextFieldKeyboardChecks, TheControlHomeAndEndKeysReachTheDocumentEnds) {
+    // arrange a multiline value with the caret in the middle (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc\ndef");
+    field.set_multiline(true);
+    field.set_caret(5);
+    // act the chord that reaches the start, then the one that reaches the end (§8.3)
+    Event home{.kind = EventKind::KeyDown, .key = Key::Home, .modifiers = Modifiers{.control = true}};
+    field.dispatch_event(home);
+    // assert the chord reached the start of the whole value, not of the line (§8.3)
+    EXPECT_TRUE(home.handled);
+    EXPECT_EQ(field.caret(), 0u);
+    Event end{.kind = EventKind::KeyDown, .key = Key::End, .modifiers = Modifiers{.control = true}};
+    field.dispatch_event(end);
+    // assert the chord reached the end of the whole value (§8.3)
+    EXPECT_TRUE(end.handled);
+    EXPECT_EQ(field.caret(), 7u);
+}
+
+TEST(TextFieldKeyboardChecks, AShiftControlEndExtendsToTheDocumentEnd) {
+    // arrange a caret in the middle, which the chord extends from (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc\ndef");
+    field.set_multiline(true);
+    field.set_caret(5);
+    // act the chord that extends the selection to the end (§8.3)
+    Event end{.kind = EventKind::KeyDown, .key = Key::End, .modifiers = Modifiers{.control = true, .shift = true}};
+    field.dispatch_event(end);
+    // assert the anchor held while the caret reached the end (§8.3)
+    EXPECT_TRUE(end.handled);
+    EXPECT_EQ(field.selection_start(), 5u);
+    EXPECT_EQ(field.selection_end(), 7u);
+}
+
+TEST(TextFieldKeyboardChecks, APlainHomeStaysOnTheCaretLine) {
+    // arrange a caret on the second line, which plain home belongs to (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc\ndef");
+    field.set_multiline(true);
+    field.set_caret(5);
+    // act
+    Event home{.kind = EventKind::KeyDown, .key = Key::Home};
+    field.dispatch_event(home);
+    // assert plain home reaches the line start, because the chord owns the document end (§8.3)
+    EXPECT_TRUE(home.handled);
+    EXPECT_EQ(field.caret(), 4u);
+}
+
+TEST(TextFieldBarChecks, AMultiLineFieldReservesTheGutterInItsMeasuredWidth) {
+    // arrange a twenty character value, which is wide enough to measure rather than take the minimum (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("abcdefghijklmnopqrst");
+    // act
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{400.0f, 400.0f}), measured);
+    // assert the width is the run, the two insets and the gutter the bar reserved (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 218.0f);
+}
+
+TEST(TextFieldBarChecks, AnAlwaysOffPolicyReservesNoGutter) {
+    // arrange the same value with the bar turned off, which owns the decision (§8)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    field.set_value("abcdefghijklmnopqrst");
+    // act
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{400.0f, 400.0f}), measured);
+    // assert the width is the run and the insets alone, because no bar reserved a strip (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 208.0f);
+}
+
+TEST(TextFieldBarChecks, ASingleLineFieldReservesNoGutter) {
+    // arrange a single line field, which never scrolls and so never reserves (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdefghijklmnopqrst");
+    // act
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{400.0f, 40.0f}), measured);
+    // assert the width is the run and the insets alone (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 208.0f);
+}
+
+TEST(TextFieldBarChecks, TheWrapWidthExcludesTheGutter) {
+    // arrange a value wider than the plate, which the reserved gutter narrows further (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("abcdefghijklmnopqrstuvwxyz");
+    // act
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{80.0f, 400.0f}), measured);
+    // assert six characters fit in the plate less the insets and the gutter (§9.1)
+    EXPECT_EQ(field.layout().run->lines().size(), 5u);
+}
+
+TEST(TextFieldBarChecks, AnOverflowingFieldDrawsItsThumbInTheGutter) {
+    // arrange a four line value in a one line plate, which is what travel looks like (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{140.0f, 60.0f}, 1.0f));
+    field.render(recorder);
+    // assert the thumb is a rounded bar in the reserved strip at the trailing edge (§6.1)
+    std::size_t thumbs = 0;
+    for (const DrawCommand& command : recorder.scene()->commands()) {
+        if (command.kind() != DrawCommandKind::RoundedRect)
+            continue;
+        const Rect thumb = command.rect_geometry().rect;
+        EXPECT_FLOAT_EQ(thumb.x, 110.0f);
+        EXPECT_FLOAT_EQ(thumb.width, 10.0f);
+        thumbs++;
+    }
+    EXPECT_EQ(thumbs, 1u);
+}
+
+TEST(TextFieldBarChecks, AFittingFieldDrawsNoThumb) {
+    // arrange a two line value in a plate tall enough that nothing overflows (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{140.0f, 60.0f}, 1.0f));
+    field.render(recorder);
+    // assert nothing is drawn at all, because a field whose run fits has no travel to report (§6.2)
+    EXPECT_TRUE(rect_commands(*recorder.scene()).empty());
+    // assert no thumb is drawn either, which is what the as needed policy resolves to (§8)
+    for (const DrawCommand& command : recorder.scene()->commands())
+        EXPECT_NE(command.kind(), DrawCommandKind::RoundedRect);
+}
+
+TEST(TextFieldBarChecks, TheThumbReachesTheBottomAtTheMaximumOffset) {
+    // arrange a field scrolled to the end of its run (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    field.scroll_to(field.maximum_scroll_offset());
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{140.0f, 60.0f}, 1.0f));
+    field.render(recorder);
+    // assert the thumb ends where the plate ends, which is what the last offset means (§8.2)
+    bool seen = false;
+    for (const DrawCommand& command : recorder.scene()->commands()) {
+        if (command.kind() != DrawCommandKind::RoundedRect)
+            continue;
+        const Rect thumb = command.rect_geometry().rect;
+        EXPECT_NEAR(thumb.y + thumb.height, 40.0f, 0.001f);
+        seen = true;
+    }
+    EXPECT_TRUE(seen);
+}
+
+TEST(TextFieldBarChecks, APressOnTheThumbDoesNotPlaceTheCaretAndADragScrollsTheRun) {
+    // arrange a field with travel and a thumb small enough to drag (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act a press on the thumb, then a move down the track (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 115.0f, .y = 12.0f}};
+    field.dispatch_event(press);
+    // assert the press belongs to the bar, so it placed no caret (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(field.caret(), 0u);
+    Event move{.kind = EventKind::PointerMove, .position = Point{.x = 115.0f, .y = 20.0f}};
+    field.dispatch_event(move);
+    // assert the travel the pointer covered became the offset (§8.3)
+    EXPECT_TRUE(move.handled);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 44.0f);
+}
+
+TEST(TextFieldBarChecks, APressOnTheGutterBelowTheThumbPlacesNoCaret) {
+    // arrange a caret somewhere in the value, which a gutter press must not move (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    field.set_caret(3);
+    // act a press in the gutter beside the track, below the thumb (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 115.0f, .y = 35.0f}};
+    field.dispatch_event(press);
+    // assert the gutter is the bar's, so the caret stayed where it was (§8.3)
+    EXPECT_FALSE(press.handled);
+    EXPECT_EQ(field.caret(), 3u);
+    EXPECT_FALSE(field.has_selection());
+}
+
+TEST(TextFieldBarChecks, AnAlwaysOffFieldDrawsNothingAndStillScrolls) {
+    // arrange a field whose policy owns the invisibility, while the wheel still moves it (§8)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{140.0f, 60.0f}, 1.0f));
+    field.render(recorder);
+    // assert the field painted no thumb at all, which is what always off means (§8)
+    for (const DrawCommand& command : recorder.scene()->commands())
+        EXPECT_NE(command.kind(), DrawCommandKind::RoundedRect);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 10.0f, .y = 10.0f}, .scroll = -1.0f};
+    field.dispatch_event(wheel);
+    // assert the content still scrolls without an indicator (§8)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 40.0f);
+}
+
+TEST(TextFieldBarChecks, AnAlwaysOnFieldDrawsAThumbWhileTheRunFits) {
+    // arrange a field whose policy asks for the bar whether or not it overflows (§8)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    field.set_value("ab\ncd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{140.0f, 60.0f}, 1.0f));
+    field.render(recorder);
+    // assert the thumb is drawn even with no travel, which is what the policy asked (§8)
+    std::size_t thumbs = 0;
+    for (const DrawCommand& command : recorder.scene()->commands())
+        if (command.kind() == DrawCommandKind::RoundedRect)
+            thumbs++;
+    EXPECT_EQ(thumbs, 1u);
+}
+
+TEST(TextFieldCompositionChecks, AFieldInsideAScrollViewKeepsItsOwnRange) {
+    // arrange a multiline field inside a scroll view, which must not measure it without a ceiling (§8.2)
+    EditingTextEngine engine;
+    ScrollView view(nullptr);
+    auto owned = std::make_unique<TextField>(nullptr, &engine);
+    TextField* field = owned.get();
+    field->set_multiline(true);
+    field->set_value("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    view.add_child(std::move(owned));
+    // act
+    Size measured{};
+    view.measure(SizeConstraints::at_most(Size{200.0f, 48.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 48.0f}));
+    // assert the field kept a real range, because the wrapper measured it against the viewport (§8.2)
+    EXPECT_FLOAT_EQ(field->maximum_scroll_offset(), 112.0f);
+    // assert the wrapper itself has nowhere to scroll, which is what makes it inert (§8.2)
+    EXPECT_FLOAT_EQ(view.maximum_offset(), 0.0f);
+}
+
+TEST(TextFieldCompositionChecks, AWheelOverTheFieldScrollsItRatherThanTheWrapper) {
+    // arrange the same composition, where only the field has travel (§8.2)
+    EditingTextEngine engine;
+    ScrollView view(nullptr);
+    auto owned = std::make_unique<TextField>(nullptr, &engine);
+    TextField* field = owned.get();
+    field->set_multiline(true);
+    field->set_value("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    view.add_child(std::move(owned));
+    Size measured{};
+    view.measure(SizeConstraints::at_most(Size{200.0f, 48.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 48.0f}));
+    // act the wheel over the field, which is the innermost viewport (§8.3)
+    Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 20.0f, .y = 20.0f}, .scroll = -1.0f};
+    field->dispatch_event(wheel);
+    // assert the field claimed the wheel and moved, because it owns its viewport (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(field->scroll_offset(), 40.0f);
+    // act the same wheel over the wrapper, which has nothing to scroll (§8.3)
+    Event to_view{.kind = EventKind::Wheel, .position = Point{.x = 20.0f, .y = 20.0f}, .scroll = -1.0f};
+    view.dispatch_event(to_view);
+    // assert the wrapper left it unclaimed, because its content fits the viewport (§8.3)
+    EXPECT_FALSE(to_view.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+}
+
+TEST(TextFieldSemanticChecks, AMultiLineFieldExposesTheScrollActions) {
+    // arrange a field with travel, which is what a reader scrolls (§10.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    const SemanticNode node = field.semantic_node();
+    // assert both directions are offered, because the wheel offers both (§10.1)
+    EXPECT_TRUE(node.has_action("scroll_down"));
+    EXPECT_TRUE(node.has_action("scroll_up"));
+    // assert the down action moves one themed line, which is the notch a client sends (§10.1)
+    EXPECT_TRUE(field.semantic_node().invoke("scroll_down"));
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 40.0f);
+    // assert the up action returns it, which is the pair a client expects (§10.1)
+    EXPECT_TRUE(field.semantic_node().invoke("scroll_up"));
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldSemanticChecks, ASingleLineFieldExposesNoScrollAction) {
+    // arrange a single line field, which has no viewport to scroll (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    // act
+    const SemanticNode node = field.semantic_node();
+    // assert a reader is offered no scroll action, because the field never scrolls (§10.1)
+    EXPECT_FALSE(node.has_action("scroll_down"));
+    EXPECT_FALSE(node.has_action("scroll_up"));
+}
+
+TEST(TextFieldSemanticChecks, ADisabledFieldExposesNoScrollAction) {
+    // arrange a multiline field that refuses everything it would answer (§18.7)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_disabled(true);
+    field.set_value("a\nb\nc\nd");
+    // act
+    const SemanticNode node = field.semantic_node();
+    // assert the disabled state refuses the scroll actions too (§10.1, §18.7)
+    EXPECT_FALSE(node.has_action("scroll_down"));
+    EXPECT_FALSE(node.has_action("scroll_up"));
+}
+
+TEST(TextFieldKeyboardChecks, TheEndKeyOnAMiddleLineKeepsTheCaretOnItsOwnRow) {
+    // arrange a two line value whose first row ends with a break, which the run includes (§9.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc\ndef");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    field.set_caret(1);
+    // act
+    Event end{.kind = EventKind::KeyDown, .key = Key::End};
+    field.dispatch_event(end);
+    // assert the caret stopped before the break, which is the last glyph of the row (§9.1)
+    EXPECT_TRUE(end.handled);
+    EXPECT_EQ(field.caret(), 3u);
+    // assert the bar is on the first row, because a caret never hangs on the row the break opens (§9.1)
+    EXPECT_FLOAT_EQ(field.caret_rect().y, 0.0f);
+}
+
+TEST(TextFieldClickSelectionChecks, AClickRightOfAShortLineStaysOnThatLine) {
+    // arrange a two line value where the first row is the shorter one (§9.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc\ndef");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act a press far right of the first row, which the run clamps to its end (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 100.0f, .y = 5.0f}};
+    field.dispatch_event(press);
+    // assert the caret stayed on the row the press landed on, before the break (§9.1)
+    EXPECT_EQ(field.caret(), 3u);
+}
+
+TEST(TextFieldPagingChecks, APageOntoAShorterLineKeepsTheCaretOnThatRow) {
+    // arrange a page that lands on a row shorter than the column the caret holds (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdefgh\nab\ncd\nef");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    field.set_caret(7);
+    // act
+    Event key{.kind = EventKind::KeyDown, .key = Key::PageDown};
+    field.dispatch_event(key);
+    // assert the caret landed before the second row's break, not on the row it opens (§9.1)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(field.caret(), 11u);
+    // assert the caret's line is the row the page named, which the fold keeps it on (§8.3)
+    EXPECT_EQ(field.layout().run->line_at_byte(field.caret()), 1u);
+}
+
+TEST(TextFieldPagingChecks, APageUpOnAnUnarrangedFieldLeavesTheKey) {
+    // arrange a field with no plate, which has no page to move within (§6.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.set_caret(4);
+    // act
+    Event key{.kind = EventKind::KeyDown, .key = Key::PageUp};
+    field.dispatch_event(key);
+    // assert nothing moved, so an enclosing viewport takes the key (§8.3)
+    EXPECT_FALSE(key.handled);
+    EXPECT_EQ(field.caret(), 4u);
+}
+
+TEST(TextFieldBarChecks, ASingleLineFieldIgnoresTheAlwaysOnPolicy) {
+    // arrange a single line field whose policy asks for a bar, which the mode refuses (§8)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdefghijklmnopqrst");
+    field.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{400.0f, 40.0f}), measured);
+    // assert the width is the run and the insets alone, because a single line field never reserves (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 208.0f);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{208.0f, 40.0f}));
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{220.0f, 60.0f}, 1.0f));
+    field.render(recorder);
+    // assert no bar is drawn, whatever the policy says (§8)
+    for (const DrawCommand& command : recorder.scene()->commands())
+        EXPECT_NE(command.kind(), DrawCommandKind::RoundedRect);
+}
+
+TEST(TextFieldBarChecks, AnAlwaysOnFieldFillsTheTrackWhileTheRunFits) {
+    // arrange a fitting field whose policy draws the bar regardless (§8)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    field.set_value("ab\ncd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{140.0f, 60.0f}, 1.0f));
+    field.render(recorder);
+    // assert the thumb fills the plate, because a run that fits has the whole track (§8.2)
+    bool seen = false;
+    for (const DrawCommand& command : recorder.scene()->commands()) {
+        if (command.kind() != DrawCommandKind::RoundedRect)
+            continue;
+        EXPECT_FLOAT_EQ(command.rect_geometry().rect.height, 40.0f);
+        seen = true;
+    }
+    EXPECT_TRUE(seen);
+}
+
+TEST(TextFieldBarChecks, SwitchingFromOffToAsNeededRewrapsAfterTheNextMeasure) {
+    // arrange a value measured with no gutter, which is the off policy (§8)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    field.set_value("abcdefghijklmnopqrstuvwxyz");
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{80.0f, 400.0f}), measured);
+    ASSERT_EQ(field.layout().run->lines().size(), 4u);
+    // act the policy starts reserving a gutter, which the next measure applies (§8.2)
+    field.set_scrollbar_visibility(ScrollbarVisibility::AsNeeded);
+    field.measure(SizeConstraints::at_most(Size{80.0f, 400.0f}), measured);
+    // assert the run now wraps inside the narrower plate (§9.1)
+    EXPECT_EQ(field.layout().run->lines().size(), 5u);
+}
+
+TEST(TextFieldBarChecks, DeletingToAFitClearsTheOffsetAndTheThumb) {
+    // arrange a field scrolled to the end of a tall value (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    field.scroll_to(field.maximum_scroll_offset());
+    ASSERT_GT(field.scroll_offset(), 0.0f);
+    // act the value shrinks to a run the plate shows whole (§8.2)
+    field.set_value("ab");
+    // assert the offset returned to the leading edge, because the range is empty (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{140.0f, 60.0f}, 1.0f));
+    field.render(recorder);
+    // assert no thumb reports a travel that no longer exists (§6.2)
+    for (const DrawCommand& command : recorder.scene()->commands())
+        EXPECT_NE(command.kind(), DrawCommandKind::RoundedRect);
+}
+
+TEST(TextFieldCompositionChecks, AFieldNestedInAColumnInsideAScrollViewGrowsToItsRun) {
+    // arrange the shape the scroll view page recommends, which measures the column without a ceiling (§8.2)
+    EditingTextEngine engine;
+    ScrollView view(nullptr);
+    auto column = std::make_unique<ColumnLayout>();
+    auto owned = std::make_unique<TextField>(nullptr, &engine);
+    TextField* field = owned.get();
+    field->set_multiline(true);
+    field->set_value("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    column->add_child(std::move(owned));
+    view.add_child(std::move(column));
+    Size measured{};
+    view.measure(SizeConstraints::at_most(Size{200.0f, 48.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 48.0f}));
+    // assert the column owns the measure, so the field grew to its run instead of scrolling itself (§8.2)
+    EXPECT_FLOAT_EQ(field->maximum_scroll_offset(), 0.0f);
+    // assert the wrapper scrolls instead, which is the plain content path and the documented limitation (§8.2)
+    EXPECT_FLOAT_EQ(view.maximum_offset(), 112.0f);
 }

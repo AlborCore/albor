@@ -3951,3 +3951,20 @@ TEST(Codegen, AnAssetNamespaceFallsBackWhenTheStemIsEmpty) {
     const GeneratedFile& asset_header = file_named(generation.files, "_assets.h");
     EXPECT_TRUE(contains(asset_header.content, "namespace image_assets"));
 }
+
+TEST(Codegen, ATextFieldScrollbarRendersAsTheEnumerationTheWidgetTakes) {
+    // arrange a multiline field whose bar policy is written in the language spelling (§8, §11.3)
+    const std::string_view source = R"(
+component NotesPanel {
+    TextField {
+        multiline: true;
+        scrollbar: Scrollbar.off;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the policy reaches the setter as the enumeration, not the written member (§11.3, §8)
+    const GeneratedFile& unit = file_named(files, "notes_panel.cpp");
+    EXPECT_TRUE(contains(unit.content, "set_scrollbar_visibility(albor::ScrollbarVisibility::AlwaysOff)"));
+}

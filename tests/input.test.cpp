@@ -1029,9 +1029,9 @@ TEST(InputControllerChecks, EscapeCancelsACapture) {
     Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
     // act
     controller.deliver(escape);
-    // assert the escape swallowed the drag before the tree saw it (§8.3)
+    // assert the escape swallowed the drag before the tree saw it, and told the captured node it ended (§8.3)
     EXPECT_TRUE(escape.handled);
-    EXPECT_EQ(root.deliveries, 1u);
+    EXPECT_EQ(root.deliveries, 2u);
     EXPECT_FALSE(controller.capturing());
 }
 
