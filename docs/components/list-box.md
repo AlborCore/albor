@@ -77,9 +77,11 @@ is left to the application, and a disabled list claims no key at all.
 
 A press on a row selects it and moves the focus onto it, which is what pointing at a row
 means. A press on the empty space below the last row names no row, so the list leaves it to a
-parent. Assistive technology drives the same navigation through the list's semantic actions —
-`select_next`, `select_previous`, `select_first`, `select_last` and `activate` — which mirror
-the keys exactly.
+parent. The scroll bar reserves a gutter on the trailing edge, as a
+[ScrollView](scroll-view.md) does: a press there selects no row, and the selection band stops
+at the gutter. Assistive technology drives the same navigation through the list's semantic
+actions — `select_next`, `select_previous`, `select_first`, `select_last` and `activate` — which
+mirror the keys exactly.
 
 ## Selection
 

@@ -229,8 +229,8 @@ namespace albor
         const float height = m_scroll->row_height();
         if (height <= 0.0f)
             return;
-        // the viewport is what the rows are drawn inside, so the band is clipped to it (§6.2)
-        const Rect viewport = m_scroll->bounds();
+        // the content viewport is what the rows are drawn inside, so the band is clipped to it (§6.2)
+        const Rect viewport = m_scroll->content_viewport();
         if (viewport.empty())
             return;
         // a list with no selection draws no band, because there is no row to mark (§18.3)
@@ -437,16 +437,16 @@ namespace albor
         const float top = static_cast<float>(index) * height;
         // the bottom of the row is one height below its top, because a row is one row tall (§8.2)
         const float bottom = top + height;
-        // the viewport the list drives is the whole of its bounds, because the scroll view is the only child (§8.2)
+        // the viewport the list drives is the whole content area of the scroll view (§8.2)
         const float view_top = m_scroll->offset();
         // the viewport bottom follows from the top, because the offset is the scroll position (§8.2)
-        const float view_bottom = view_top + m_scroll->bounds().height;
+        const float view_bottom = view_top + m_scroll->content_viewport().height;
         // a row above the viewport scrolls it up so the row's top becomes the new viewport top (§8.2)
         if (top < view_top)
             m_scroll->scroll_to(top);
         // a row below the viewport scrolls it down so the row's bottom meets the viewport bottom (§8.2)
         else if (bottom > view_bottom)
-            m_scroll->scroll_to(bottom - m_scroll->bounds().height);
+            m_scroll->scroll_to(bottom - m_scroll->content_viewport().height);
     }
 
     void ListBox::activate() {
@@ -469,8 +469,8 @@ namespace albor
         const float height = m_scroll->row_height();
         if (height <= 0.0f)
             return 1;
-        // the rows a viewport covers is the viewport height divided by the row height (§8.2)
-        const float rows = m_scroll->bounds().height / height;
+        // the rows a viewport covers is the content height divided by the row height (§8.2)
+        const float rows = m_scroll->content_viewport().height / height;
         // a page moves at least one row, so a viewport shorter than a row still steps (§8.3)
         return rows < 1.0f ? 1 : static_cast<std::size_t>(rows);
     }
@@ -488,8 +488,8 @@ namespace albor
         const float height = m_scroll->row_height();
         if (height <= 0.0f)
             return std::nullopt;
-        // the viewport is where the rows are drawn, so a point outside it lands on no row (§8.3)
-        const Rect viewport = m_scroll->bounds();
+        // the content viewport is where the rows are drawn, so a point outside it lands on no row (§8.3)
+        const Rect viewport = m_scroll->content_viewport();
         if (viewport.empty())
             return std::nullopt;
         // a point outside the viewport is past the drawn rows, so it names nothing the list can select (§8.3)

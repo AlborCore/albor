@@ -217,6 +217,78 @@ namespace
 
         [[nodiscard]] UiNode* row_node(std::size_t position) override { return position < rows.size() ? rows.at(position).get() : nullptr; }
     };
+
+    // the content double that records every width it is measured against, which is what the gutter probe reads (§8.2)
+    class WidthRecordingContent final : public UiNode, public ScrollableContent
+    {
+    public:
+        // the width each measure offered, in call order, which proves how many passes ran (§8.2)
+        std::vector<float> widths;
+
+        // the height the content claims, which is what decides whether the bar is needed (§8.2)
+        float height = 900.0f;
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the offered ceiling is recorded before it is applied, because that is the width the probe named (§8.2)
+            widths.push_back(constraints.maximum.width);
+            // the content takes the width it was offered and the height it claims, which is what a page does (§8.2)
+            out_size = constraints.constrain(Size{.width = constraints.maximum.width, .height = height});
+            m_measured_size = out_size;
+        }
+
+        void arrange(const Rect& bounds) override {
+            m_bounds = bounds;
+            m_measured_size = Size{.width = bounds.width, .height = bounds.height};
+        }
+
+        [[nodiscard]] Size content_extent() const override { return Size{m_measured_size.width, height}; }
+
+        void set_row_extent(float) override {}
+
+        void set_scroll_viewport(const ScrollViewport&) override {}
+    };
+
+    // the content double whose height follows the width, which is what a narrowed remeasure exposes (§8.2)
+    class WidthDrivenContent final : public UiNode, public ScrollableContent
+    {
+    public:
+        // the width each measure offered, in call order, which proves how many passes ran (§8.2)
+        std::vector<float> widths;
+
+        // the width the slope is measured against, which models an aspect ratio (§8.2)
+        float reference_width = 200.0f;
+
+        // the height at the reference width, which is what the content claims before narrowing (§8.2)
+        float base_height = 900.0f;
+
+        // the height each missing pixel changes by, which can grow or shrink the narrowed extent (§8.2)
+        float slope = 2.0f;
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the offered ceiling is recorded before it is applied, because that is the width the probe named (§8.2)
+            widths.push_back(constraints.maximum.width);
+            // the height follows the width, so a narrowed second pass reports a different extent (§8.2)
+            m_height = base_height + (reference_width - constraints.maximum.width) * slope;
+            // the content takes the width it was offered and the height the slope produced (§8.2)
+            out_size = constraints.constrain(Size{.width = constraints.maximum.width, .height = m_height});
+            m_measured_size = out_size;
+        }
+
+        void arrange(const Rect& bounds) override {
+            m_bounds = bounds;
+            m_measured_size = Size{.width = bounds.width, .height = bounds.height};
+        }
+
+        [[nodiscard]] Size content_extent() const override { return Size{m_measured_size.width, m_height}; }
+
+        void set_row_extent(float) override {}
+
+        void set_scroll_viewport(const ScrollViewport&) override {}
+
+    private:
+        // the height the last measure produced, which is what the extent reports (§8.2)
+        float m_height = 0.0f;
+    };
 } // namespace
 
 TEST(ScrollViewChecks, TheContentIsMeasuredWithoutAHeightCeiling) {
@@ -263,10 +335,10 @@ TEST(ScrollViewChecks, AnUndeclaredWidthTakesTheOfferedWidth) {
     Size measured{};
     // act
     view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
-    // assert the declared height wins while the undeclared width keeps the offer (§8.2)
+    // assert the declared height wins while the undeclared width keeps the offer, and the bar takes its gutter (§8.2)
     EXPECT_FLOAT_EQ(measured.width, 500.0f);
     EXPECT_FLOAT_EQ(measured.height, 300.0f);
-    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 500.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 490.0f);
 }
 
 TEST(ScrollViewChecks, AnUndeclaredWidthFillsTheSpaceARowLeavesIt) {
@@ -390,10 +462,10 @@ TEST(ScrollViewChecks, AnUndeclaredHeightTakesTheOfferedHeight) {
     Size measured{};
     // act
     view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
-    // assert the declared width wins while the undeclared height keeps the offer (§8.2)
+    // assert the declared width wins while the undeclared height keeps the offer, and the bar takes its gutter (§8.2)
     EXPECT_FLOAT_EQ(measured.width, 200.0f);
     EXPECT_FLOAT_EQ(measured.height, 400.0f);
-    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 200.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 190.0f);
 }
 
 TEST(ScrollViewChecks, AnUndeclaredViewportTakesTheWholeOffer) {
@@ -408,10 +480,10 @@ TEST(ScrollViewChecks, AnUndeclaredViewportTakesTheWholeOffer) {
     Size measured{};
     // act
     view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
-    // assert neither axis is declared, so the viewport is the whole offer (§8.2)
+    // assert neither axis is declared, so the viewport is the whole offer and the bar takes its gutter (§8.2)
     EXPECT_FLOAT_EQ(measured.width, 500.0f);
     EXPECT_FLOAT_EQ(measured.height, 400.0f);
-    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 500.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 490.0f);
 }
 
 TEST(ScrollViewChecks, ADeclaredViewportIsClampedIntoTheOffer) {
@@ -426,10 +498,10 @@ TEST(ScrollViewChecks, ADeclaredViewportIsClampedIntoTheOffer) {
     Size measured{};
     // act
     view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
-    // assert a declared axis never escapes the parent's ceiling (§8.2)
+    // assert a declared axis never escapes the parent's ceiling, and the bar takes its gutter (§8.2)
     EXPECT_FLOAT_EQ(measured.width, 500.0f);
     EXPECT_FLOAT_EQ(measured.height, 300.0f);
-    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 500.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 490.0f);
 }
 
 TEST(ScrollViewChecks, ADeclaredAxisBelowTheMinimumIsRaised) {
@@ -444,10 +516,10 @@ TEST(ScrollViewChecks, ADeclaredAxisBelowTheMinimumIsRaised) {
     Size measured{};
     // act
     view.measure(SizeConstraints{.minimum = Size{400.0f, 0.0f}, .preferred = {}, .maximum = Size{800.0f, 600.0f}}, measured);
-    // assert the minimum raises the declared width while the declared height stands (§8.2)
+    // assert the minimum raises the declared width while the declared height stands, and the bar takes its gutter (§8.2)
     EXPECT_FLOAT_EQ(measured.width, 400.0f);
     EXPECT_FLOAT_EQ(measured.height, 300.0f);
-    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 400.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 390.0f);
 }
 
 TEST(ScrollViewChecks, AHeightOnlyViewportClipsAndScrollsTheContent) {
@@ -466,13 +538,13 @@ TEST(ScrollViewChecks, AHeightOnlyViewportClipsAndScrollsTheContent) {
     view.arrange(bounds);
     RecordingContext context;
     view.render(context);
-    // assert the content takes the resolved width and the viewport clips and scrolls at the declared height (§8.2)
-    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 500.0f);
+    // assert the content takes the resolved width less the bar gutter and the viewport clips and scrolls (§8.2)
+    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 490.0f);
     EXPECT_FLOAT_EQ(content_ptr->bounds().height, 900.0f);
     EXPECT_TRUE(view.scrollable());
     EXPECT_FLOAT_EQ(view.maximum_offset(), 600.0f);
     ASSERT_FALSE(context.clips.empty());
-    EXPECT_EQ(context.clips.front(), bounds);
+    EXPECT_EQ(context.clips.front(), Rect::from_origin_size(Point{10.0f, 20.0f}, Size{490.0f, 300.0f}));
 }
 
 TEST(ScrollViewChecks, ADeclaredHeightWinsOverTheArrangedBounds) {
@@ -506,9 +578,9 @@ TEST(ScrollViewChecks, ADeclaredWidthWinsOverTheArrangedBounds) {
     view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
     // act
     view.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 400.0f}));
-    // assert the declared width survives a parent that assigns a wider rectangle (§8.2)
+    // assert the declared width survives a parent that assigns a wider rectangle, and the bar takes its gutter (§8.2)
     EXPECT_EQ(view.bounds(), (Rect::from_origin_size(Point{10.0f, 20.0f}, Size{200.0f, 400.0f})));
-    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 200.0f);
+    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 190.0f);
     EXPECT_FLOAT_EQ(view.maximum_offset(), 500.0f);
 }
 
@@ -673,7 +745,7 @@ TEST(ScrollViewChecks, TheBarFollowsTheAlwaysOnPolicyEvenWhenTheContentFits) {
     EXPECT_TRUE(view.scrollbar_visible());
 }
 
-TEST(ScrollViewChecks, TheContentIsClippedToTheViewport) {
+TEST(ScrollViewChecks, TheContentIsClippedToTheContentViewport) {
     // arrange
     BindingEngine engine;
     ScrollView view(&engine);
@@ -688,9 +760,10 @@ TEST(ScrollViewChecks, TheContentIsClippedToTheViewport) {
     RecordingContext context;
     // act
     view.render(context);
-    // assert the viewport is the clip, which is what keeps scrolled content out of the surface (§6.2)
+    // assert the content viewport is the clip, which keeps scrolled content out of the gutter and the surface (§6.2)
     ASSERT_EQ(context.clips.size(), 1u);
-    EXPECT_EQ(context.clips.at(0), bounds);
+    EXPECT_EQ(context.clips.at(0), view.content_viewport());
+    EXPECT_EQ(view.content_viewport(), (Rect::from_origin_size(Point{10.0f, 20.0f}, Size{190.0f, 300.0f})));
 }
 
 TEST(ScrollViewChecks, APageKeyMovesAWholeViewport) {
@@ -947,6 +1020,7 @@ TEST(ScrollViewChecks, AnUnarrangedViewClipsNothing) {
     view.render(context);
     // assert a viewport with no area clips nothing, because there is nothing to scissor to (§6.2)
     EXPECT_TRUE(context.clips.empty());
+    EXPECT_TRUE(view.content_viewport().empty());
 }
 
 TEST(ScrollViewChecks, AHiddenViewTakesNoEventAndIsNotAHit) {
@@ -1258,6 +1332,8 @@ TEST(ScrollViewChecks, AThemeResolvesTheScrollbarPaintAndTheLineStep) {
     RecordingContext context;
     // act
     view.render(context);
+    // assert the content was measured against the themed gutter (§6.1, §8.2)
+    EXPECT_EQ(view.content_viewport().width, 186.0f);
     // assert the track spans the viewport height at the themed width, against the trailing edge (§6.1)
     Rect track{};
     for (const Rect& rect : context.rects)
@@ -1496,4 +1572,468 @@ TEST(ScrollViewChecks, AViewWithNoContentReportsNoRows) {
     EXPECT_EQ(view.materialized_row_count(), 0U);
     EXPECT_EQ(view.first_row_index(), 0U);
     EXPECT_EQ(view.row_node(0), nullptr);
+}
+
+TEST(ScrollViewChecks, AnOverflowingAsNeededBarReservesItsGutter) {
+    // arrange a viewport whose content is taller than it (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(bounds);
+    // assert the bar owns the trailing strip and the content is measured and clipped inside the rest (§8.2)
+    EXPECT_TRUE(view.scrollbar_visible());
+    EXPECT_EQ(view.content_viewport(), (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{190.0f, 300.0f})));
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 190.0f);
+    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 190.0f);
+    RecordingContext context;
+    view.render(context);
+    ASSERT_FALSE(context.clips.empty());
+    EXPECT_EQ(context.clips.front(), view.content_viewport());
+    // assert the track occupies the gutter the content viewport excludes (§6.1)
+    Rect track{};
+    for (const Rect& rect : context.rects)
+        if (rect.width == 10.0f && rect.height == 300.0f)
+            track = rect;
+    EXPECT_EQ(track, (Rect::from_origin_size(Point{190.0f, 0.0f}, Size{10.0f, 300.0f})));
+}
+
+TEST(ScrollViewChecks, AFittingAsNeededBarLeavesTheFullWidth) {
+    // arrange content that fits, so the automatic policy has no bar to reserve (§8)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 200.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(bounds);
+    // assert no gutter is taken, because the content never needs a bar (§8.2)
+    EXPECT_FALSE(view.scrollbar_visible());
+    EXPECT_EQ(view.content_viewport(), bounds);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 200.0f);
+    RecordingContext context;
+    view.render(context);
+    ASSERT_FALSE(context.clips.empty());
+    EXPECT_EQ(context.clips.front(), bounds);
+}
+
+TEST(ScrollViewChecks, AnAlwaysOnBarReservesItsGutterEvenWhenTheContentFits) {
+    // arrange a forced bar over content that fits, which still owns its gutter (§8)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 200.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the gutter is reserved while the thumb is left off, because there is no travel (§8.2)
+    EXPECT_TRUE(view.scrollbar_visible());
+    EXPECT_FALSE(view.scrollable());
+    EXPECT_EQ(view.content_viewport().width, 190.0f);
+    RecordingContext context;
+    view.render(context);
+    EXPECT_TRUE(context.rounded.empty());
+}
+
+TEST(ScrollViewChecks, AnAlwaysOffBarLeavesTheFullWidthToOverflowingContent) {
+    // arrange a hidden bar over content that would otherwise overflow (§8)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(bounds);
+    // assert the content still scrolls but keeps the whole width, because no bar takes a gutter (§8)
+    EXPECT_FALSE(view.scrollbar_visible());
+    EXPECT_TRUE(view.scrollable());
+    EXPECT_EQ(view.content_viewport(), bounds);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 200.0f);
+    RecordingContext context;
+    view.render(context);
+    ASSERT_FALSE(context.clips.empty());
+    EXPECT_EQ(context.clips.front(), bounds);
+}
+
+TEST(ScrollViewChecks, TheAsNeededProbeMeasuresTwiceWhenTheContentOverflows) {
+    // arrange content whose height decides whether the bar is needed (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WidthRecordingContent>();
+    content->height = 900.0f;
+    WidthRecordingContent* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert the full width probe runs first and the reserved gutter narrows the second pass (§8.2)
+    ASSERT_EQ(content_ptr->widths.size(), 2u);
+    EXPECT_FLOAT_EQ(content_ptr->widths.at(0), 200.0f);
+    EXPECT_FLOAT_EQ(content_ptr->widths.at(1), 190.0f);
+}
+
+TEST(ScrollViewChecks, TheAsNeededProbeMeasuresOnceWhenTheContentFits) {
+    // arrange content that fits, so the automatic policy never narrows it (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WidthRecordingContent>();
+    content->height = 200.0f;
+    WidthRecordingContent* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert exactly one probe, at the full width, because no gutter is reserved (§8.2)
+    ASSERT_EQ(content_ptr->widths.size(), 1u);
+    EXPECT_FLOAT_EQ(content_ptr->widths.at(0), 200.0f);
+}
+
+TEST(ScrollViewChecks, AnAlwaysOnBarMeasuresOnceAtTheContentWidth) {
+    // arrange a forced bar, whose gutter is known before the content is measured (§8)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WidthRecordingContent>();
+    content->height = 900.0f;
+    WidthRecordingContent* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert one pass at the narrowed width, because the policy reserved the gutter up front (§8.2)
+    ASSERT_EQ(content_ptr->widths.size(), 1u);
+    EXPECT_FLOAT_EQ(content_ptr->widths.at(0), 190.0f);
+}
+
+TEST(ScrollViewChecks, AnAlwaysOffBarMeasuresOnceAtTheFullWidth) {
+    // arrange a hidden bar over content that would otherwise overflow (§8)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WidthRecordingContent>();
+    content->height = 900.0f;
+    WidthRecordingContent* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert one pass at the full width, because no bar takes a gutter (§8.2)
+    ASSERT_EQ(content_ptr->widths.size(), 1u);
+    EXPECT_FLOAT_EQ(content_ptr->widths.at(0), 200.0f);
+}
+
+TEST(ScrollViewChecks, ThePushedViewportCarriesTheContentWidth) {
+    // arrange a virtualized content whose reported extent is wider than the content area (§8.2, AD-13)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WindowedContent>();
+    content->total = Size{200.0f, 900.0f};
+    WindowedContent* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_overscan(60.0f);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the window names the gutter-free area, so rows measure inside it (§8.2, AD-13)
+    EXPECT_EQ(content_ptr->window.viewport, (Size{190.0f, 300.0f}));
+    EXPECT_EQ(content_ptr->window.content, (Size{200.0f, 900.0f}));
+    // assert the content is placed no wider than the window, because only the vertical axis scrolls (§8.2)
+    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 190.0f);
+}
+
+TEST(ScrollViewChecks, APolicySwitchInvalidatesLayout) {
+    // arrange a laid out view that is clean (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.clear_dirty();
+    // act a policy switch adds or removes the gutter (§8)
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    // assert both layout passes run, because the content width changed (§8.2)
+    EXPECT_TRUE(view.layout_dirty());
+}
+
+TEST(ScrollViewChecks, AThemedGutterWidensWithTheThemeExtent) {
+    // arrange a themed viewport whose bar is wider than the fallback (§6.1)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(14.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the content is measured against the themed gutter, not the fallback (§6.1, §8.2)
+    EXPECT_EQ(view.content_viewport().width, 186.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 186.0f);
+    // act a wider theme reflows the same content
+    Theme wider;
+    wider.set_scrollbar_extent(20.0f);
+    apply_theme(view, wider);
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the content follows the wider gutter, because the theme owns the metric (§6.1, §8.2)
+    EXPECT_EQ(view.content_viewport().width, 180.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 180.0f);
+}
+
+TEST(ScrollViewChecks, AViewportNarrowerThanTheBarHasNoContentArea) {
+    // arrange a viewport narrower than the bar it reserves (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{8.0f, 300.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{8.0f, 300.0f}));
+    // assert the content width clamps to zero rather than going negative (§8.2)
+    EXPECT_EQ(view.content_viewport().width, 0.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 0.0f);
+    EXPECT_TRUE(view.scrollable());
+}
+
+TEST(ScrollViewChecks, TheSecondMeasureSettlesTheExtentAndTheOffset) {
+    // arrange content whose height grows as the gutter narrows it, which only the second pass can see (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WidthDrivenContent>();
+    content->reference_width = 200.0f;
+    content->base_height = 900.0f;
+    content->slope = 2.0f;
+    WidthDrivenContent* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the extent, the offset range and the content width all come from the narrowed second pass (§8.2)
+    EXPECT_EQ(content_ptr->widths, (std::vector<float>{200.0f, 190.0f}));
+    EXPECT_EQ(view.content_extent(), (Size{190.0f, 920.0f}));
+    EXPECT_FLOAT_EQ(view.maximum_offset(), 620.0f);
+    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 190.0f);
+}
+
+TEST(ScrollViewChecks, AContentThatFitsAfterTheNarrowedRemeasureKeepsItsGutter) {
+    // arrange content whose probe overflows but whose narrowed pass fits, which is the stable hysteresis (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WidthDrivenContent>();
+    content->reference_width = 200.0f;
+    content->base_height = 200.0f;
+    content->slope = -1.0f;
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 195.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 195.0f}));
+    // assert the probe's reservation stands, so a width-driven content cannot flip the gutter every measure (§8.2)
+    EXPECT_EQ(view.content_viewport().width, 190.0f);
+    EXPECT_EQ(view.content_extent(), (Size{190.0f, 190.0f}));
+    EXPECT_TRUE(view.scrollbar_visible());
+    EXPECT_FALSE(view.scrollable());
+    RecordingContext context;
+    view.render(context);
+    // assert the reserved gutter draws the track and leaves the thumb off, because there is no travel (§6.1)
+    EXPECT_TRUE(context.rounded.empty());
+    Rect track{};
+    for (const Rect& rect : context.rects)
+        if (rect.width == 10.0f && rect.height == 195.0f)
+            track = rect;
+    EXPECT_EQ(track, (Rect::from_origin_size(Point{190.0f, 0.0f}, Size{10.0f, 195.0f})));
+}
+
+TEST(ScrollViewChecks, AContentThatShrinksReleasesTheGutter) {
+    // arrange an overflowing view, whose bar takes a gutter (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    ASSERT_EQ(view.content_viewport().width, 190.0f);
+    // act the content shrinks until it fits, which is a data change rather than a policy change
+    content_ptr->intrinsic = Size{100.0f, 200.0f};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the gutter is released, because the next measure found no overflow (§8.2)
+    EXPECT_EQ(view.content_viewport().width, 200.0f);
+    EXPECT_FALSE(view.scrollbar_visible());
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 200.0f);
+}
+
+TEST(ScrollViewChecks, APolicySwitchToAlwaysOffRestoresTheFullWidth) {
+    // arrange an overflowing view whose measured policy reserved the gutter (§8)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(bounds);
+    ASSERT_EQ(view.content_viewport().width, 190.0f);
+    // act the policy turns the bar off, which must drop the gutter immediately (§8)
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    // assert the accessors agree before the next measure, because the policy is total (§8.2)
+    EXPECT_EQ(view.content_viewport(), bounds);
+    EXPECT_FALSE(view.scrollbar_visible());
+    // act the next layout settles the content at the full width
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(bounds);
+    // assert the content was measured at the full width and no track was painted (§8.2)
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 200.0f);
+    RecordingContext context;
+    view.render(context);
+    for (const Rect& rect : context.rects)
+        EXPECT_FALSE(rect.width == 10.0f && rect.height == 300.0f);
+}
+
+TEST(ScrollViewChecks, ASwitchFromAlwaysOnToAsNeededDropsTheForcedGutter) {
+    // arrange a forced bar over fitting content, whose gutter is reserved without overflow (§8)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 200.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    ASSERT_EQ(view.content_viewport().width, 190.0f);
+    // act the automatic policy takes over, which only reserves on overflow (§8)
+    view.set_scrollbar_visibility(ScrollbarVisibility::AsNeeded);
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the forced gutter is gone and the content takes the full width again (§8.2)
+    EXPECT_EQ(view.content_viewport().width, 200.0f);
+    EXPECT_FALSE(view.scrollbar_visible());
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 200.0f);
+}
+
+TEST(ScrollViewChecks, TheBarStaysInsideANarrowViewport) {
+    // arrange a forced bar wider than the view itself, which must not paint outside its bounds (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{8.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{8.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(bounds);
+    RecordingContext context;
+    // act
+    view.render(context);
+    // assert the track and the thumb are clipped to the bounds rather than starting left of the view (§8.2)
+    Rect track{};
+    for (const Rect& rect : context.rects)
+        if (rect.width == 8.0f && rect.height == 300.0f)
+            track = rect;
+    EXPECT_EQ(track, bounds);
+    ASSERT_EQ(context.rounded.size(), 1u);
+    EXPECT_GE(context.rounded.front().x, bounds.x);
+    EXPECT_LE(context.rounded.front().x + context.rounded.front().width, bounds.x + bounds.width);
+    // act a scroll, whose damage must stay inside the bounds as well
+    view.clear_damage_region();
+    view.set_offset(50.0f);
+    view.arrange(bounds);
+    // assert the clamped strip damages exactly the view instead of spilling past its leading edge (§6.1)
+    ASSERT_TRUE(view.damage_region().has_value());
+    EXPECT_EQ(*view.damage_region(), bounds);
+}
+
+TEST(ScrollViewChecks, ANegativeBarExtentReservesNothing) {
+    // arrange a theme whose bar width is negative, which the gutter clamp must refuse (§6.1, §8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(-5.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the content keeps the full width, because a negative gutter is no gutter (§8.2)
+    EXPECT_EQ(view.content_viewport().width, 200.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 200.0f);
+    EXPECT_FALSE(view.scrollbar_visible());
+}
+
+TEST(ScrollViewChecks, ANestedScrollViewReservesOnlyItsOwnGutter) {
+    // arrange an inner viewport inside an outer one, both overflowing (§8.2)
+    BindingEngine engine;
+    ScrollView outer(&engine);
+    auto inner = std::make_unique<ScrollView>(&engine);
+    inner->set_viewport_extent(Size{0.0f, 400.0f});
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    inner->add_child(std::move(content));
+    ScrollView* inner_ptr = inner.get();
+    outer.add_child(std::move(inner));
+    outer.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    // act
+    outer.measure(SizeConstraints::unconstrained(), measured);
+    outer.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert each viewport removes only its own gutter, so the inner content is narrowed twice in total (§8.2)
+    EXPECT_EQ(outer.content_viewport().width, 190.0f);
+    EXPECT_EQ(inner_ptr->content_viewport().width, 180.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 180.0f);
 }

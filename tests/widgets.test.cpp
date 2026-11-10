@@ -8673,7 +8673,7 @@ TEST(ScrollViewChecks, TheVisualBoundsStayInsideTheViewport) {
     EXPECT_EQ(visual, bounds);
 }
 
-TEST(ScrollViewChecks, AnInvalidationIsBoundedByTheViewport) {
+TEST(ScrollViewChecks, AnInvalidationIsBoundedByTheContentViewport) {
     // arrange a view whose content reaches far above and below the viewport (§8.2)
     BindingEngine engine;
     ScrollView view(&engine);
@@ -8688,14 +8688,15 @@ TEST(ScrollViewChecks, AnInvalidationIsBoundedByTheViewport) {
     view.set_offset(500.0f);
     view.arrange(bounds);
     view.clear_damage_region();
-    // act the content asks for a redraw, which the view clips to its viewport (§6.1, §6.2)
+    // act the content asks for a redraw, which the view clips to its content viewport (§6.1, §6.2)
     content->invalidate();
-    // assert the content's whole extent never widens the damage, because only the viewport shows it (§6.1)
+    // assert the content's whole extent never widens the damage, because only the content viewport shows it (§6.1)
     ASSERT_TRUE(view.damage_region().has_value());
-    EXPECT_EQ(*view.damage_region(), bounds);
+    EXPECT_EQ(*view.damage_region(), view.content_viewport());
+    EXPECT_EQ(view.content_viewport(), (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{390.0f, 600.0f})));
 }
 
-TEST(ScrollViewChecks, AScrollDamagesOnlyTheViewport) {
+TEST(ScrollViewChecks, AScrollDamagesTheContentViewportAndItsBar) {
     // arrange a view showing one page of ten thousand pixels of content (§8.2)
     BindingEngine engine;
     ScrollView view(&engine);
@@ -8710,7 +8711,8 @@ TEST(ScrollViewChecks, AScrollDamagesOnlyTheViewport) {
     // act
     view.set_offset(600.0f);
     view.arrange(bounds);
-    // assert the old and new placements are both clipped to the viewport rather than the content extent (§6.1)
+    // assert the content viewport and the bar's gutter are damaged, which is the whole viewport (§6.1)
+    EXPECT_EQ(view.content_viewport(), (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{390.0f, 600.0f})));
     ASSERT_TRUE(view.damage_region().has_value());
     EXPECT_EQ(*view.damage_region(), bounds);
 }

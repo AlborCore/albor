@@ -38,10 +38,10 @@ namespace albor
         // override: claim the wheel and the paging keys, which is what scrolling the content means (§8.3)
         void dispatch_event(Event& event) override;
 
-        // override: report whether a point lands inside the viewport, because a scrolled away row is not there (§8.3)
+        // override: report whether a point lands inside the bounds, because a scrolled away row is not there (§8.3)
         [[nodiscard]] bool hit_test(Point logical_point) const override;
 
-        // override: clip the children to the viewport and draw the bar over them (§6.2)
+        // override: clip the children to the content viewport and draw the bar in its reserved gutter (§6.2)
         void paint_children(RenderContext& context) override;
 
         // override: bound the damage by the viewport, because the content may extend far outside it (§6.1, §6.2)
@@ -50,11 +50,14 @@ namespace albor
         // override: announce the viewport, which is what assistive technology scrolls (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;
 
-        // set the viewport extent, where a zero or negative axis follows the offer and a positive one is declared (§8.2)
+        // set the outer viewport extent, which includes a reserved bar gutter; zero or negative follows the offer (§8.2)
         void set_viewport_extent(Size size);
 
-        // hand out the declared viewport extent, where zero or negative marks an axis that follows the offer (§8.2)
+        // hand out the declared outer extent, where zero or negative marks an axis that follows the offer (§8.2)
         [[nodiscard]] Size viewport_extent() const;
+
+        // hand out the area the content occupies, which is the bounds less a reserved scrollbar gutter (§8.2)
+        [[nodiscard]] Rect content_viewport() const;
 
         // set the height one virtualized row takes, which is what makes an index a position (§8.2, AD-13)
         void set_row_height(float pixels);
@@ -116,7 +119,7 @@ namespace albor
         // hand out the built row at a materialized position, or null past the end (§8.2, AD-13)
         [[nodiscard]] UiNode* row_node(std::size_t position) const;
 
-        // report whether the content extends past the viewport, which is what the as needed policy reads (§8)
+        // report whether the content extends past the content viewport, which the thumb and the paint read (§8)
         [[nodiscard]] bool scrollable() const;
 
         // move the offset by a signed amount, which a wheel notch and a key press both ask for (§8.3)
@@ -132,17 +135,29 @@ namespace albor
         [[nodiscard]] bool watches() const;
 
     protected:
-        // override: the content is painted inside the viewport clip, so damage outside it is not visible (§6.1, §6.2)
+        // override: the content is painted inside the content viewport, so damage outside it is not visible (§6.1, §6.2)
         [[nodiscard]] Rect clip_child_damage(const Rect& damage) const override;
 
     private:
         // hand out the amount one wheel notch moves the content, which is the conversion this view owns (§8.3)
         [[nodiscard]] float wheel_scale(const Event& event) const;
 
-        // hand out the viewport the bounds describe, which the clip and the bar both read (§8.2)
-        [[nodiscard]] Rect viewport_rect() const;
+        // hand out the width the theme declares, which is what the measure and the content viewport reserve (§8.2)
+        [[nodiscard]] float bar_extent() const;
 
-        // draw the bar over the content, which is what reports where the offset sits (§6.1)
+        // hand out the bar width the bounds can hold, which is what the paint and the thumb use (§8.2)
+        [[nodiscard]] float drawn_bar_extent() const;
+
+        // report whether the current policy reserves a gutter, which the viewport and the bar both read (§8)
+        [[nodiscard]] bool bar_reserved() const;
+
+        // measure the content against a width and hand back the extent it reports (§8.2, AD-13)
+        [[nodiscard]] Size measure_content(float width);
+
+        // hand out the strip the bar is drawn in, which is the area a scroll damages (§6.1)
+        [[nodiscard]] Rect scrollbar_track_rect() const;
+
+        // draw the bar in its reserved gutter, which is what reports where the offset sits (§6.1)
         void paint_scrollbar(RenderContext& context) const;
 
         // hand out the bar the current offset puts at this place, which is what the travel is read from (§8.2)
@@ -183,6 +198,9 @@ namespace albor
 
         // when the bar is drawn, which is a per instance policy (§8)
         ScrollbarVisibility m_visibility = ScrollbarVisibility::AsNeeded;
+
+        // whether the measure pass reserved the bar gutter, which arrange honours until the next measure (§8.2)
+        bool m_bar_reserved = false;
 
         // how far beyond the visible area content is kept built (§8.2)
         float m_overscan = 0.0f;

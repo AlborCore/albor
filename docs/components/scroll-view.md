@@ -5,14 +5,14 @@ scale, a virtualized window over a large list.
 
 ## Properties
 
-| property | type | notes |
-| --- | --- | --- |
-| `viewport_width` | `float` | the viewport's width; density-scaled, accepts `px` |
-| `viewport_height` | `float` | the viewport's height; density-scaled, accepts `px` |
-| `overscan` | `float` | extra extent rendered past each edge to hide populate cost; accepts `px` |
-| `offset` | `float` | the current scroll position |
-| `scrollbar` | `scrollbar` | `Scrollbar.as_needed`, `Scrollbar.off`, `Scrollbar.on` |
-| `row_height` | `float` | the row pitch a virtualized `Repeat` lays out with; accepts `px` |
+| property | type | default | notes |
+| --- | --- | --- | --- |
+| `viewport_width` | `float` | `0` | the outer width, including a reserved bar gutter; `0` follows the width the parent offers; accepts `px` |
+| `viewport_height` | `float` | `0` | the outer height; `0` follows the height the parent offers; accepts `px` |
+| `overscan` | `float` | `0` | extra extent rendered past each edge to hide populate cost; accepts `px` |
+| `offset` | `float` | `0` | the current scroll position |
+| `scrollbar` | `scrollbar` | `Scrollbar.as_needed` | `Scrollbar.as_needed`, `Scrollbar.off`, `Scrollbar.on` |
+| `row_height` | `float` | `0` | the row pitch a virtualized `Repeat` lays out with, which must be non-zero to virtualize; accepts `px` |
 
 Plus the [common properties](index.md#common-properties).
 
@@ -84,6 +84,15 @@ reuses the existing element and rebinds it, rather than rebuilding the list.
 
 ## Notes
 
+- The bar occupies a reserved gutter on the trailing edge rather than painting over the content.
+  `viewport_width` is the outer extent, so while a bar is shown the content area is
+  `viewport_width` less the bar width; the content never needs a trailing margin of its own.
+  `Scrollbar.off` returns the full width to the content.
+- An `as_needed` bar decides its gutter from a full-width probe and keeps it for that layout,
+  even if the narrowed remeasure no longer overflows. Re-deciding would oscillate for content
+  whose height shrinks when it is narrowed (an aspect-scaled image, for example): the
+  full-width probe overflows, the narrower pass fits, and dropping the gutter would restore
+  the overflow on the next measure.
 - `viewport_width` and `viewport_height` resolve independently: a positive axis takes its
   extent and is clamped into the parent, while a zero or negative axis follows the space the
   parent offers. To take the leftover inside a `Row` or `Column`, declare `Align.stretch` on

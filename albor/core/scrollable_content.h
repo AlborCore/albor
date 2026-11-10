@@ -12,7 +12,7 @@ namespace albor
     // the window a scroll container is showing, which is what content materializes against (§8.2)
     struct ScrollViewport
     {
-        // the extent of the visible area, which is what the content is fitted to (§8.2)
+        // the extent of the visible area, which excludes a reserved scrollbar gutter (§8.2)
         Size viewport;
 
         // the extent of the whole content, which is what the scroll offset ranges over (§8.2)

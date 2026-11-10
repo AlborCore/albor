@@ -1028,3 +1028,66 @@ TEST(ListBoxChecks, APressOnARowBesideTheThumbSelectsThatRow) {
     // assert an earlier row stays clickable after a later one is selected, which is the defect this guards (§18.3)
     EXPECT_EQ(fixture.box.selected_index(), 0U);
 }
+
+TEST(ListBoxChecks, AGutterPressSelectsNoRow) {
+    // arrange a scrollable list whose trailing ten pixels are the bar's gutter, not content (§8.2)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    fixture.layout(320.0f, 160.0f);
+    InputController controller;
+    controller.attach(fixture.box);
+    // act a press lands in the gutter below the thumb, where no row is drawn (§8.2, §8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{315.0f, 150.0f}};
+    controller.deliver(press);
+    // assert the press names no row and is left for a parent, because the gutter belongs to the bar (§8.3)
+    EXPECT_EQ(fixture.box.scroll_view().content_viewport().width, 310.0f);
+    EXPECT_FALSE(press.handled);
+    EXPECT_FALSE(fixture.box.has_selection());
+}
+
+TEST(ListBoxChecks, TheGutterThumbDragsWithoutSelectingARow) {
+    // arrange a scrollable list whose thumb fills the top of the trailing gutter (§8.2)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    fixture.layout(320.0f, 160.0f);
+    InputController controller;
+    controller.attach(fixture.box);
+    // act a press lands on the thumb and drags it to the bottom of the track (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{315.0f, 10.0f}};
+    controller.deliver(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{315.0f, 150.0f}};
+    controller.deliver(move);
+    // assert the drag scrolls the list and leaves the selection alone, because the gutter is the bar's (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_TRUE(move.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 32.0f);
+    EXPECT_FALSE(fixture.box.has_selection());
+}
+
+TEST(ListBoxChecks, TheSelectionBandStopsAtTheBarGutter) {
+    // arrange a themed, overflowing list whose selection is drawn under the rows (§6.1, §8.2)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    apply_theme(fixture.box, theme);
+    fixture.layout(320.0f, 160.0f);
+    fixture.box.select(3);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{320.0f, 160.0f}, 1.0f);
+    SceneBuilder builder;
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(fixture.box, metrics, Color::rgb(0.925f, 0.925f, 0.930f));
+    // assert the band takes the content viewport rather than the full bounds, so the bar paints alone (§6.1)
+    bool band = false;
+    for (const DrawCommand& command : scene->commands())
+        if (command.kind() == DrawCommandKind::RoundedRect && command.rect_geometry().rect.width == 310.0f && command.rect_geometry().rect.height == 24.0f) {
+            band = true;
+            EXPECT_EQ(command.clip(), fixture.box.scroll_view().content_viewport());
+        }
+    EXPECT_TRUE(band);
+}
