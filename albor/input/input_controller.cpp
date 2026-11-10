@@ -228,9 +228,9 @@ namespace albor
     }
 
     void InputController::cancel_pointer_capture() {
-        // the next dispatch must not arm a surface that went away, so the sequence advances with the drop (§8.3)
+        // the next dispatch must not arm a capture the window cannot release, so the generation advances (§8.3)
         m_capture_generation++;
-        // a hidden window owns no drag, so the stale node is cleared with it (§8.3)
+        // a window that lost the interaction owns no drag, so the stale node is cleared with it (§8.3)
         m_capture = nullptr;
     }
 

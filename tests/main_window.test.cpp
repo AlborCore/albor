@@ -5,9 +5,11 @@
 #include <gtest/gtest.h>
 
 #include "albor/application/application.h"
+#include "albor/application/file_dialog.h"
 #include "albor/application/window_stage.h"
 #include "albor/core/dev_hook.h"
 #include "albor/layout/column_layout.h"
+#include "albor/platform/headless/file_dialog.h"
 #include "albor/platform/headless/headless_event_loop.h"
 #include "albor/render/render-software/software_renderer_backend.h"
 #include "albor/text/text_engine.h"
@@ -727,6 +729,268 @@ TEST(MainWindow, APopupPressThatClosesTheSurfaceDoesNotKeepTheNextPress) {
     // cleanup the popup and the owner (§5.1)
     application.destroy_popup(popup);
     EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(MainWindow, AModalPressThatOpensADialogDoesNotKeepTheNextPress) {
+    // arrange a parent whose tree owns the control that opens a window modal dialog (§5.1, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle parent;
+    albor::WindowHandle dialog;
+    int activations = 0;
+    albor::RootBuilder opener = [&application, &parent, &dialog, &activations](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns one identifiable button, which is the control the press runs (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Open");
+        // the identity is what the close returns the focus to (AD-11)
+        button->set_explicit_id("open");
+        // the press opens the dialog from inside its own dispatch, which is the regression (§5.1)
+        button->set_on_click([&application, &parent, &dialog, &activations] {
+            activations++;
+            albor::WindowOptions dialog_options;
+            dialog_options.role = albor::WindowRole::Dialog;
+            dialog_options.modality = albor::Modality::WindowModal;
+            dialog_options.title = "Dialog";
+            dialog_options.parent = parent;
+            dialog = application.create_window(dialog_options, empty_form());
+        });
+        column->add_child(std::move(button));
+        return column;
+    };
+    parent = application.create_window(albor::WindowOptions{}, opener);
+    ASSERT_TRUE(parent.valid());
+    // the frame arranges the tree, which is what gives the button bounds to press (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* stage = application.stage(parent);
+    ASSERT_NE(stage, nullptr);
+    // act press the button, which opens the modal dialog and never sees its release (§8.3)
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    // assert the press ran the control and the dialog took the interaction (§5.1)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(activations, 1);
+    ASSERT_TRUE(dialog.valid());
+    // act close the dialog, which returns the interaction to the parent (§5.1)
+    EXPECT_TRUE(application.destroy_window(dialog));
+    // act press the control again, which a stale capture would swallow (§8.3)
+    albor::Event second{.kind = albor::EventKind::PointerDown, .position = albor::Point{6.0f, 6.0f}};
+    stage->deliver(second);
+    // assert the parent accepted the second press, because the modal ended the first drag (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_EQ(activations, 2);
+    // cleanup the parent, which owns the dialog the second press opened (§5.1)
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, AnApplicationModalWindowThatOpensFromAPressDoesNotKeepTheNextPress) {
+    // arrange a parent whose control opens an application modal window with the ordinary role (§5.1, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle parent;
+    albor::WindowHandle modal;
+    int activations = 0;
+    albor::RootBuilder opener = [&application, &parent, &modal, &activations](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns the control whose press opens the modal (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Open");
+        // the press opens the modal from inside its own dispatch, which is the regression (§5.1)
+        button->set_on_click([&application, &parent, &modal, &activations] {
+            activations++;
+            albor::WindowOptions modal_options;
+            modal_options.modality = albor::Modality::ApplicationModal;
+            modal_options.title = "Modal";
+            modal_options.parent = parent;
+            modal = application.create_window(modal_options, empty_form());
+        });
+        column->add_child(std::move(button));
+        return column;
+    };
+    parent = application.create_window(albor::WindowOptions{}, opener);
+    ASSERT_TRUE(parent.valid());
+    // the frame arranges the tree, which is what gives the button bounds to press (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* stage = application.stage(parent);
+    ASSERT_NE(stage, nullptr);
+    // act press the button, which opens the application modal window and never sees its release (§8.3)
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    // assert the press ran the control and the modal window was created (§5.1)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(activations, 1);
+    ASSERT_TRUE(modal.valid());
+    // act close the modal window, which returns the interaction to the parent (§5.1)
+    EXPECT_TRUE(application.destroy_window(modal));
+    // act press the control again, which a stale capture would swallow (§8.3)
+    albor::Event second{.kind = albor::EventKind::PointerDown, .position = albor::Point{6.0f, 6.0f}};
+    stage->deliver(second);
+    // assert the parent accepted the second press, because the modal ended the first drag (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_EQ(activations, 2);
+    // cleanup the parent, which owns the modal the second press opened (§5.1)
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, AnApplicationModalDialogEndsTheDragOfEveryBlockedWindow) {
+    // arrange two windows whose presses each arm a drag before an application modal opens (§5.1, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle first;
+    albor::WindowHandle second;
+    albor::WindowHandle modal;
+    int first_activations = 0;
+    int second_activations = 0;
+    albor::RootBuilder first_form = [&first_activations](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns one control, whose presses the test counts (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto button = std::make_unique<albor::Button>(&engine, &text, "First");
+        button->set_on_click([&first_activations] { first_activations++; });
+        column->add_child(std::move(button));
+        return column;
+    };
+    albor::RootBuilder second_form = [&application, &second, &modal, &second_activations](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns the control that opens the modal over every window (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Second");
+        button->set_on_click([&application, &second, &modal, &second_activations] {
+            second_activations++;
+            albor::WindowOptions modal_options;
+            modal_options.role = albor::WindowRole::Dialog;
+            modal_options.modality = albor::Modality::ApplicationModal;
+            modal_options.title = "Modal";
+            modal_options.parent = second;
+            modal = application.create_window(modal_options, empty_form());
+        });
+        column->add_child(std::move(button));
+        return column;
+    };
+    first = application.create_window(albor::WindowOptions{}, first_form);
+    second = application.create_window(albor::WindowOptions{}, second_form);
+    ASSERT_TRUE(first.valid());
+    ASSERT_TRUE(second.valid());
+    // the frame arranges both trees, which gives each button bounds to press (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* first_stage = application.stage(first);
+    albor::WindowStage* second_stage = application.stage(second);
+    ASSERT_NE(first_stage, nullptr);
+    ASSERT_NE(second_stage, nullptr);
+    // act press the first control, which arms a drag that no release will end (§8.3)
+    albor::Event first_press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    first_stage->deliver(first_press);
+    EXPECT_TRUE(first_press.handled);
+    EXPECT_EQ(first_activations, 1);
+    // act press the second control, which opens the modal over both windows (§5.1)
+    albor::Event second_press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    second_stage->deliver(second_press);
+    EXPECT_TRUE(second_press.handled);
+    EXPECT_EQ(second_activations, 1);
+    ASSERT_TRUE(modal.valid());
+    // act close the modal, which returns the interaction to both windows (§5.1)
+    EXPECT_TRUE(application.destroy_window(modal));
+    // act press each control again, which a stale capture would swallow (§8.3)
+    albor::Event first_again{.kind = albor::EventKind::PointerDown, .position = albor::Point{6.0f, 6.0f}};
+    first_stage->deliver(first_again);
+    albor::Event second_again{.kind = albor::EventKind::PointerDown, .position = albor::Point{6.0f, 6.0f}};
+    second_stage->deliver(second_again);
+    // assert every blocked window ended its drag, not only the one that opened the modal (§8.3)
+    EXPECT_TRUE(first_again.handled);
+    EXPECT_EQ(first_activations, 2);
+    EXPECT_TRUE(second_again.handled);
+    EXPECT_EQ(second_activations, 2);
+    // cleanup both windows, which own the modal the second press opened (§5.1)
+    EXPECT_TRUE(application.destroy_window(first));
+    EXPECT_TRUE(application.destroy_window(second));
+}
+
+TEST(MainWindow, AFilePanelPressDoesNotKeepTheNextPress) {
+    // arrange a parent whose control opens a native file panel from its press (§5.3, §8.3)
+    InstalledScope scope;
+    albor::headless::reset_file_dialogs();
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle parent;
+    int activations = 0;
+    albor::RootBuilder opener = [&application, &parent, &activations](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns the control that runs the panel (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Open");
+        // the press runs the panel synchronously, which is the regression (§5.3)
+        button->set_on_click([&application, &parent, &activations] {
+            activations++;
+            albor::OpenFileOptions options;
+            options.parent = parent;
+            options.title = "Open";
+            (void)application.open_file(options);
+        });
+        column->add_child(std::move(button));
+        return column;
+    };
+    parent = application.create_window(albor::WindowOptions{}, opener);
+    ASSERT_TRUE(parent.valid());
+    // the frame arranges the tree, which is what gives the button bounds to press (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* stage = application.stage(parent);
+    ASSERT_NE(stage, nullptr);
+    // act press the button, which opens the panel and never sees its release (§8.3)
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    // assert the press ran the control and the panel opened (§5.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(activations, 1);
+    EXPECT_EQ(albor::headless::file_dialog_count(), 1U);
+    // act press the control again, which a stale capture would swallow (§8.3)
+    albor::Event second{.kind = albor::EventKind::PointerDown, .position = albor::Point{6.0f, 6.0f}};
+    stage->deliver(second);
+    // assert the parent accepted the second press, because the panel ended the first drag (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_EQ(activations, 2);
+    // cleanup the parent, which owns nothing after the panel returns (§5.1)
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, AFilePanelSavePressDoesNotKeepTheNextPress) {
+    // arrange a parent whose control opens a native save panel from its press (§5.3, §8.3)
+    InstalledScope scope;
+    albor::headless::reset_file_dialogs();
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle parent;
+    int activations = 0;
+    albor::RootBuilder opener = [&application, &parent, &activations](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns the control that runs the panel (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Save");
+        // the press runs the panel synchronously, which is the regression (§5.3)
+        button->set_on_click([&application, &parent, &activations] {
+            activations++;
+            albor::SaveFileOptions options;
+            options.parent = parent;
+            options.title = "Save";
+            options.default_name = "untitled.cir";
+            (void)application.save_file(options);
+        });
+        column->add_child(std::move(button));
+        return column;
+    };
+    parent = application.create_window(albor::WindowOptions{}, opener);
+    ASSERT_TRUE(parent.valid());
+    // the frame arranges the tree, which is what gives the button bounds to press (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* stage = application.stage(parent);
+    ASSERT_NE(stage, nullptr);
+    // act press the button, which opens the panel and never sees its release (§8.3)
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    // assert the press ran the control and the save panel opened (§5.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(activations, 1);
+    EXPECT_EQ(albor::headless::file_dialog_count(), 1U);
+    EXPECT_TRUE(albor::headless::last_file_dialog_was_save());
+    // act press the control again, which a stale capture would swallow (§8.3)
+    albor::Event second{.kind = albor::EventKind::PointerDown, .position = albor::Point{6.0f, 6.0f}};
+    stage->deliver(second);
+    // assert the parent accepted the second press, because the panel ended the first drag (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_EQ(activations, 2);
+    // cleanup the parent, which owns nothing after the panel returns (§5.1)
+    EXPECT_TRUE(application.destroy_window(parent));
 }
 
 TEST(MainWindow, AStalePortableParentIsRefusedRatherThanMadeTopLevel) {

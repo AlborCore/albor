@@ -345,6 +345,14 @@ namespace albor
     }
 
     void Application::enter_dialog(WindowHandle handle, const WindowOptions& options) {
+        // a modal window blocks the windows that predate it, so a press they held never sees its release (§8.3)
+        if (options.modality != Modality::None) {
+            for (const std::pair<const std::uint64_t, std::unique_ptr<WindowStage>>& entry : m_stages) {
+                // a window the modal does not constrain keeps its drag, because its release still arrives (§5.1)
+                if (input_blocked(WindowHandle::from_id(entry.first)))
+                    entry.second->cancel_pointer_capture();
+            }
+        }
         // only a dialog takes the interaction on open, because an ordinary window does not steal focus (§5.1)
         if (options.role != WindowRole::Dialog)
             return;

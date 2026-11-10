@@ -142,7 +142,7 @@ namespace albor
         // an unwired stage has no input to cancel, which the window betrayed at creation time (§8.3)
         if (!m_input)
             return;
-        // the controller drops the drag, because the window it belonged to left the screen (§8.3)
+        // the controller drops the drag, because the window it belonged to lost the interaction (§8.3)
         m_input->cancel_pointer_capture();
     }
 
