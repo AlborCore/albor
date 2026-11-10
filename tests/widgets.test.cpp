@@ -6304,7 +6304,8 @@ TEST(TabViewChecks, AVerticalStripPaintsTheSelectionAsARow) {
     // act
     tabs.render(recorder);
     // assert the selection is one rounded row inset inside the first header, not a 2px marker (§6.1)
-    const std::vector<DrawCommand>& commands = recorder.scene()->commands();
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const std::vector<DrawCommand>& commands = scene->commands();
     ASSERT_EQ(commands.size(), 3u);
     EXPECT_EQ(commands[0].kind(), DrawCommandKind::RoundedRect);
     EXPECT_EQ(commands[0].rect_geometry().rect, (Rect::from_origin_size(Point{2.0f, 2.0f}, Size{68.0f, 28.0f})));
@@ -6356,7 +6357,8 @@ TEST(TabViewChecks, ATopStripKeepsTheIndicatorWhenThePresetFillsTheRow) {
     // act
     tabs.render(recorder);
     // assert the top strip draws its marker rather than a row, because the row style is vertical only (§6.1)
-    const std::vector<DrawCommand>& commands = recorder.scene()->commands();
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const std::vector<DrawCommand>& commands = scene->commands();
     ASSERT_EQ(commands.size(), 3u);
     EXPECT_EQ(commands[0].kind(), DrawCommandKind::Rect);
     EXPECT_FLOAT_EQ(commands[0].rect_geometry().rect.height, 2.0f);
@@ -6410,7 +6412,8 @@ TEST(TabViewChecks, ASelectionRowPaintsBehindAComposedTitle) {
     // act
     tabs.render(recorder);
     // assert the row draws before the title, because a composed title sits on the plate (§6.1)
-    const std::vector<DrawCommand>& commands = recorder.scene()->commands();
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const std::vector<DrawCommand>& commands = scene->commands();
     ASSERT_EQ(commands.size(), 3u);
     EXPECT_EQ(commands[1].kind(), DrawCommandKind::RoundedRect);
     EXPECT_EQ(commands[2].kind(), DrawCommandKind::Rect);
