@@ -226,6 +226,9 @@ namespace albor
         // arrange the child only when it asked for a pass or its bounds would move, which keeps a relayout local (§8.2)
         void arrange_if_changed(UiNode& child, const Rect& bounds);
 
+        // mark the node and its descendants for arrangement, which a subtree returning to the frame needs (§8.2)
+        void invalidate_arrange_subtree();
+
         // narrow the damage a child reports to what this node actually paints, which a clipping container overrides (§6.1)
         [[nodiscard]] virtual Rect clip_child_damage(const Rect& damage) const;
 

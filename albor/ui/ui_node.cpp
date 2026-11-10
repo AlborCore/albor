@@ -432,6 +432,19 @@ namespace albor
             m_invalidation_handler();
     }
 
+    void UiNode::invalidate_arrange_subtree() {
+        // the subtree repaints, because the placement that follows can move it (§6.1)
+        m_render_dirty = true;
+        // the arrange runs even when the bounds this node is handed do not move (§8.2)
+        m_arrange_dirty = true;
+        // every child is stale for the same reason, because the passes skipped the whole subtree (§8.2)
+        for (const auto& child : m_children)
+            child->invalidate_arrange_subtree();
+        // an overlay is placed by the same pass, so it carries the same stale placement (§8.3)
+        for (const auto& overlay : m_overlays)
+            overlay->invalidate_arrange_subtree();
+    }
+
     void UiNode::arrange_if_changed(UiNode& child, const Rect& bounds) {
         // a child that asked for no pass and would not move keeps the placement it already has (§8.2)
         if (!child.m_measure_dirty && !child.m_arrange_dirty && child.m_bounds == bounds)
@@ -485,6 +498,9 @@ namespace albor
             notify_detaching(this);
         // the flag is stored first, so the invalidation walks a subtree that already knows it is hidden (§6.1)
         m_visible = visible;
+        // a subtree that returns to the frame was skipped by both passes, so its placement is stale (§8.2)
+        if (visible)
+            invalidate_arrange_subtree();
         // showing or hiding a node changes what the frame contains (§6.1)
         invalidate_layout();
     }
