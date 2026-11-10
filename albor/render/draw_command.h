@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <variant>
 #include <vector>
 
@@ -253,6 +254,9 @@ namespace albor
         // the area a damage region must cover for this command, including its stroke fringe (§6.1)
         [[nodiscard]] Rect damage_bounds() const;
 
+        // record the damage bound once, which stage two then reads instead of walking the geometry again (§6.1)
+        void cache_damage_bounds();
+
         // the transform the retained geometry draws under, which a picture command nests under (§6.4)
         [[nodiscard]] const Transform& transform() const;
 
@@ -313,8 +317,8 @@ namespace albor
         // draw one embedded glyph as its outline, which builds a contour and so is separate (§6.4, AD-34)
         void replay_glyph_outline(RenderContext& context) const;
 
-        // compare two commands field by field (§6.2)
-        friend bool operator==(const DrawCommand& lhs, const DrawCommand& rhs) = default;
+        // compare two commands field by field, where the cached bound is derived and so not part of the identity (§6.2)
+        friend bool operator==(const DrawCommand& lhs, const DrawCommand& rhs) { return std::tie(lhs.m_clip, lhs.m_clip_radius, lhs.m_transform, lhs.m_paint, lhs.m_geometry) == std::tie(rhs.m_clip, rhs.m_clip_radius, rhs.m_transform, rhs.m_paint, rhs.m_geometry); }
 
         // compare two commands for inequality, which a test asserts on (§6.2)
         friend bool operator!=(const DrawCommand& lhs, const DrawCommand& rhs) = default;
@@ -349,6 +353,9 @@ namespace albor
 
         // the geometry the command carries, where the alternative index is the kind (§6.2)
         Geometry m_geometry;
+
+        // the bound stage one computed while culling, which stage two reads rather than walking the geometry (§6.1)
+        std::optional<Rect> m_damage_bounds;
     };
 
     // replay a command list in paint order, skipping anything outside the optional damage region (§6.1, §6.4)

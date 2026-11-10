@@ -275,6 +275,9 @@ namespace albor
         // a fully opaque context leaves every paint alone, which is the common case (§6.1)
         if (m_opacity < 1.0f)
             command.scale_alpha(m_opacity);
+        // a culling recorder computes the damage bound once, because stage two reads the same value off the scene (§6.1)
+        if (has_damage_filter() && command.kind() != DrawCommandKind::LayerPush && command.kind() != DrawCommandKind::LayerPop)
+            command.cache_damage_bounds();
         // the scene holds the recorded commands in paint order, which is what stage two replays as recorded (§6.1)
         m_commands.push_back(std::move(command));
     }
@@ -337,6 +340,9 @@ namespace albor
                 damage = damage->intersect(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
             // an empty region falls back to the full frame rather than lying about it (§6.1)
             if (damage && damage->empty())
+                damage.reset();
+            // a region covering the whole surface excludes nothing, so the frame is recorded whole (§6.1)
+            if (damage && damage->width >= metrics.logical_size.width && damage->height >= metrics.logical_size.height)
                 damage.reset();
         }
         // the damage is spent before recording, so an invalidation raised while drawing stays for the next frame (§6.1)

@@ -2651,6 +2651,58 @@ TEST(DrawCommandShape, ADamageBoundIncludesTheStrokeFringe) {
     EXPECT_EQ(damage, (Rect{2.0f, 2.0f, 26.0f, 26.0f}));
 }
 
+TEST(DrawCommandShape, ACachedDamageBoundMatchesTheComputedOneAndSurvivesACopy) {
+    // arrange a shape whose fringe is what the damage bound adds (§6.1)
+    const DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}), Paint{});
+    // act
+    const Rect computed = command.damage_bounds();
+    DrawCommand cached = command;
+    cached.cache_damage_bounds();
+    const DrawCommand copy = cached;
+    // assert the computed and the cached bound agree, and a copy carries the same value into stage two (§6.1)
+    EXPECT_EQ(computed, (Rect{9.0f, 19.0f, 32.0f, 42.0f}));
+    EXPECT_EQ(cached.damage_bounds(), computed);
+    EXPECT_EQ(copy.damage_bounds(), computed);
+}
+
+TEST(DrawCommandShape, ACachedDamageBoundIsDroppedWhenTheTransformChanges) {
+    // arrange a command whose bound is already computed under the identity transform (§6.1)
+    DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}), Paint{});
+    command.cache_damage_bounds();
+    // act
+    command.set_transform(Transform::translation(100.0f, 50.0f));
+    // assert the bound follows the new placement rather than answering the stale one (§6.1, §6.4)
+    EXPECT_EQ(command.damage_bounds(), (Rect{109.0f, 69.0f, 32.0f, 42.0f}));
+}
+
+TEST(DrawCommandShape, ACachedDamageBoundIsDroppedWhenTheClipChanges) {
+    // arrange a retained picture whose visible area the clip decides (§6.2, §6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    ResourceFactory factory;
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    DrawCommand command = DrawCommand::picture(picture, Transform{});
+    command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    command.cache_damage_bounds();
+    // act
+    command.set_clip(Rect::from_origin_size(Point{200.0f, 200.0f}, Size{50.0f, 50.0f}));
+    // assert the bound follows the new clip rather than answering the stale one (§6.2)
+    EXPECT_TRUE(command.damage_bounds().empty());
+}
+
+TEST(DrawCommandShape, ACommandComparesEqualAfterItsDamageBoundIsCached) {
+    // arrange two commands over the same fields, only one of which computed its derived bound (§6.1)
+    const DrawCommand plain = DrawCommand::rectangle(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}), Paint{});
+    DrawCommand cached = plain;
+    cached.cache_damage_bounds();
+    // assert the derived bound is not part of the identity, because a scene comparison reads the fields (§6.2)
+    EXPECT_EQ(plain, cached);
+    // assert a real field still separates two commands, so the comparison cannot pass by ignoring the clip (§6.2)
+    DrawCommand clipped = cached;
+    clipped.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{5.0f, 5.0f}));
+    EXPECT_NE(plain, clipped);
+}
+
 TEST(DrawCommandShape, AnOpacityDimsAShadowCommand) {
     // arrange a cast, whose colour lives in its own geometry rather than in the command paint (§6.2)
     const DrawCommand command = DrawCommand::shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 1.0f)});
