@@ -341,3 +341,25 @@ TEST(IrSerializerChecks, AnImagePathWithACarriageReturnIsRefused) {
     ASSERT_TRUE(ir.has_value());
     EXPECT_TRUE(ir->properties.empty());
 }
+
+TEST(IrSerializerChecks, ANamedValueMemberReachesTheIrAsTheMemberTheAuthorWrote) {
+    // arrange a field whose scrollbar policy is a named member, which is a static value (§11.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(R"(
+component Panel {
+    TextField {
+        multiline: true;
+        scrollbar: Scrollbar.off;
+    }
+}
+)",
+                                  diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    // assert the member crosses the IR in its written spelling, which the runtime reads (§12.1)
+    ASSERT_TRUE(ir.has_value());
+    ASSERT_EQ(ir->properties.size(), 2u);
+    EXPECT_EQ(ir->properties.at(1).name, "scrollbar");
+    EXPECT_EQ(ir->properties.at(1).value, "off");
+}

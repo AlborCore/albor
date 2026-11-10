@@ -166,11 +166,11 @@ namespace albor::devrt
 
         // read a scrollbar policy out of a serialized assignment, which is a named member of §8
         bool read_scrollbar(std::string_view value, ScrollbarVisibility& out) {
-            // the closed set is scanned, because the name is the member (§8)
+            // the closed set is scanned, because the name is the member the author wrote (§8)
             const std::pair<std::string_view, ScrollbarVisibility> members[] = {
                 {"as_needed", ScrollbarVisibility::AsNeeded},
-                {"always_off", ScrollbarVisibility::AlwaysOff},
-                {"always_on", ScrollbarVisibility::AlwaysOn},
+                {"off", ScrollbarVisibility::AlwaysOff},
+                {"on", ScrollbarVisibility::AlwaysOn},
             };
             for (const std::pair<std::string_view, ScrollbarVisibility>& member : members) {
                 if (member.first == value) {
@@ -880,6 +880,14 @@ namespace albor::devrt
                      if (!read_align(value, align))
                          return false;
                      node.set_content_align(align);
+                     return true;
+                 })},
+                {"TextField.scrollbar", setter<TextField>([](TextField& node, std::string_view value) {
+                     // the policy is a named member, which decides whether the bar is drawn (§8)
+                     ScrollbarVisibility visibility;
+                     if (!read_scrollbar(value, visibility))
+                         return false;
+                     node.set_scrollbar_visibility(visibility);
                      return true;
                  })},
                 {"TextField.disabled", setter<TextField>([](TextField& node, std::string_view value) {

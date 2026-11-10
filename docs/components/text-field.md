@@ -12,6 +12,7 @@ Single-line by default; set `multiline` for a wrapping, scrolling editor.
 | `read_only` | `bool` | displays but refuses editing |
 | `multiline` | `bool` | accepts line breaks, wraps, and scrolls its own viewport |
 | `content_align` | `align` | where the value sits vertically inside the plate: `start`, `center`, `end` or `stretch` |
+| `scrollbar` | `scrollbar` | when a bar is drawn on a multi-line field: `Scrollbar.as_needed`, `Scrollbar.off` or `Scrollbar.on` |
 | `disabled` | `bool` | refuses all interaction |
 | `font_size` | `float` | density-scaled; accepts `px` |
 | `decorations` | `vector<TextDecoration>` | styled byte ranges for syntax highlighting and diagnostics |
@@ -66,25 +67,57 @@ component NameForm {
 `multiline: true` turns the field into a wrapping, scrolling editor. The value wraps at the
 width the parent offers, and the field measures to its wrapped run — so it grows as lines are
 added, until the parent's constraints cap its height
-([Layout](../concepts/layout.md#the-two-phases)). Past that cap the field scrolls its own
-vertical viewport instead of letting the text clip:
+([Layout](../concepts/layout.md#the-two-phases)).
+
+**Give the field a height and it becomes a fixed editor box.** The usual way to write a notes
+area is a `SizedBox` with a `height`, because the field only scrolls once something caps it:
 
 ```text
-TextField {
-    id: notes;
-    multiline: true;
-    value: notes_text;
-    on_changed: { notes_text = value; }   // the same two-way pattern as the single-line case
+SizedBox {
+    height: 240px;
+
+    TextField {
+        id: notes;
+        multiline: true;
+        value: notes_text;
+        on_changed: { notes_text = value; }   // the same two-way pattern as the single-line case
+    }
 }
 ```
 
+A `ScrollView` around the field is neither required nor useful: the field owns its viewport, and
+a `ScrollView` measures it against the viewport it just made room for, so the wrapper ends up with
+nothing to scroll. Write the `SizedBox`, not the wrapper.
+
+That holds when the field is the view's content child. A field nested deeper, inside a `Column`
+the view scrolls, is measured by that container with no ceiling and grows to its whole run, as
+it does anywhere else. The recipe is a height cap, never a wrapper.
+
+### Scrolling
+
 The caret drives the scroll: moving, typing or pasting the caret onto a line outside the box
-brings it back into view, and dragging a selection past an edge autoscrolls. The composition
-underline and the IME anchor follow the scrolled caret. The field draws no scrollbar — it is an
-editor, not a [ScrollView](scroll-view.md).
+brings it back into view, and dragging a selection past an edge autoscrolls. The wheel scrolls
+the view without moving the caret, and a notch at either end is left to an enclosing viewport
+instead of being swallowed. `PageUp` and `PageDown` move the caret a page and carry the view with
+it, keeping the reader's line of context; `Ctrl+Home` and `Ctrl+End` reach the ends of the
+document. The composition underline and the IME anchor follow the scrolled caret.
+
+The field draws its own bar in a reserved gutter, so the text never reflows when a bar appears:
+
+| `scrollbar` | what is drawn |
+| --- | --- |
+| `as_needed` (default) | the gutter is reserved, and the thumb appears while the run overflows |
+| `off` | no gutter and no bar, while the wheel and the keys still scroll |
+| `on` | the gutter and a thumb, whether or not the run overflows |
+
+The gutter is reserved whenever the field is multi-line and the policy is not `off`. That is
+deliberate: a bar that reserves its gutter only when needed would rewrap every line at the
+moment the document crossed the box height, which is exactly while the user is typing the line
+that crossed it.
 
 Scrolling is visual only. It never changes the value, the caret byte, the selection, the
-clipboard or the undo history; a single-line field never scrolls, whatever its width.
+clipboard or the undo history; a single-line field never scrolls, reserves no gutter and leaves
+the wheel unclaimed, whatever its width.
 
 From C++, the scroll is observable and drivable on any field:
 
@@ -92,6 +125,8 @@ From C++, the scroll is observable and drivable on any field:
 field->scroll_offset();          // how far the content is scrolled from its leading edge
 field->maximum_scroll_offset();  // zero while the text fits
 field->scroll_to(0.0f);          // clamped into [0, maximum_scroll_offset()]
+field->scroll_by(40.0f);         // a relative move, which reports whether it moved
+field->owns_vertical_scroll();   // true for a multi-line field, which a container respects
 ```
 
 ## Content alignment

@@ -5,6 +5,8 @@
 
 #include "albor/animation/animation_engine.h"
 #include "albor/commands/command.h"
+#include "albor/widgets/scroll_thumb.h"
+#include "albor/widgets/scroll_wheel.h"
 
 namespace albor
 {
@@ -29,10 +31,12 @@ namespace albor
     void TextField::measure(const SizeConstraints& constraints, Size& out_size) {
         // the metrics are asked for once, because every dimension reads them (§8.2)
         const ControlMetrics& m = metrics();
+        // the gutter is reserved whenever the policy asks for one, so a bar never rewraps the run it appeared over (§8.2)
+        const float gutter = bar_reserved() ? bar_extent() : 0.0f;
         // a multi line field wraps at the width the parent offers, which is the ceiling the measure phase carries (§8.2)
         if (m_multiline && m_text_engine != nullptr) {
-            // the ceiling is honoured in run space, because the inset sits outside the run (§8.2)
-            const float ceiling = constraints.maximum.width > 0.0f ? std::max(0.0f, constraints.maximum.width - m.text_field_padding * 2.0f) : 0.0f;
+            // the ceiling is honoured in run space, because the inset and the gutter sit outside the run (§8.2)
+            const float ceiling = constraints.maximum.width > 0.0f ? std::max(0.0f, constraints.maximum.width - m.text_field_padding * 2.0f - gutter) : 0.0f;
             // the ceiling is remembered, because the edit path must wrap at the same width the paint does (§8.2)
             m_measure_width = ceiling;
             // both runs are laid out at that ceiling, because the hint wraps like the value (§8.2)
@@ -40,7 +44,7 @@ namespace albor
             m_placeholder_layout = m_text_engine->measure(m_placeholder, ceiling, m_font_size, m_font_spec);
         }
         // the content is the widest of the value run and the hint run, because an empty field shows the hint (§8.2)
-        const float run_width = std::max(m_layout.size.width, m_placeholder_layout.size.width) + m.text_field_padding * 2.0f;
+        const float run_width = std::max(m_layout.size.width, m_placeholder_layout.size.width) + m.text_field_padding * 2.0f + gutter;
         // the height is the run height, because a field vertically centres the line it draws (§8.2)
         const float run_height = std::max(m_layout.size.height, m_placeholder_layout.size.height);
         // the content is at least the minimum extent the metrics carry, and at least the children (§8.2)
@@ -108,6 +112,8 @@ namespace albor
             paint_caret(context);
         // the clip is restored, so nothing after the field paints clipped by it (§6.2)
         context.restore();
+        // the bar paints in the gutter the measure reserved, which is what reports the offset (§8.2)
+        paint_scrollbar(context);
     }
 
     TextInputRange TextField::selection_range() const {
@@ -337,6 +343,17 @@ namespace albor
         // a disabled field takes no key and no press, because it refuses everything (§18.7)
         if (disabled())
             return;
+        // the wheel moves the viewport the field keeps, which is what lets it scroll without a container (§8.3)
+        if (event.kind == EventKind::Wheel) {
+            // a single line field has no range, so the wheel belongs to whatever encloses it (§8.3)
+            if (!m_multiline)
+                return;
+            // the policy is the themed distance one notch moves, which every scrollable widget shares (§8.3)
+            const float line = theme() != nullptr ? theme()->metrics().scroll_line_extent : SCROLL_LINE_EXTENT;
+            // a positive wheel turns toward the start, so it subtracts from the offset (§8.3)
+            event.handled = scroll_by(-event.scroll * wheel_scale(event, line));
+            return;
+        }
         // the keyboard edits come through the key kind, which the focused walk delivers (§8.3)
         if (event.kind == EventKind::KeyDown) {
             // a shift arrow is a selection extension, which the plain caret keys do not collapse (§8.3)
@@ -363,6 +380,19 @@ namespace albor
                 // an option chord is platform text, which no editing binding claims (§18.5)
                 if (event.modifiers.option || (!event.modifiers.control && !event.modifiers.command))
                     return;
+                // the document keys reach the ends of the value, which the line keys cannot (§8.3)
+                if (event.key == Key::Home || event.key == Key::End) {
+                    // the event is claimed, because the caret reaches a place the line keys do not (§8.3)
+                    event.handled = true;
+                    // the destination is the edge the key names, which is the whole value (§8.3)
+                    const std::size_t destination = event.key == Key::Home ? 0 : m_value.size();
+                    // a shift chord extends to the edge, while a plain chord places the caret (§8.3)
+                    if (event.modifiers.shift)
+                        extend_caret(destination);
+                    else
+                        set_caret(destination);
+                    return;
+                }
                 // the copy key copies whatever the field holds, which a read only field still answers (§8.3)
                 if (event.key == Key::C) {
                     event.handled = true;
@@ -461,6 +491,30 @@ namespace albor
                     ensure_caret_visible();
                     invalidate();
                 }
+                return;
+            }
+            // the paging keys move the caret a page and carry the run with it, which is what a document expects (§8.3)
+            if ((event.key == Key::PageDown || event.key == Key::PageUp) && m_multiline) {
+                // the column the page keeps is the one the caret holds, which is what a repeated page reuses (§8.3)
+                m_goal_x = caret_goal_x();
+                // the page names the byte it reaches and how far the run moves with it (§8.3)
+                const std::pair<std::size_t, float> page = page_target(event.key == Key::PageDown);
+                // the caret moves only when the page reached a new byte, which is what an end does not (§8.3)
+                const bool caret_moved = page.first != std::min(m_caret, m_value.size());
+                // the run moves by the distance the page named, which the clamp bounds at the ends (§8.3)
+                const bool offset_moved = move_offset(m_scroll_offset + page.second);
+                // a page that reached nothing leaves the key, so an enclosing viewport takes it (§8.3)
+                if (!caret_moved && !offset_moved)
+                    return;
+                // the event is claimed, because the page moved the caret or the run (§8.3)
+                event.handled = true;
+                // a page move collapses the selection, because the caret lands on a new byte (§8.3)
+                m_caret = page.first;
+                m_anchor = page.first;
+                // the caret comes back into view, because a page is a move like any other (§8.3)
+                ensure_caret_visible();
+                // a page move is visual only, because the value did not change (§6.1)
+                invalidate();
                 return;
             }
             // the home key puts the caret where its own line begins, which a read only field still moves (§8.3)
@@ -595,6 +649,23 @@ namespace albor
             // a press outside the plate belongs to whatever is behind it (§8.3)
             if (!hit_test(event.position))
                 return;
+            // a press on the reserved gutter belongs to the bar, so it never places a caret (§8.3)
+            if (bar_reserved() && event.position.x >= bounds().x + bounds().width - drawn_bar_extent()) {
+                // a press on the thumb starts the drag that maps travel onto the offset (§8.3)
+                const Rect thumb = thumb_rect();
+                if (scrollbar_visible() && event.position.y >= thumb.y && event.position.y < thumb.y + thumb.height) {
+                    // the event is claimed, because the drag it starts owns the pointer (§8.3)
+                    event.handled = true;
+                    // the drag is alive, which the following moves steer (§8.3)
+                    m_dragging_thumb = true;
+                    // the pointer position is the origin the drag measures against (§8.3)
+                    m_drag_origin = event.position;
+                    // the offset is the other half of that measurement, so the thumb does not jump (§8.3)
+                    m_drag_origin_offset = m_scroll_offset;
+                }
+                // a press that missed the thumb is left to whatever encloses the field (§8.3)
+                return;
+            }
             // the event is claimed, so no ancestor reacts to the same press (§8.3)
             event.handled = true;
             // the press starts a drag, which a release ends (§8.3)
@@ -623,6 +694,14 @@ namespace albor
                 set_caret(byte);
             return;
         }
+        // a move that continues a thumb drag steers the offset, which is what dragging the bar means (§8.3)
+        if (event.kind == EventKind::PointerMove && m_dragging_thumb) {
+            // the event is claimed, so no ancestor reacts to the same move (§8.3)
+            event.handled = true;
+            // the travel the pointer covered becomes the offset, because the bar maps one onto the other (§8.3)
+            drag_thumb_to(event.position);
+            return;
+        }
         // a move while a press drag is alive extends the selection, which is what dragging means (§8.3)
         if (event.kind == EventKind::PointerMove && m_dragging) {
             // a move over a run the engine did not shape extends nothing, which an empty value gives (§9.1)
@@ -632,6 +711,14 @@ namespace albor
             autoscroll_for_drag(event.position);
             // the move is resolved against the row it landed on, which is what a drag across rows means (§9.1)
             extend_caret(byte_at_point(event.position));
+            return;
+        }
+        // a release ends a thumb drag, which leaves the offset where the drag put it (§8.3)
+        if (event.kind == EventKind::PointerUp && m_dragging_thumb) {
+            // the drag ends with the release, so the next press starts a fresh one (§8.3)
+            m_dragging_thumb = false;
+            // the event is claimed, because the press that started the drag claimed it too (§8.3)
+            event.handled = true;
             return;
         }
         // a release ends the drag, whether or not it landed over the plate (§8.3)
@@ -700,6 +787,23 @@ namespace albor
             // the action descends a line the way the down key does, keeping the column goal (§10.1, §8.3)
             mutable_owner(this)->set_caret(step_down_byte(std::min(m_caret, m_value.size())));
         });
+        // a document that overflows is scrollable by a reader, which is what the wheel does for a pointer (§10.1)
+        if (m_multiline && !disabled()) {
+            // the down action moves the view one line, which is the notch a screen reader sends (§10.1)
+            (void)node.add_action("scroll_down", [this] {
+                // the metric comes from the theme the field resolved, which is the one the wheel reads (§8.3)
+                TextField* field = mutable_owner(this);
+                const float line = field->theme() != nullptr ? field->theme()->metrics().scroll_line_extent : SCROLL_LINE_EXTENT;
+                field->scroll_by(line);
+            });
+            // the up action moves the view the other way, which completes the pair a client expects (§10.1)
+            (void)node.add_action("scroll_up", [this] {
+                // the metric comes from the theme the field resolved, which is the one the wheel reads (§8.3)
+                TextField* field = mutable_owner(this);
+                const float line = field->theme() != nullptr ? field->theme()->metrics().scroll_line_extent : SCROLL_LINE_EXTENT;
+                field->scroll_by(-line);
+            });
+        }
         return node;
     }
 
@@ -906,7 +1010,7 @@ namespace albor
             return candidate;
         // a line with nothing before it steps past the break that ended the line behind it (§9.1)
         if (line > 0)
-            return m_layout.run->lines()[line - 1].end_byte;
+            return caret_byte_on_line(line - 1, m_layout.run->lines()[line - 1].end_byte);
         // a caret at the very start has nothing to step to (§9.1)
         return clamped;
     }
@@ -978,7 +1082,7 @@ namespace albor
         // the row hangs at its own origin inside the inset, which is where x is measured from (§8.2)
         const float x = logical_point.x - (bounds().x + metrics().text_field_padding + m_layout.run->lines()[index].origin.x);
         // the run maps the position on that row to a byte, clamping past both ends (§9.1)
-        return m_layout.run->byte_at_x(index, std::max(0.0f, x));
+        return caret_byte_on_line(index, m_layout.run->byte_at_x(index, std::max(0.0f, x)));
     }
 
     std::size_t TextField::step_up_byte(std::size_t byte) const {
@@ -993,7 +1097,7 @@ namespace albor
         if (line == 0)
             return m_layout.run->lines().front().start_byte;
         // the column goal is what the line above is searched at (§8.3)
-        return m_layout.run->byte_at_x(line - 1, m_goal_x);
+        return caret_byte_on_line(line - 1, m_layout.run->byte_at_x(line - 1, m_goal_x));
     }
 
     std::size_t TextField::step_down_byte(std::size_t byte) const {
@@ -1008,7 +1112,7 @@ namespace albor
         if (line + 1 >= m_layout.run->lines().size())
             return clamped;
         // the column goal is what the line below is searched at (§8.3)
-        return m_layout.run->byte_at_x(line + 1, m_goal_x);
+        return caret_byte_on_line(line + 1, m_layout.run->byte_at_x(line + 1, m_goal_x));
     }
 
     std::size_t TextField::line_start_byte(std::size_t byte) const {
@@ -1028,7 +1132,29 @@ namespace albor
         // the line the caret stands on is the one the key answers (§8.3)
         const std::size_t line = m_layout.run->line_at_byte(std::min(byte, m_value.size()));
         // the line ends where the break that ended it starts (§9.1)
-        return std::min(m_layout.run->lines()[line].end_byte, m_value.size());
+        return caret_byte_on_line(line, m_layout.run->lines()[line].end_byte);
+    }
+
+    std::size_t TextField::caret_byte_on_line(std::size_t line, std::size_t byte) const {
+        // a run the engine did not shape has no row to fold, so the byte stands as it was named (§9.1)
+        if (m_layout.run == nullptr || line >= m_layout.run->lines().size())
+            return std::min(byte, m_value.size());
+        // the row the byte is clamped into is the one whose span the fold reads (§9.1)
+        const ShapedRun::Line& row = m_layout.run->lines()[line];
+        // the byte is clamped into the row, because a caller may name one past its span (§9.1)
+        const std::size_t clamped = std::min(byte, std::min(row.end_byte, m_value.size()));
+        // a break is not a caret stop, so the caret sits before it on the row the break ends (§9.1)
+        if (clamped == row.end_byte && clamped > row.start_byte) {
+            // a carriage return before a newline folds with it, because neither is a caret stop (§9.1)
+            std::size_t stop = clamped;
+            // the walk stops at the first byte that is not part of the break (§9.1)
+            while (stop > row.start_byte && is_line_break_byte(stop - 1))
+                stop--;
+            // a break at the row start folds to the row start, which is the only stop it has (§9.1)
+            return stop;
+        }
+        // every other byte is a caret stop exactly where it stands (§9.1)
+        return clamped;
     }
 
     float TextField::caret_goal_x() const {
@@ -1143,6 +1269,49 @@ namespace albor
         // the content moved under the drag, so the frame changes (§6.1)
         m_scroll_offset = clamped;
         invalidate();
+    }
+
+    std::pair<std::size_t, float> TextField::page_target(bool forward) const {
+        // the caret's own byte is where the page starts, which is the place the move leaves (§8.3)
+        const std::size_t from_byte = std::min(m_caret, m_value.size());
+        // an unshaped run or an unarranged plate has no line to page over, so the caret stays (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty() || bounds().empty())
+            return {from_byte, 0.0f};
+        // the line boxes are what a page is measured in, because a wrapped run has no uniform pitch (§9.1)
+        const std::vector<ShapedRun::Line>& lines = m_layout.run->lines();
+        // the line the caret stands on is where the page begins (§8.3)
+        const std::size_t from_line = m_layout.run->line_at_byte(from_byte);
+        // one line of overlap is what keeps the reader's context when the page turns (§8.3)
+        const float overlap = lines[from_line].ascent + lines[from_line].descent;
+        // the page is the plate less that line, and never less than a point, which is what a page key covers (§8.3)
+        const float page = std::max(1.0f, bounds().height - overlap);
+        // the walk stops on the line a page reaches, or on the last line the run has (§8.3)
+        std::size_t to_line = from_line;
+        // the covered extent is what tells the walk when a page is over (§8.3)
+        float covered = 0.0f;
+        // a page forward walks down the run, because that is the direction the key names (§8.3)
+        while (forward && to_line + 1 < lines.size() && covered < page) {
+            // the next line is what the page covers, so its box is what the walk adds (§9.1)
+            covered += lines[to_line + 1].ascent + lines[to_line + 1].descent;
+            // the walk stands on the line it just covered (§8.3)
+            to_line++;
+        }
+        // a page backward walks up the run, because that is the direction the key names (§8.3)
+        while (!forward && to_line > 0 && covered < page) {
+            // the previous line is what the page covers, so its box is what the walk adds (§9.1)
+            covered += lines[to_line - 1].ascent + lines[to_line - 1].descent;
+            // the walk stands on the line it just covered (§8.3)
+            to_line--;
+        }
+        // a page that reached no line still moves the plate, which is what an end still answers (§8.3)
+        if (to_line == from_line)
+            return {from_byte, forward ? page : -page};
+        // the caret lands on that line at the column it held, which is what a page keeps (§8.3)
+        const std::size_t target = caret_byte_on_line(to_line, m_layout.run->byte_at_x(to_line, m_goal_x));
+        // the run moves by the distance between the two line boxes, so the caret keeps its place on screen (§8.3)
+        const float delta = (lines[to_line].origin.y - lines[to_line].ascent) - (lines[from_line].origin.y - lines[from_line].ascent);
+        // the pair is the byte and the content distance, which the caller applies together (§8.3)
+        return {target, delta};
     }
 
     std::size_t TextField::caret() const {
@@ -1454,15 +1623,132 @@ namespace albor
     }
 
     void TextField::scroll_to(float offset) {
+        // the destination is written through the one clamp, which is what every scroll writer shares (§8.2)
+        (void)move_offset(offset);
+    }
+
+    bool TextField::scroll_by(float amount) {
+        // the offset moves by the signed amount, which the wheel and the reader actions both ask for (§8.3)
+        return move_offset(m_scroll_offset + amount);
+    }
+
+    bool TextField::move_offset(float destination) {
         // the destination is clamped into the range, which is what stops a write overshooting the content (§8.2)
-        const float clamped = clamped_scroll_offset(offset);
+        const float clamped = clamped_scroll_offset(destination);
         // an unchanged destination draws nothing new, because the paint would be the same (§6.1)
         if (clamped == m_scroll_offset)
-            return;
+            return false;
         // the offset is stored first, so the invalidation walks a field that already shows it (§6.1)
         m_scroll_offset = clamped;
         // the content moved, so the frame changes (§6.1)
         invalidate();
+        // the offset moved, which is what the wheel claim reports (§8.3)
+        return true;
+    }
+
+    void TextField::set_scrollbar_visibility(ScrollbarVisibility visibility) {
+        // an unchanged policy redraws nothing, because the bar looks the same (§8)
+        if (m_visibility == visibility)
+            return;
+        // the policy is stored first, so the layout pass sees a field that already knows it (§8)
+        m_visibility = visibility;
+        // the gutter the policy reserves changes the wrap width, so both layout passes run again (§8.2)
+        invalidate_layout();
+    }
+
+    ScrollbarVisibility TextField::scrollbar_visibility() const {
+        // the policy is what the measure and the paint both read (§8)
+        return m_visibility;
+    }
+
+    bool TextField::scrollbar_visible() const {
+        // a single line field has no travel, so it draws no bar (§8)
+        if (!m_multiline)
+            return false;
+        // an always on bar is drawn even while the run fits, because that is what the policy asked (§8)
+        if (m_visibility == ScrollbarVisibility::AlwaysOn)
+            return true;
+        // an always off bar is never drawn, while the content still scrolls (§8)
+        if (m_visibility == ScrollbarVisibility::AlwaysOff)
+            return false;
+        // the as needed policy draws the thumb only while the run overflows (§8)
+        return maximum_scroll_offset() > 0.0f;
+    }
+
+    bool TextField::owns_vertical_scroll() const {
+        // a multi line field keeps its own viewport, which a container must not scroll again (§8.2)
+        return m_multiline;
+    }
+
+    float TextField::bar_extent() const {
+        // the width is what the theme says, or the value the bar always drew with (§6.1)
+        const float extent = theme() != nullptr ? theme()->metrics().scrollbar_extent : SCROLLBAR_EXTENT;
+        // a negative metric would widen the content past the plate, so the gutter never inverts (§8.2)
+        return std::max(0.0f, extent);
+    }
+
+    float TextField::drawn_bar_extent() const {
+        // a bar wider than the plate is clipped to it, so the strip never paints outside the bounds (§8.2)
+        return std::min(bar_extent(), bounds().width);
+    }
+
+    bool TextField::bar_reserved() const {
+        // a single line field never scrolls, so it never reserves a gutter (§8.2)
+        if (!m_multiline)
+            return false;
+        // the policy reserves the gutter unless the bar is turned off entirely (§8)
+        return m_visibility != ScrollbarVisibility::AlwaysOff;
+    }
+
+    Rect TextField::scrollbar_track_rect() const {
+        // an unplaced field has no gutter to paint, so there is no strip either (§6.2)
+        if (bounds().empty())
+            return Rect{};
+        // the strip is the trailing edge of the plate, which is the gutter the wrap width excludes (§8.2)
+        const float extent = drawn_bar_extent();
+        return Rect::from_origin_size(Point{.x = bounds().x + bounds().width - extent, .y = bounds().y}, Size{.width = extent, .height = bounds().height});
+    }
+
+    Rect TextField::thumb_rect() const {
+        // the smallest thumb is what the theme says, or the value the bar always drew with (§6.1)
+        const float floor = theme() != nullptr ? theme()->metrics().scrollbar_thumb_minimum : SCROLLBAR_THUMB_MINIMUM;
+        // the thumb takes the strip the gutter reserved, at the travel the offset reports (§8.2)
+        return scroll_thumb_rect(m_scroll_offset, maximum_scroll_offset(), scrollbar_track_rect(), floor);
+    }
+
+    void TextField::paint_scrollbar(RenderContext& context) const {
+        // a field whose policy draws no bar records nothing, which is the single line and the off policy (§8)
+        if (!scrollbar_visible())
+            return;
+        // the strip is the reserved gutter, which the text never enters (§8.2)
+        const Rect track = scrollbar_track_rect();
+        // an unarranged field has no strip to draw (§6.2)
+        if (track.empty())
+            return;
+        // the track colour resolves by state, so a hover and a press differ without a second literal (§6.1)
+        context.draw_rect(track, {.fill = resolve(track_colors(), Color{0.0f, 0.0f, 0.0f, 0.0f})});
+        // the thumb takes the width of the strip, so its end caps sit flush with the gutter (§6.1)
+        const float extent = drawn_bar_extent();
+        // the thumb colour resolves by state, so the same resolver the other controls use reads it (§6.1)
+        context.draw_rounded_rect(thumb_rect(), extent * 0.5f, {.fill = resolve(thumb_colors(), Color{0.42f, 0.46f, 0.52f, 1.0f})});
+    }
+
+    void TextField::drag_thumb_to(Point logical_position) {
+        // a field with no travel has nowhere for the thumb to go (§8.2)
+        const float maximum = maximum_scroll_offset();
+        if (maximum <= 0.0f)
+            return;
+        // the thumb is as tall as the policy allows, which is what a drag measures its travel against (§8.2)
+        const Rect thumb = thumb_rect();
+        // the distance the thumb can still travel is the track less the thumb, which is what maps onto the offset (§8.2)
+        const float travel = std::max(0.0f, bounds().height - thumb.height);
+        // a thumb that fills the track has no travel, so the drag moves nothing (§8.2)
+        if (travel <= 0.0f)
+            return;
+        // the fraction the pointer covered is the fraction of the content the offset takes (§8.3)
+        const float fraction = std::clamp((logical_position.y - m_drag_origin.y) / travel, -1.0f, 1.0f);
+        // the offset follows that fraction, measured from where the drag began (§8.3)
+        (void)move_offset(m_drag_origin_offset + fraction * maximum);
     }
 
     void TextField::set_decorations(std::vector<TextDecoration> decorations) {
@@ -1959,6 +2245,22 @@ namespace albor
             return nullptr;
         // the installed palette answers, because the theme owns the colour (§6.1)
         return theme()->palette().text_field_selection;
+    }
+
+    const Color* TextField::track_colors() const {
+        // without a theme the table is unused, because the resolver returns the bar's own value (§6.1)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§6.1)
+        return theme()->palette().scrollbar_track;
+    }
+
+    const Color* TextField::thumb_colors() const {
+        // without a theme the table is unused, because the resolver returns the bar's own value (§6.1)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§6.1)
+        return theme()->palette().scrollbar_thumb;
     }
 
     Color TextField::background() const {

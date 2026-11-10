@@ -30,7 +30,7 @@ every element may carry an `id`.
 | [MenuItem](menu.md#menuitem) | leaf | one menu row that invokes a shared command |
 | [MenuSeparator](menu.md#menuseparator) | leaf | the rule between menu groups |
 | [ComboBox](combo-box.md) | leaf | a compact single choice with a popup list |
-| [TextField](text-field.md) | leaf | an editable text field |
+| [TextField](text-field.md) | leaf | an editable text field, or a scrolling multi-line editor |
 | [Slider](slider.md) | leaf | a continuous value the user drags |
 | [ProgressBar](progress-bar.md) | leaf | a read-only fraction of task progress |
 | [CheckBox](checkbox.md) | leaf | a truth value the user toggles |

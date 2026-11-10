@@ -266,7 +266,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
     TestTextEngine text;
     // the closed catalogue of §8, paired with a value each property holds, which is what a definition writes (§11.1)
     const std::vector<std::pair<std::string, std::string>> assignments{
-        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Grid", "columns"}, {"Grid", "rows"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "text_align"}, {"Button", "tooltip"}, {"Button", "background"}, {"Button", "disabled"}, {"Button", "default"}, {"Button", "cancel"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "viewport_width"}, {"ScrollView", "viewport_height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"ListBox", "viewport_width"}, {"ListBox", "viewport_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "content_align"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
+        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Grid", "columns"}, {"Grid", "rows"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "text_align"}, {"Button", "tooltip"}, {"Button", "background"}, {"Button", "disabled"}, {"Button", "default"}, {"Button", "cancel"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "viewport_width"}, {"ScrollView", "viewport_height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"ListBox", "viewport_width"}, {"ListBox", "viewport_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "content_align"}, {"TextField", "scrollbar"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
     };
     // assert each assignment lands, because a setter the table names but never runs is a table that lies (§11.1)
     for (const std::pair<std::string, std::string>& assignment : assignments) {
@@ -425,7 +425,7 @@ TEST(DevElementChecks, EveryTypedPropertyRefusesAValueItCannotHold) {
     TestTextEngine text;
     // the closed catalogue of the typed properties, each with a value of the wrong shape (§11.1)
     const std::vector<std::tuple<std::string, std::string, std::string>> refusals{
-        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Grid", "columns", "wide"}, {"Grid", "rows", "wide"}, {"Padding", "padding", "wide"}, {"Panel", "padding", "wide"}, {"Panel", "spacing", "wide"}, {"Panel", "background", "blue"}, {"Panel", "corner_radius", "wide"}, {"Panel", "border_width", "wide"}, {"Card", "padding", "wide"}, {"Card", "background", "blue"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Button", "default", "yes"}, {"Button", "cancel", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"Image", "source", "icon.png"}, {"Image", "width", "wide"}, {"Image", "height", "tall"}, {"ScrollView", "viewport_width", "wide"}, {"ScrollView", "viewport_height", "tall"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"ListBox", "viewport_width", "wide"}, {"ListBox", "viewport_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "content_align", "middle"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"ComboBox", "selected", "first"}, {"ComboBox", "disabled", "yes"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
+        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Grid", "columns", "wide"}, {"Grid", "rows", "wide"}, {"Padding", "padding", "wide"}, {"Panel", "padding", "wide"}, {"Panel", "spacing", "wide"}, {"Panel", "background", "blue"}, {"Panel", "corner_radius", "wide"}, {"Panel", "border_width", "wide"}, {"Card", "padding", "wide"}, {"Card", "background", "blue"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Button", "default", "yes"}, {"Button", "cancel", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"Image", "source", "icon.png"}, {"Image", "width", "wide"}, {"Image", "height", "tall"}, {"ScrollView", "viewport_width", "wide"}, {"ScrollView", "viewport_height", "tall"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"ListBox", "viewport_width", "wide"}, {"ListBox", "viewport_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "content_align", "middle"}, {"TextField", "scrollbar", "sometimes"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"ComboBox", "selected", "first"}, {"ComboBox", "disabled", "yes"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
     };
     // assert each setter refuses rather than half applying, because a refused value leaves the node as it was (§11.1)
     for (const std::tuple<std::string, std::string, std::string>& refusal : refusals) {
@@ -446,8 +446,8 @@ TEST(DevElementChecks, AScrollbarPolicyIsReadFromItsNamedMembers) {
     ASSERT_NE(scroll, nullptr);
     // act and assert each member of the set lands, and a name outside it does not (§11.1)
     EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "as_needed"));
-    EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "always_off"));
-    EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "always_on"));
+    EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "off"));
+    EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "on"));
     EXPECT_FALSE(apply_property(*scroll, "ScrollView", "scrollbar", "sometimes"));
 }
 
@@ -1400,4 +1400,38 @@ TEST(DevReloadChecks, ACompiledDialogFormAndTheDevIrAgreeOnTheSameUi) {
     EXPECT_TRUE(ir_default->is_default());
     EXPECT_FALSE(compiled_default->is_cancel());
     EXPECT_FALSE(ir_default->is_cancel());
+}
+
+TEST(DevReloadChecks, ATextFieldScrollbarPolicyReachesTheRuntime) {
+    // arrange a field whose bar policy is a named member, which the runtime reads by its written spelling (§8, §12.1)
+    compiler::DiagnosticList diagnostics;
+    const std::string_view source = R"(
+component NotesPanel {
+    Column {
+        TextField {
+            id: notes;
+            multiline: true;
+            scrollbar: Scrollbar.off;
+        }
+    }
+}
+)";
+    // the scanner runs first, because the parser takes units (§11.1)
+    const std::vector<compiler::Token> tokens = compiler::Lexer(source, diagnostics).tokenize();
+    // the parser builds the untyped tree, which the serializer reads (§11.1)
+    const compiler::SourceFile file = compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act
+    const std::optional<IrNode> definition = compiler::serialize_component(file.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the runtime tree starts empty, because the reload is what populates it (§12.1)
+    ReloadFixture fixture;
+    ColumnLayout tree;
+    const ReloadReport report = apply_reload(tree, *definition, fixture.context);
+    // assert the node was built and the policy reached it, which is what makes the two engines agree (§12.1, AD-25)
+    EXPECT_EQ(report.added, 1U);
+    TextField* field = dynamic_cast<TextField*>(find_by_id(tree, "notes"));
+    ASSERT_NE(field, nullptr);
+    EXPECT_TRUE(field->multiline());
+    EXPECT_EQ(field->scrollbar_visibility(), ScrollbarVisibility::AlwaysOff);
 }

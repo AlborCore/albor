@@ -11,6 +11,8 @@
 #include "albor/commands/undo_stack.h"
 #include "albor/core/align.h"
 #include "albor/core/clipboard.h"
+#include "albor/core/scrollbar_visibility.h"
+#include "albor/core/self_scrolling_content.h"
 #include "albor/text/text_engine.h"
 #include "albor/ui/caret_target.h"
 #include "albor/widgets/widget.h"
@@ -37,7 +39,7 @@ namespace albor
     };
 
     // the widget that edits one or more lines of text, which is what a form field or a search box is (§8)
-    class TextField final : public Widget, public CaretTarget, public TextInputTarget
+    class TextField final : public Widget, public CaretTarget, public TextInputTarget, public SelfScrollingContent
     {
     public:
         // build a field over the engines it reads, with an empty value (§8) the text engine is borrowed, not owned (§9.1)
@@ -220,6 +222,21 @@ namespace albor
         // move the offset to an absolute place, clamped into the range, which a programmatic scroll is (§8.2)
         void scroll_to(float offset);
 
+        // move the offset by a signed amount, where positive moves toward the end, and report whether it moved (§8.3)
+        bool scroll_by(float amount);
+
+        // set when the field draws its bar, which is a per instance decision the author owns (§8)
+        void set_scrollbar_visibility(ScrollbarVisibility visibility);
+
+        // hand out when the field draws its bar, which is the policy this instance carries (§8)
+        [[nodiscard]] ScrollbarVisibility scrollbar_visibility() const;
+
+        // report whether the bar is drawn right now, which is what the policy resolves to (§8)
+        [[nodiscard]] bool scrollbar_visible() const;
+
+        // override: report whether the field keeps its own viewport, which a scroll container must respect (§8.2)
+        [[nodiscard]] bool owns_vertical_scroll() const override;
+
         // replace the styled ranges over the shaped value, which syntax highlighting and diagnostics paint (§9.1)
         void set_decorations(std::vector<TextDecoration> decorations);
 
@@ -290,6 +307,9 @@ namespace albor
         // hand out the byte the line of the caret ends at, which is what an end key hits (§8.3)
         [[nodiscard]] std::size_t line_end_byte(std::size_t byte) const;
 
+        // hand out the byte a caret stops at within a line, folding the break back onto the row it ends (§9.1)
+        [[nodiscard]] std::size_t caret_byte_on_line(std::size_t line, std::size_t byte) const;
+
         // the x coordinate of the caret within the line it stands on, which a vertical move keeps (§8.3)
         [[nodiscard]] float caret_goal_x() const;
 
@@ -316,6 +336,39 @@ namespace albor
 
         // scroll the content by the overshoot of a drag past an edge, then the caret follow bounds where it lands (§8.3)
         void autoscroll_for_drag(Point logical_position);
+
+        // hand out the byte a page lands on and how far the run moves with it, which is what a page key asks (§8.3)
+        [[nodiscard]] std::pair<std::size_t, float> page_target(bool forward) const;
+
+        // write the offset through the one clamp and report whether it moved, which every scroll writer shares (§8.2)
+        bool move_offset(float destination);
+
+        // hand out the width the theme declares, which the measure reserves as the bar gutter (§8.2)
+        [[nodiscard]] float bar_extent() const;
+
+        // hand out the bar width the plate can hold, which is what the paint and the thumb use (§8.2)
+        [[nodiscard]] float drawn_bar_extent() const;
+
+        // report whether the policy reserves a gutter, which is what the wrap width and the paint read (§8)
+        [[nodiscard]] bool bar_reserved() const;
+
+        // hand out the strip the bar is drawn in, which is the area the bar damages (§6.1)
+        [[nodiscard]] Rect scrollbar_track_rect() const;
+
+        // draw the bar in its reserved gutter, which is what reports where the offset sits (§6.1)
+        void paint_scrollbar(RenderContext& context) const;
+
+        // hand out the bar the current offset puts at this place, which is what the travel is read from (§8.2)
+        [[nodiscard]] Rect thumb_rect() const;
+
+        // follow a pointer that is dragging the thumb, which maps the travel onto the offset (§8.3)
+        void drag_thumb_to(Point logical_position);
+
+        // hand out the groove colour for the current state, which is null without a theme (§6.1)
+        [[nodiscard]] const Color* track_colors() const;
+
+        // hand out the thumb colour for the current state, which is null without a theme (§6.1)
+        [[nodiscard]] const Color* thumb_colors() const;
 
         // schedule the blink on the engine the tree was handed, because time is the engine's to advance (§7.3)
         void start_blink();
@@ -424,6 +477,18 @@ namespace albor
 
         // how far the content is scrolled from its leading edge, which the caret drives and never the value (§8.2)
         float m_scroll_offset = 0.0f;
+
+        // when the bar is drawn, which is a per instance policy (§8)
+        ScrollbarVisibility m_visibility = ScrollbarVisibility::AsNeeded;
+
+        // whether a drag is holding the thumb, which is what a pointer move steers (§8.3)
+        bool m_dragging_thumb = false;
+
+        // the offset the drag began at, so the pointer measures against where the thumb started (§8.3)
+        float m_drag_origin_offset = 0.0f;
+
+        // the pointer position the drag began at, which is the other half of that measurement (§8.3)
+        Point m_drag_origin{0.0f, 0.0f};
 
         // the width the wrapped runs were last measured at, which the edit path reuses so it wraps like the paint (§8.2)
         float m_measure_width = 0.0f;

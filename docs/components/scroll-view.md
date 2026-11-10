@@ -110,5 +110,7 @@ reuses the existing element and rebinds it, rather than rebuilding the list.
   useful when a custom indicator is drawn instead.
 - `row_height` is the pitch virtualization assumes; a row whose measured height differs
   still scrolls correctly, but the window estimate is the row height.
-- A multi-line [TextField](text-field.md) scrolls its own viewport internally, so it does not
-  need a `ScrollView` around it.
+- A multi-line [TextField](text-field.md) owns its viewport: it does not need a `ScrollView`,
+  and a `ScrollView` whose content child is the field measures it against the viewport, leaving
+  the wrapper with nothing to scroll. The wrapper is inert rather than harmful. A field nested
+  inside a container the view scrolls is measured by that container, so it grows to its run.

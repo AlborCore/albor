@@ -894,6 +894,30 @@ measured again with an equal share of the space left by the fixed children, the 
 padding; the fixed children keep their measured extent. Without such a declaration the overflow
 stands and the parent keeps its measured extent, so an authored size is never silently changed.
 
+**A Content That Keeps Its Own Viewport Is Measured Against It (settled during implementation):**
+
+A scroll container measures its content with no height ceiling, because that is what makes a tall
+column scroll. A text editor is the exception: it owns its own offset, and a measure with no
+ceiling would give it a content height equal to its own bounds, collapsing its scroll range to
+zero and turning its caret follow, drag autoscroll and programmatic scroll into no-ops.
+
+The container therefore asks its content whether it scrolls itself (`SelfScrollingContent`, §3.2)
+and, when it does, passes the viewport height as the ceiling. The wrapper is then left with no
+range of its own, which is the intended outcome: a `ScrollView` around a multi-line `TextField` is
+inert rather than harmful, and no existing `.ui` file stops working. A virtualizing content
+(`ScrollableContent`) keeps the unbounded ceiling, because building only the visible rows is the
+case that is supposed to grow.
+
+**A Content That Scrolls Itself Also Draws Its Own Bar (settled during implementation):**
+
+A multi-line field owns its viewport, so it also owns the bar and the gutter that reports the
+offset. The gutter is reserved whenever the field is multi-line and its policy is not `off`: a bar
+that reserved its gutter only when needed would rewrap every line at the moment the document
+crossed the box height, which is exactly while the user is typing the line that crossed it. A
+single-line field never scrolls, so it reserves nothing and leaves the wheel unclaimed.
+
+**The Remaining Refinement:**
+
 The remaining refinement, deliberately not built, is subtree-level relayout and partial repaint:
 a side table keyed by node identity holding cached screen bounds, per-item dirty tracking, dirty
 regions capped at a small fixed number of rectangles, and back-buffer-age history so a
@@ -930,6 +954,16 @@ The synthesis is a diff, not a resend:
 The chain order matters and is fixed: **deepest first**. An exit has to reach the inner node
 before its parent, and a transition delivered parent-first would leave a child painted hovered
 while its parent was told otherwise.
+
+**A Nested Viewport Claims the Wheel Only While It Can Move (settled during implementation):**
+
+A wheel over nested scrollable nodes scrolls the innermost one first. A viewport therefore claims
+the event only when its offset actually moved, and leaves it unclaimed at either end so an
+enclosing viewport takes the same notch. The rule is one line of dispatch
+(`event.handled = scroll_by(...)`), and it is what makes a text field inside a scroll view, or a
+list inside a page, behave the way a platform does. Claiming unconditionally would dead-end the
+chain at the inner node; never claiming would scroll the outer node while the pointer is over the
+inner one.
 
 **A Detaching Subtree Is Announced Before It Leaves (settled during implementation):**
 

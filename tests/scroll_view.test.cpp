@@ -2597,3 +2597,34 @@ TEST(ScrollViewChecks, ANestedScrollViewReservesOnlyItsOwnGutter) {
     EXPECT_EQ(inner_ptr->content_viewport().width, 180.0f);
     EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 180.0f);
 }
+
+TEST(ScrollViewChecks, AKeyAtTheEdgeIsLeftToAnEnclosingViewport) {
+    // arrange a viewport tall enough to scroll, which the keys drive (§8.3)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.scroll_to(view.maximum_offset());
+    // act the keys that have nowhere to go at the trailing edge (§8.3)
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    view.dispatch_event(down);
+    Event end{.kind = EventKind::KeyDown, .key = Key::End};
+    view.dispatch_event(end);
+    // assert neither was claimed, because an edge leaves the key to whatever encloses the view (§8.3)
+    EXPECT_FALSE(down.handled);
+    EXPECT_FALSE(end.handled);
+    // act the keys that have nowhere to go at the leading edge (§8.3)
+    view.scroll_to(0.0f);
+    Event up{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    view.dispatch_event(up);
+    Event home{.kind = EventKind::KeyDown, .key = Key::Home};
+    view.dispatch_event(home);
+    // assert the leading edge leaves them too, which is the same rule the wheel follows (§8.3)
+    EXPECT_FALSE(up.handled);
+    EXPECT_FALSE(home.handled);
+}
