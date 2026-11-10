@@ -89,8 +89,20 @@ namespace albor
         // hand out the selected index, clamped to the pages the view currently holds (§8)
         [[nodiscard]] int effective_selected() const;
 
-        // hand out the label colour of a tab, which the selected page carries the accent for (§6.1)
+        // hand out the label colour of a tab, which the selected page carries the accent or the row ink for (§6.1)
         [[nodiscard]] Color tab_label_color(bool selected) const;
+
+        // report whether a vertical strip paints its selection as a row, which the installed preset decides (§6.1)
+        [[nodiscard]] bool paints_selection_row() const;
+
+        // hand out the plate a selection row carries, which is the accent a preset filled (§6.1)
+        [[nodiscard]] Color selection_plate_color() const;
+
+        // hand out the inset a selection row leaves inside its header (§8.2)
+        [[nodiscard]] float row_inset() const;
+
+        // hand out the corner a selection row is drawn with (§6.1)
+        [[nodiscard]] float row_radius() const;
 
         // hand out the colour of the indicator under the selected tab (§6.1)
         [[nodiscard]] Color tab_indicator_color() const;

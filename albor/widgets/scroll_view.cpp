@@ -38,23 +38,21 @@ namespace albor
         out_size = m_measured_size;
         // the row height reaches the content first, because the extent below is arithmetic over it (§8.2, AD-13)
         apply_row_extent();
-        // an always on bar reserves its gutter before the content is measured, because the policy owns the decision (§8)
+        // an always on bar takes its gutter before the content is measured, because the policy owns the decision (§8)
         const bool forced = m_visibility == ScrollbarVisibility::AlwaysOn;
+        // an overlay bar takes no gutter, so the content keeps the whole viewport at every policy (§8.2)
+        const bool overlay = bar_overlay();
         // the reserved width is what the content keeps, which is what keeps it out of the gutter (§8.2)
         const float content_width = std::max(0.0f, viewport.width - bar_extent());
-        // the full width probe is what decides whether an as needed bar has to reserve a gutter (§8.2)
-        bool reserved = forced;
-        // the content extent is measured against the width the policy leaves it (§8.2)
-        Size measured_extent = measure_content(forced ? content_width : viewport.width, viewport.height);
-        // the as needed policy reserves only when a bar wider than nothing has to draw a gutter (§8)
-        if (m_visibility == ScrollbarVisibility::AsNeeded && bar_extent() > 0.0f && measured_extent.height > viewport.height) {
-            // the bar is needed, so its gutter is reserved and the content is measured inside the rest (§8.2)
-            reserved = true;
-            // the second pass is what keeps wrapping and height consistent with the visible width (§8.2)
+        // the content extent is measured against the width the policy leaves it, which an overlay leaves whole (§8.2)
+        Size measured_extent = measure_content(forced && !overlay ? content_width : viewport.width, viewport.height);
+        // the as needed policy draws a bar while content overflows a bar wide enough to draw (§8)
+        const bool needed = forced || (m_visibility == ScrollbarVisibility::AsNeeded && bar_extent() > 0.0f && measured_extent.height > viewport.height);
+        // a needed gutter narrows the second measure, because wrapping and height follow the visible width (§8.2)
+        if (needed && !forced && !overlay)
             measured_extent = measure_content(content_width, viewport.height);
-        }
         // the decision is stored, because the clip and the pushed window both read the same one (§8.2)
-        m_bar_reserved = reserved;
+        m_bar_needed = needed;
         // the scrollable contract reports the extent of the whole content rather than the built part (§8.2, AD-13)
         m_content_extent = measured_extent;
         // a content that changed hands the offset back to its binding, which is what a pinned log view needs (§7.3, AD-24)
@@ -76,7 +74,7 @@ namespace albor
         m_bounds = Rect::from_origin_size(Point{.x = bounds.x, .y = bounds.y}, Size{.width = width, .height = height});
         // the window reaches the content before it is placed, so its rows exist in time (§8.2, AD-13)
         push_viewport();
-        // the content viewport is the arranged extent less the reserved bar gutter (§8.2)
+        // the content viewport is the arranged extent less whatever gutter the policy reserves (§8.2)
         const Rect viewport = content_viewport();
         // the content sits at the offset, and never wider than the content viewport (§8.2)
         const Rect content = Rect::from_origin_size(Point{.x = viewport.x, .y = viewport.y - offset()}, Size{.width = std::min(m_content_extent.width, viewport.width), .height = m_content_extent.height});
@@ -109,13 +107,13 @@ namespace albor
             return;
         // the clip is pushed so the content can be scissored to the content viewport (§6.2)
         context.save();
-        // the content viewport is the clip, which is what keeps scrolled content out of the gutter and the surface (§6.2)
+        // the content viewport is the clip, which is what keeps scrolled content inside the surface (§6.2)
         context.clip_rect(content_viewport());
         // the content records inside the clip, in insertion order (§6.1)
         render_children(context);
         // the clip is popped, so the bar below is not scissored to it (§6.2)
         context.restore();
-        // the bar draws after the content, in the gutter the clip kept it out of (§6.1)
+        // the bar draws after the content, in its gutter or over it, because an overlay is not clipped by it (§6.1)
         paint_scrollbar(context);
     }
 
@@ -151,6 +149,8 @@ namespace albor
             event.handled = true;
             // the drag ends with the release, so the next press starts a fresh one (§8.3)
             m_dragging_thumb = false;
+            // the thumb returns to its resting width, so the wide strip it drew has to be repainted (§6.1)
+            invalidate();
             return;
         }
         // a press on the thumb starts a drag, which is what grabbing the bar means (§8.3)
@@ -175,6 +175,8 @@ namespace albor
             m_drag_origin = event.position;
             // the offset is the other half of that measurement, so the thumb does not jump (§8.3)
             m_drag_origin_offset = offset();
+            // the thumb widens while it is dragged, so the strip it now draws has to be repainted (§6.1)
+            invalidate();
             return;
         }
         // a key reaches the viewport unmodified, because a modified key is the application's (§8.3)
@@ -299,8 +301,8 @@ namespace albor
         // an always off bar is never drawn, while the content still scrolls (§8)
         if (m_visibility == ScrollbarVisibility::AlwaysOff)
             return false;
-        // the as needed policy draws the bar the measure pass reserved a gutter for (§8)
-        return bar_reserved();
+        // the as needed policy draws the bar the measure pass found content for (§8)
+        return m_bar_needed;
     }
 
     void ScrollView::set_overscan(float pixels) {
@@ -419,15 +421,31 @@ namespace albor
     bool ScrollView::watches() const { return static_cast<bool>(m_on_scroll); }
 
     Rect ScrollView::content_viewport() const {
-        // a reserved bar takes its gutter from the content, which keeps the content out of it (§8.2)
+        // a bar that reserves takes its gutter from the content, which keeps the content out of it (§8.2)
         const float width = std::max(0.0f, m_bounds.width - (bar_reserved() ? bar_extent() : 0.0f));
         // the content starts where the viewport starts, because only the trailing strip is reserved (§8.2)
         return Rect::from_origin_size(Point{.x = m_bounds.x, .y = m_bounds.y}, Size{.width = width, .height = m_bounds.height});
     }
 
     bool ScrollView::bar_reserved() const {
+        // an overlay bar paints over the content, so it never takes a gutter from it (§8.2)
+        if (bar_overlay())
+            return false;
         // the policy is the one statement of the matrix: off takes none, on always, as needed from the measure (§8)
-        return m_visibility == ScrollbarVisibility::AlwaysOn || (m_visibility == ScrollbarVisibility::AsNeeded && m_bar_reserved);
+        return m_visibility == ScrollbarVisibility::AlwaysOn || (m_visibility == ScrollbarVisibility::AsNeeded && m_bar_needed);
+    }
+
+    bool ScrollView::bar_overlay() const {
+        // an unthemed view reserves the gutter it has always reserved, because no preset decided otherwise (§6.1)
+        return theme() != nullptr && theme()->metrics().scrollbar_overlay;
+    }
+
+    float ScrollView::bar_inset() const {
+        // an unthemed view keeps the bar flush with the edge, because no preset decided otherwise (§6.1)
+        if (theme() == nullptr)
+            return 0.0f;
+        // a negative inset would push the bar outside the bounds, so the standoff never inverts (§8.2)
+        return std::max(0.0f, theme()->metrics().scrollbar_overlay_inset);
     }
 
     float ScrollView::bar_extent() const {
@@ -438,8 +456,13 @@ namespace albor
     }
 
     float ScrollView::drawn_bar_extent() const {
+        // the resting width is what the theme declares, or the value the bar always drew with (§6.1)
+        float extent = bar_extent();
+        // an overlay bar widens while the pointer is on it or the thumb is dragged, which keeps it grabbable (§6.1)
+        if (bar_overlay() && theme()->metrics().scrollbar_hover_extent > 0.0f && (hovered() || m_dragging_thumb))
+            extent = theme()->metrics().scrollbar_hover_extent;
         // a bar wider than the view is clipped to it, so the strip never paints outside the bounds (§8.2)
-        return std::min(bar_extent(), m_bounds.width);
+        return std::min(extent, m_bounds.width);
     }
 
     Size ScrollView::measure_content(float width, float height) {
@@ -469,23 +492,27 @@ namespace albor
         // an unplaced view has no gutter to paint, so there is no strip either (§6.2)
         if (m_bounds.empty())
             return Rect{};
-        // the strip is the trailing edge of the bounds, which is the gutter the content viewport excludes (§8.2)
+        // the strip is the width the current state draws at, which a hover widens (§6.1)
         const float extent = drawn_bar_extent();
-        return Rect::from_origin_size(Point{.x = m_bounds.x + m_bounds.width - extent, .y = m_bounds.y}, Size{.width = extent, .height = m_bounds.height});
+        // an overlay bar stands off the trailing edge, while a gutter bar sits against it (§8.2)
+        const float trailing = bar_overlay() ? bar_inset() : 0.0f;
+        // the strip starts where the extent and the standoff leave it inside the bounds (§6.2)
+        const float x = m_bounds.x + std::max(0.0f, m_bounds.width - trailing - extent);
+        return Rect::from_origin_size(Point{.x = x, .y = m_bounds.y}, Size{.width = extent, .height = m_bounds.height});
     }
 
     void ScrollView::paint_scrollbar(RenderContext& context) const {
         // the policy decides whether a bar is drawn at all, which is a per instance decision (§8)
         if (!scrollbar_visible())
             return;
-        // the strip is the reserved gutter, which the content viewport excludes (§8.2)
+        // the strip is the width the bar paints at, which the content viewport excludes unless the bar overlays (§8.2)
         const Rect track = scrollbar_track_rect();
         // the track colour resolves by state, so a hover and a press differ without a second literal (§6.1)
         context.draw_rect(track, {.fill = resolve(track_colors(), Color{0.0f, 0.0f, 0.0f, 0.0f})});
         // a viewport with no travel has no reachable position, so the thumb is left off (§6.2)
         if (!scrollable())
             return;
-        // the thumb takes the width of the strip, so its end caps sit flush with the gutter (§6.1)
+        // the thumb takes the width of the strip, so its end caps sit flush with the bar column (§6.1)
         const float extent = drawn_bar_extent();
         // the thumb colour resolves by state, so the same resolver the other controls use reads it (§6.1)
         context.draw_rounded_rect(thumb_rect(), extent * 0.5f, {.fill = resolve(thumb_colors(), Color{0.42f, 0.46f, 0.52f, 1.0f})});
@@ -494,7 +521,7 @@ namespace albor
     Rect ScrollView::thumb_rect() const {
         // the smallest thumb is what the theme says, or the value the bar always drew with (§6.1)
         const float floor = theme() != nullptr ? theme()->metrics().scrollbar_thumb_minimum : SCROLLBAR_THUMB_MINIMUM;
-        // the thumb takes the strip the gutter reserved, at the travel the offset reports (§8.2)
+        // the thumb takes the strip the bar paints at, at the travel the offset reports (§8.2)
         return scroll_thumb_rect(offset(), maximum_offset(), scrollbar_track_rect(), floor);
     }
 

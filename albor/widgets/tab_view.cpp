@@ -255,12 +255,21 @@ namespace albor
             const Rect& header = m_tabs[index]->header_bounds();
             if (header.empty())
                 continue;
-            // the selected tab carries an indicator, which marks the page the view shows (§6.1)
+            // the selected tab carries the strip selection, which marks the page the view shows (§6.1)
             if (static_cast<int>(index) == selected) {
-                // the indicator sits on the bottom of a top strip or the left edge of a left strip (§6.1)
-                const float indicator = indicator_height();
-                const Rect marker = m_vertical ? Rect::from_origin_size(Point{.x = header.x, .y = header.y + tab_padding()}, Size{.width = indicator, .height = std::max(0.0f, header.height - tab_padding() * 2.0f)}) : Rect::from_origin_size(Point{.x = header.x + tab_padding(), .y = header.y + header.height - indicator}, Size{.width = std::max(0.0f, header.width - tab_padding() * 2.0f), .height = indicator});
-                context.draw_rect(marker, {.fill = tab_indicator_color()});
+                // a vertical strip paints its selection as a row, which is what a sidebar reads as (§6.1)
+                if (paints_selection_row()) {
+                    // the row is the header inset on every side, which is what gives it its height and its corners (§8.2)
+                    const float inset = row_inset();
+                    const Rect row = Rect::from_origin_size(Point{.x = header.x + inset, .y = header.y + inset}, Size{.width = std::max(0.0f, header.width - inset * 2.0f), .height = std::max(0.0f, header.height - inset * 2.0f)});
+                    context.draw_rounded_rect(row, row_radius(), {.fill = selection_plate_color()});
+                }
+                else {
+                    // the indicator sits on the bottom of a top strip or the left edge of a left strip (§6.1)
+                    const float indicator = indicator_height();
+                    const Rect marker = m_vertical ? Rect::from_origin_size(Point{.x = header.x, .y = header.y + tab_padding()}, Size{.width = indicator, .height = std::max(0.0f, header.height - tab_padding() * 2.0f)}) : Rect::from_origin_size(Point{.x = header.x + tab_padding(), .y = header.y + header.height - indicator}, Size{.width = std::max(0.0f, header.width - tab_padding() * 2.0f), .height = indicator});
+                    context.draw_rect(marker, {.fill = tab_indicator_color()});
+                }
             }
             // a visible title draws its own content, which is what makes an icon or a composed run possible (§8)
             if (TabTitle* title = m_tabs[index]->title(); title != nullptr && title->visible()) {
@@ -284,6 +293,9 @@ namespace albor
         // a hidden view takes no event at all, because it draws nothing to aim at (§8.3)
         if (!visible())
             return;
+        // a hover or a release is pointer state the strip carries whether or not it claims the press (§8.3)
+        if (event.kind == EventKind::PointerEnter || event.kind == EventKind::PointerLeave || event.kind == EventKind::PointerUp)
+            handle_hover_transitions(event);
         // the strip is current before a press is mapped through it (§8.1)
         sync_tabs();
         // a view with no pages has nothing to select, which a press then ignores (§8.3)
@@ -302,6 +314,8 @@ namespace albor
                     continue;
                 // the press is claimed, so no ancestor acts on the same click (§8.3)
                 event.handled = true;
+                // a press on a header carries the state its paint reads, which an unclaimed press does not (§8.3)
+                handle_hover_transitions(event);
                 // the named page becomes the shown one (§8)
                 set_selected(static_cast<int>(index));
                 return;
@@ -510,8 +524,48 @@ namespace albor
         // an unthemed view keeps the two colours the widget always drew with (§6.1)
         if (theme() == nullptr)
             return selected ? Color{0.20f, 0.55f, 0.90f, 1.0f} : Color{0.68f, 0.71f, 0.76f, 1.0f};
+        // a selection row carries its own ink, which is what reads over the accent plate (§6.1)
+        if (selected && paints_selection_row())
+            return theme()->palette().tab_selection_label[index];
         // the palette answers, because the theme owns the strip colours (§6.1)
         return selected ? theme()->palette().tab_label_selected[index] : theme()->palette().tab_label[index];
+    }
+
+    bool TabView::paints_selection_row() const {
+        // only a vertical strip is a sidebar, because a top strip keeps the indicator it always drew (§8)
+        if (!m_vertical || theme() == nullptr)
+            return false;
+        // the row is a pair, because a plate without an ink would hide the selected label (§6.1)
+        const Palette& palette = theme()->palette();
+        // the plate is the gate, because a preset that leaves it empty keeps the indicator style (§8.4)
+        if (palette.tab_selection_plate[state_index(ControlState::Normal)].alpha <= 0.0f)
+            return false;
+        // the ink is the second half, because a half filled row must keep the indicator and its readable label (§6.1)
+        return palette.tab_selection_label[state_index(ControlState::Normal)].alpha > 0.0f;
+    }
+
+    Color TabView::selection_plate_color() const {
+        // the state selects the palette entry, which a hover or a focus moves (§6.1)
+        const std::size_t index = static_cast<std::size_t>(state());
+        // an unthemed view has no row to paint, because a row needs a preset to fill the role (§6.1)
+        if (theme() == nullptr)
+            return Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+        // the palette answers, because the theme owns the row colour (§6.1)
+        return theme()->palette().tab_selection_plate[index];
+    }
+
+    float TabView::row_inset() const {
+        // the installed metrics answer, because a theme insets the row inside its header (§8.2)
+        const float inset = theme() != nullptr ? theme()->metrics().tab_row_inset : default_metrics().tab_row_inset;
+        // a negative inset would paint the row past its header and over its neighbours, so it never inverts (§8.2)
+        return std::max(0.0f, inset);
+    }
+
+    float TabView::row_radius() const {
+        // the installed metrics answer, because a theme owns the row corner (§6.1)
+        const float radius = theme() != nullptr ? theme()->metrics().tab_row_radius : default_metrics().tab_row_radius;
+        // a negative radius means nothing to a rounded draw, so it is clamped at zero (§6.2)
+        return std::max(0.0f, radius);
     }
 
     Color TabView::tab_indicator_color() const {

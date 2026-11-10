@@ -1068,7 +1068,8 @@ palette is the portable baseline; the native look is a *preset*, not a rewrite:
    every state through `ThemeBuilder` and then shapes the surface: neutral control faces instead
    of accent colour blocks, HIG/Fluent control metrics (button height, horizontal padding, field
    height), native corner radii. Their palette and metric tokens are set by the preset alone, so
-   the unthemed defaults — and a plain derived theme — keep the behaviour they always had.
+   the unthemed defaults keep the behaviour they always had, and a derived theme opts into the
+   field well and its focus line, because those are the surfaces a portable form needs.
 3. **Layered control rendering.** A plate is a fill *and* a border stroke: `button_border` per
    state resolves like the plate, `button_border_width` sizes it, and the two layers ride one
    command. A native checkbox is a rounded box with a check mark glyph, drawn through a
@@ -1081,6 +1082,33 @@ palette is the portable baseline; the native look is a *preset*, not a rewrite:
    resolves size and colour through it, and dark/light flips recolour without any literal.
 6. **A glyph stroke draws joined.** `RenderContext::draw_polyline` is the level 0 primitive the
    check marks ride; every backend and recorder shares it, the same way a rectangle is shared.
+
+**A native surface is a token, not application code (settled during implementation, issue 201).**
+A preset decides more than a control's metrics: the plate a `Panel` draws, the well a `TextField`
+draws, whether a `ScrollView` bar reserves a gutter, the plate a dialog's default control carries,
+and whether a vertical `TabView` marks its selection with an indicator or a row. The *new* roles
+and metrics are silent by default, so a hand-built theme and an unthemed widget keep the pixels
+they had, and a preset opts in one token at a time:
+
+1. **A default control is a role.** `Button::default` selects `button_plate_default`,
+   `button_label_default` and `button_border_default` while the plate table is filled; an authored
+   plate wins over the whole role, and the key dispatch of §8.3 is unchanged. The plate is the gate,
+   because an accent plate deliberately strokes no border.
+2. **An overlay bar is a metric.** `scrollbar_overlay` makes the bar paint over the content and
+   reserve no gutter, `scrollbar_hover_extent` widens it while the pointer is on the view or the
+   thumb is dragged, and `scrollbar_overlay_inset` keeps it off the window frame.
+3. **A sidebar selection is a row.** A vertical strip whose `tab_selection_plate` is filled paints
+   the selected header as an inset rounded row, carries `tab_selection_label` as its ink, and
+   suppresses the indicator; a top strip keeps the indicator. A composed `TabTitle` draws its own
+   children and therefore supplies its own ink.
+4. **A card and a well are plates.** `panel_background` and `text_field_plate` are the two surfaces
+   a settings form reads, and `panel_border_width` decides whether a card strokes at all. A native
+   preset paints a card as a content plate rather than reusing the neutral control face.
+
+`Theme::macos` fills all five, `Theme::fluent` fills the well and the default control while keeping
+its gutter, `ThemeBuilder` gives the derived baseline a well and its outline edge but leaves the
+default role empty, so a derived default control falls back to the accent plate every derived
+button carries, and `Theme::pro_dark` keeps its field on the surface and its neutral faces.
 
 ---
 

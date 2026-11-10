@@ -1,6 +1,7 @@
 #include "albor/style/theme.h"
 
 #include <algorithm>
+#include <initializer_list>
 
 #include "albor/style/theme_builder.h"
 
@@ -49,6 +50,44 @@ namespace albor
             theme.set_checkbox_glyph(ControlState::Disabled, Color::rgba(mark.red, mark.green, mark.blue, 0.5f));
             theme.set_checkbox_glyph(ControlState::Focused, mark);
         }
+
+        // the accent plate and its states a dialog's default control carries, which is the system primary button (§8.4)
+        void apply_accent_default(Theme& theme, const Color& accent) {
+            // the plate is the accent at the five states every plate carries (§8.4)
+            theme.set_button_plate_default(ControlState::Normal, accent);
+            theme.set_button_plate_default(ControlState::Hovered, ThemeBuilder::lighten(accent, 0.08f));
+            theme.set_button_plate_default(ControlState::Pressed, ThemeBuilder::darken(accent, 0.12f));
+            theme.set_button_plate_default(ControlState::Disabled, Color::rgba(accent.red, accent.green, accent.blue, 0.45f));
+            theme.set_button_plate_default(ControlState::Focused, ThemeBuilder::lighten(accent, 0.04f));
+            // the label is white over the accent at every state, dimmed when the plate refuses input (§8.4)
+            const Color label = Color::rgb(1.0f, 1.0f, 1.0f);
+            theme.set_button_label_default(ControlState::Normal, label);
+            theme.set_button_label_default(ControlState::Hovered, label);
+            theme.set_button_label_default(ControlState::Pressed, label);
+            theme.set_button_label_default(ControlState::Disabled, Color::rgba(label.red, label.green, label.blue, 0.55f));
+            theme.set_button_label_default(ControlState::Focused, label);
+            // an accent plate carries no border, because the fill is what separates it from the surface (§8.4)
+            for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
+                theme.set_button_border_default(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+        }
+
+        // the accent row a vertical strip paints behind the selected tab, which is the native sidebar selection (§6.1)
+        void apply_tab_selection_row(Theme& theme, const Color& accent) {
+            // the row plate is the accent at the five states every plate carries (§6.1)
+            theme.set_tab_selection_plate(ControlState::Normal, accent);
+            theme.set_tab_selection_plate(ControlState::Hovered, ThemeBuilder::lighten(accent, 0.08f));
+            theme.set_tab_selection_plate(ControlState::Pressed, ThemeBuilder::darken(accent, 0.12f));
+            theme.set_tab_selection_plate(ControlState::Disabled, Color::rgba(accent.red, accent.green, accent.blue, 0.45f));
+            theme.set_tab_selection_plate(ControlState::Focused, ThemeBuilder::lighten(accent, 0.04f));
+            // the row label reads white over the accent, dimmed when the row refuses input (§6.1)
+            const Color label = Color::rgb(1.0f, 1.0f, 1.0f);
+            theme.set_tab_selection_label(ControlState::Normal, label);
+            theme.set_tab_selection_label(ControlState::Hovered, label);
+            theme.set_tab_selection_label(ControlState::Pressed, label);
+            theme.set_tab_selection_label(ControlState::Disabled, Color::rgba(label.red, label.green, label.blue, 0.55f));
+            theme.set_tab_selection_label(ControlState::Focused, label);
+        }
+
         // the measure override of the macos preset, which sizes a control the way the interface guide does (§8.4)
         void apply_macos_metrics(Theme& theme) {
             // a push control is twenty eight tall, which is the standard system metric (§8.4)
@@ -98,7 +137,16 @@ namespace albor
             // a card sits on the surface with a twelve point inset and a small corner (§8.2)
             theme.set_panel_padding(12.0f);
             theme.set_panel_radius(6.0f);
-            theme.set_panel_border_width(1.0f);
+            // a native card separates through its plate and its whitespace, so it strokes no border (§8.4)
+            theme.set_panel_border_width(0.0f);
+            // a native scrollbar is a seven point overlay thumb, which widens while the pointer is on it (§6.1)
+            theme.set_scrollbar_extent(7.0f);
+            theme.set_scrollbar_overlay(true);
+            theme.set_scrollbar_hover_extent(11.0f);
+            theme.set_scrollbar_overlay_inset(2.0f);
+            // a sidebar selection is a row inside the strip, which is what a source list reads as (§8.2)
+            theme.set_tab_row_inset(2.0f);
+            theme.set_tab_row_radius(6.0f);
             // a compact popup row is twenty eight tall and bounded by a short list (§8.2)
             theme.set_combo_box_item_height(28.0f);
             theme.set_combo_box_popup_max_height(240.0f);
@@ -161,6 +209,8 @@ namespace albor
             theme.set_panel_padding(12.0f);
             theme.set_panel_radius(4.0f);
             theme.set_panel_border_width(1.0f);
+            // a fluent scrollbar keeps its twelve point gutter, because the language never overlays the content (§6.1)
+            theme.set_scrollbar_extent(12.0f);
             // a fluent popup row is thirty two tall (§8.2)
             theme.set_combo_box_item_height(32.0f);
             theme.set_combo_box_popup_max_height(256.0f);
@@ -228,9 +278,9 @@ namespace albor
         }
 
         // the macos preset plates, which read as control faces rather than colour blocks (§8.4)
-        void apply_macos_plates(Theme& theme, const Color& surface, const Color& on_surface, ColorScheme scheme) {
+        void apply_macos_plates(Theme& theme, const Accents& accents, ColorScheme scheme) {
             // a control face lifts slightly off the window surface, which is the depth the guide asks for (§8.4)
-            const Color face = scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.16f) : ThemeBuilder::lighten(surface, 0.05f);
+            const Color face = scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.16f) : ThemeBuilder::lighten(accents.surface, 0.05f);
             // a hover lifts a little more, which is the gentle change a pointer asks for (§8.4)
             theme.set_button_plate(ControlState::Normal, face);
             theme.set_button_plate(ControlState::Hovered, ThemeBuilder::lighten(face, 0.05f));
@@ -239,17 +289,17 @@ namespace albor
             theme.set_button_plate(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.45f));
             theme.set_button_plate(ControlState::Focused, ThemeBuilder::lighten(face, 0.03f));
             // the label sits on the neutral face, so it is the readable text colour at every state (§8.4)
-            theme.set_button_label(ControlState::Normal, on_surface);
-            theme.set_button_label(ControlState::Hovered, on_surface);
-            theme.set_button_label(ControlState::Pressed, on_surface);
-            theme.set_button_label(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.45f));
-            theme.set_button_label(ControlState::Focused, on_surface);
+            theme.set_button_label(ControlState::Normal, accents.on_surface);
+            theme.set_button_label(ControlState::Hovered, accents.on_surface);
+            theme.set_button_label(ControlState::Pressed, accents.on_surface);
+            theme.set_button_label(ControlState::Disabled, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, 0.45f));
+            theme.set_button_label(ControlState::Focused, accents.on_surface);
             // the border is a hairline of the text colour, which separates a face that is close to the surface (§8.4)
-            const Color hairline = Color::rgba(on_surface.red, on_surface.green, on_surface.blue, scheme == ColorScheme::Dark ? 0.12f : 0.30f);
+            const Color hairline = Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, scheme == ColorScheme::Dark ? 0.12f : 0.30f);
             theme.set_button_border(ControlState::Normal, hairline);
-            theme.set_button_border(ControlState::Hovered, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, scheme == ColorScheme::Dark ? 0.18f : 0.38f));
+            theme.set_button_border(ControlState::Hovered, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, scheme == ColorScheme::Dark ? 0.18f : 0.38f));
             theme.set_button_border(ControlState::Pressed, hairline);
-            theme.set_button_border(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, scheme == ColorScheme::Dark ? 0.06f : 0.14f));
+            theme.set_button_border(ControlState::Disabled, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, scheme == ColorScheme::Dark ? 0.06f : 0.14f));
             theme.set_button_border(ControlState::Focused, hairline);
             // the canvas plate lifts like a face of its own (§8.4)
             theme.set_canvas_background(ControlState::Normal, face);
@@ -257,25 +307,38 @@ namespace albor
             theme.set_canvas_background(ControlState::Pressed, ThemeBuilder::darken(face, 0.06f));
             theme.set_canvas_background(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.5f));
             theme.set_canvas_background(ControlState::Focused, face);
-            // a card face lifts like a control and keeps the hairline that separates it from the surface (§8.4)
-            theme.set_panel_background(ControlState::Normal, face);
-            theme.set_panel_background(ControlState::Hovered, ThemeBuilder::lighten(face, 0.03f));
-            theme.set_panel_background(ControlState::Pressed, ThemeBuilder::darken(face, 0.04f));
-            theme.set_panel_background(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.5f));
-            theme.set_panel_background(ControlState::Focused, face);
-            theme.set_panel_border(ControlState::Normal, hairline);
-            theme.set_panel_border(ControlState::Hovered, hairline);
-            theme.set_panel_border(ControlState::Pressed, hairline);
-            theme.set_panel_border(ControlState::Disabled, Color::rgba(hairline.red, hairline.green, hairline.blue, 0.12f));
-            theme.set_panel_border(ControlState::Focused, hairline);
+            // a card is a content plate rather than a control face, so it never reuses the neutral button fill (§8.4)
+            const Color plate = scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.10f) : Color::rgb(1.0f, 1.0f, 1.0f);
+            theme.set_panel_background(ControlState::Normal, plate);
+            theme.set_panel_background(ControlState::Hovered, plate);
+            theme.set_panel_background(ControlState::Pressed, plate);
+            theme.set_panel_background(ControlState::Disabled, Color::rgba(plate.red, plate.green, plate.blue, 0.5f));
+            theme.set_panel_background(ControlState::Focused, plate);
+            // a native card carries no border, because the plate and the whitespace already group the content (§8.4)
+            for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
+                theme.set_panel_border(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
             // a macos groove is a light grey line, which is what a native track reads as (§8.4)
-            theme.set_slider_track(ControlState::Normal, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.16f) : Color::rgb(0.70f, 0.71f, 0.74f));
-            theme.set_slider_track(ControlState::Hovered, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.20f) : Color::rgb(0.76f, 0.77f, 0.80f));
-            theme.set_slider_track(ControlState::Pressed, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.12f) : Color::rgb(0.65f, 0.66f, 0.69f));
-            theme.set_slider_track(ControlState::Disabled, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.10f) : Color::rgb(0.78f, 0.79f, 0.81f));
-            theme.set_slider_track(ControlState::Focused, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.16f) : Color::rgb(0.70f, 0.71f, 0.74f));
+            theme.set_slider_track(ControlState::Normal, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.16f) : Color::rgb(0.70f, 0.71f, 0.74f));
+            theme.set_slider_track(ControlState::Hovered, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.20f) : Color::rgb(0.76f, 0.77f, 0.80f));
+            theme.set_slider_track(ControlState::Pressed, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.12f) : Color::rgb(0.65f, 0.66f, 0.69f));
+            theme.set_slider_track(ControlState::Disabled, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.10f) : Color::rgb(0.78f, 0.79f, 0.81f));
+            theme.set_slider_track(ControlState::Focused, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.16f) : Color::rgb(0.70f, 0.71f, 0.74f));
             // the knob lifts on a whisper of a shadow, which is what a native knob casts (§8.4)
             theme.set_slider_thumb_shadow(0.14f);
+            // a native scrollbar is a translucent thumb over the content, which is the overlay policy (§6.1)
+            const float resting = scheme == ColorScheme::Dark ? 0.35f : 0.30f;
+            const float hovered = scheme == ColorScheme::Dark ? 0.60f : 0.55f;
+            const float pressed = scheme == ColorScheme::Dark ? 0.75f : 0.70f;
+            const float disabled = scheme == ColorScheme::Dark ? 0.20f : 0.15f;
+            theme.set_scrollbar_thumb(ControlState::Normal, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, resting));
+            theme.set_scrollbar_thumb(ControlState::Hovered, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, hovered));
+            theme.set_scrollbar_thumb(ControlState::Pressed, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, pressed));
+            theme.set_scrollbar_thumb(ControlState::Disabled, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, disabled));
+            theme.set_scrollbar_thumb(ControlState::Focused, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, hovered));
+            // a macos push control keeps the neutral face, so a default control needs a role of its own (§8.4)
+            apply_accent_default(theme, accents.accent);
+            // a vertical strip paints its selection as a row, which is what a source list reads as (§6.1)
+            apply_tab_selection_row(theme, accents.accent);
         }
 
         // the neutral plate and its states in the fluent preset, which is a filled face over a one point outline (§8.4)
@@ -360,7 +423,7 @@ namespace albor
                 theme.set_panel_border(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
         }
 
-        // the dual layer ring states, where the halo carries the ring colour at a lower alpha (§8.4)
+        // the accent layers every preset shares, where the halo sits under the ring and a track fills (§8.4)
         void apply_derived_focus(Theme& theme, const Color& accent) {
             // the halo is the ring colour dimmed, which is the soft layer a native focus carries (§8.4)
             theme.set_focus_ring_outer(ControlState::Normal, Color::rgba(accent.red, accent.green, accent.blue, 0.0f));
@@ -374,14 +437,17 @@ namespace albor
             theme.set_slider_fill(ControlState::Pressed, ThemeBuilder::darken(accent, 0.25f));
             theme.set_slider_fill(ControlState::Disabled, Color::rgba(accent.red, accent.green, accent.blue, 0.45f));
             theme.set_slider_fill(ControlState::Focused, accent);
-            // a field plate is the surface itself with a hairline border, which is what a field reads as (§8.4)
-            const Color face = theme.surface();
-            theme.set_text_field_plate(ControlState::Normal, face);
-            theme.set_text_field_plate(ControlState::Hovered, face);
-            theme.set_text_field_plate(ControlState::Pressed, face);
-            theme.set_text_field_plate(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.5f));
-            theme.set_text_field_plate(ControlState::Focused, face);
-            // the border is the hairline the empty field carries, and the accent is the focused one (§8.4)
+        }
+
+        // the well a field is drawn on, which a preset decides so an editable control reads as one (§8.4)
+        void apply_field_surface(Theme& theme, const Color& plate, const Color& accent) {
+            // the well is one plate at every pointer state, because only the border reacts to the pointer (§8.4)
+            theme.set_text_field_plate(ControlState::Normal, plate);
+            theme.set_text_field_plate(ControlState::Hovered, plate);
+            theme.set_text_field_plate(ControlState::Pressed, plate);
+            theme.set_text_field_plate(ControlState::Disabled, Color::rgba(plate.red, plate.green, plate.blue, 0.5f));
+            theme.set_text_field_plate(ControlState::Focused, plate);
+            // the border is the hairline the button carries, and the accent marks the focused entry (§8.4)
             theme.set_text_field_border(ControlState::Normal, theme.palette().button_border[state_index(ControlState::Normal)]);
             theme.set_text_field_border(ControlState::Hovered, theme.palette().button_border[state_index(ControlState::Hovered)]);
             theme.set_text_field_border(ControlState::Pressed, theme.palette().button_border[state_index(ControlState::Pressed)]);
@@ -395,11 +461,13 @@ namespace albor
         // the states derive from the accents like any theme, so only the native shape differs (§8.4)
         Theme theme = ThemeBuilder::build(accents, scheme);
         // the plates are overridden to neutral control faces, which is what a macos push control reads as (§8.4)
-        apply_macos_plates(theme, accents.surface, accents.on_surface, scheme);
+        apply_macos_plates(theme, accents, scheme);
         // the metrics are the ones the interface guide sizes (§8.4)
         apply_macos_metrics(theme);
         // the dual layer ring halo rides on every preset alike (§8.4)
         apply_derived_focus(theme, accents.accent);
+        // a field is a well of its own, which is what an editable control is seen through (§8.4)
+        apply_field_surface(theme, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.04f) : Color::rgb(1.0f, 1.0f, 1.0f), accents.accent);
         // the surface is what everything else sits on (§6.1)
         theme.set_surface(accents.surface);
         return theme;
@@ -414,6 +482,10 @@ namespace albor
         apply_fluent_metrics(theme);
         // the dual layer ring halo rides on every preset alike (§8.4)
         apply_derived_focus(theme, accents.accent);
+        // a fluent field is a white well in light mode and a lift in dark, which is what a text box reads as (§8.4)
+        apply_field_surface(theme, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.10f) : Color::rgb(1.0f, 1.0f, 1.0f), accents.accent);
+        // a fluent primary button is the accent plate, which the neutral face cannot carry (§8.4)
+        apply_accent_default(theme, accents.accent);
         // the surface is what everything else sits on (§6.1)
         theme.set_surface(accents.surface);
         return theme;
@@ -428,6 +500,8 @@ namespace albor
         apply_pro_dark_metrics(theme);
         // the dual layer ring halo rides on every preset alike (§8.4)
         apply_derived_focus(theme, accents.accent);
+        // a tool field sits on the surface itself, which is the well the tool surface already carries (§8.4)
+        apply_field_surface(theme, theme.surface(), accents.accent);
         // the surface is what everything else sits on (§6.1)
         theme.set_surface(accents.surface);
         return theme;
@@ -553,6 +627,39 @@ namespace albor
         m_palette.button_border[state_index(ControlState::Normal)] = value;
     }
 
+    void Theme::set_button_plate_default(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§8.4)
+        m_palette.button_plate_default[state_index(state)] = value;
+    }
+
+    void Theme::set_button_plate_default(Color value) {
+        // the shorthand fills every state, because a default control has no neutral table to fall back to (§8.4)
+        for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
+            m_palette.button_plate_default[state_index(state)] = value;
+    }
+
+    void Theme::set_button_label_default(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§8.4)
+        m_palette.button_label_default[state_index(state)] = value;
+    }
+
+    void Theme::set_button_label_default(Color value) {
+        // the shorthand fills every state, because a label that vanished on a hover would leave the plate empty (§8.4)
+        for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
+            m_palette.button_label_default[state_index(state)] = value;
+    }
+
+    void Theme::set_button_border_default(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§8.4)
+        m_palette.button_border_default[state_index(state)] = value;
+    }
+
+    void Theme::set_button_border_default(Color value) {
+        // the shorthand fills every state, because a border that appeared on a hover would change the plate (§8.4)
+        for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
+            m_palette.button_border_default[state_index(state)] = value;
+    }
+
     void Theme::set_checkbox_box(Size value) {
         // the extent is stored whole, because a check box is one square (§8.2)
         m_metrics.checkbox_box = value;
@@ -653,6 +760,16 @@ namespace albor
         m_metrics.tab_indicator_height = value;
     }
 
+    void Theme::set_tab_row_inset(float value) {
+        // the inset is one value because a row sits the same distance from every strip edge (§8.2)
+        m_metrics.tab_row_inset = value;
+    }
+
+    void Theme::set_tab_row_radius(float value) {
+        // the radius is one value because a row has one corner shape (§6.1)
+        m_metrics.tab_row_radius = value;
+    }
+
     void Theme::set_radio_button_size(Size value) {
         // the extent is stored whole, because a radio button is one circle (§8.2)
         m_metrics.radio_button_size = value;
@@ -706,6 +823,21 @@ namespace albor
     void Theme::set_scrollbar_extent(float value) {
         // the width is one value because a bar has the same thickness on both edges (§6.1)
         m_metrics.scrollbar_extent = value;
+    }
+
+    void Theme::set_scrollbar_overlay(bool value) {
+        // the policy is one flag because a bar either overlays the content or takes a gutter (§8.2)
+        m_metrics.scrollbar_overlay = value;
+    }
+
+    void Theme::set_scrollbar_hover_extent(float value) {
+        // the hover width is one value because a bar widens on both edges alike (§6.1)
+        m_metrics.scrollbar_hover_extent = value;
+    }
+
+    void Theme::set_scrollbar_overlay_inset(float value) {
+        // the inset is one value because an overlay bar stands off one edge (§8.2)
+        m_metrics.scrollbar_overlay_inset = value;
     }
 
     void Theme::set_scrollbar_thumb_minimum(float value) {
@@ -806,6 +938,28 @@ namespace albor
     void Theme::set_tab_indicator(ControlState state, Color value) {
         // the entry is written by its state index, which is what the resolver reads (§6.1)
         m_palette.tab_indicator[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_selection_plate(Color value) {
+        // the shorthand fills every state, because a row that vanished on hover would unmark the selection (§6.1)
+        for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
+            m_palette.tab_selection_plate[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_selection_plate(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.tab_selection_plate[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_selection_label(Color value) {
+        // the shorthand fills every state, because a row label that vanished on a hover would leave the row empty (§6.1)
+        for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
+            m_palette.tab_selection_label[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_selection_label(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.tab_selection_label[state_index(state)] = value;
     }
 
     void Theme::set_canvas_background(Color value) {

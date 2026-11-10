@@ -273,8 +273,13 @@ namespace albor
     }
 
     void Button::set_default(bool is_default) {
-        // the flag is a dialog convention, so no pixel changes with it (§8.3)
+        // an unchanged flag repaints nothing, because the role did not move (§8.4)
+        if (m_default == is_default)
+            return;
+        // the flag is stored first, so the invalidation walks a button that already carries the new role (§8.4)
         m_default = is_default;
+        // the default control carries a role of its own, so the plate and the label have to be redrawn (§8.4)
+        invalidate();
     }
 
     bool Button::is_default() const {
@@ -392,14 +397,33 @@ namespace albor
         // without a theme the table is unused, because the resolver returns the widget's own value (§6.1)
         if (theme() == nullptr)
             return nullptr;
+        // the preset's default control role wins while it is filled, because it makes OK read as primary (§8.4)
+        if (paints_default_role())
+            return theme()->palette().button_plate_default;
         // the installed palette answers, because the theme owns the colour (§6.1)
         return theme()->palette().button_plate;
+    }
+
+    bool Button::paints_default_role() const {
+        // an authored plate owns the whole control, so the preset role steps aside for its label and border too (§8.4)
+        if (!m_default || m_background_set || theme() == nullptr)
+            return false;
+        // the role is a pair, because a plate without a label would draw an invisible caption (§8.4)
+        const Palette& palette = theme()->palette();
+        // the plate is the gate, because a preset that leaves it empty keeps the neutral tables (§8.4)
+        if (palette.button_plate_default[state_index(ControlState::Normal)].alpha <= 0.0f)
+            return false;
+        // the label is the second half, because a half filled role must fall back rather than hide its text (§8.4)
+        return palette.button_label_default[state_index(ControlState::Normal)].alpha > 0.0f;
     }
 
     const Color* Button::label_colors() const {
         // without a theme the table is unused, because the resolver returns the widget's own value (§6.1)
         if (theme() == nullptr)
             return nullptr;
+        // a filled default role carries its own label, which reads over the accent plate (§8.4)
+        if (paints_default_role())
+            return theme()->palette().button_label_default;
         // the installed palette answers, because the theme owns the colour (§6.1)
         return theme()->palette().button_label;
     }
@@ -408,6 +432,9 @@ namespace albor
         // without a theme the table is unused, because the resolver returns the node's own stroke (§8.4)
         if (theme() == nullptr)
             return nullptr;
+        // a filled default role strokes its own border, which an accent plate usually leaves empty (§8.4)
+        if (paints_default_role())
+            return theme()->palette().button_border_default;
         // the installed palette answers, because the border is a role like the plate (§8.4)
         return theme()->palette().button_border;
     }

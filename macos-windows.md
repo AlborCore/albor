@@ -365,6 +365,12 @@ job remains a tracked enhancement rather than a parity requirement.
   verified with end-to-end overlay consumption; the Windows leg is a CI matrix in `.github/workflows/port.yml`
   (staged install fixture + overlay port default/blend2d on both platforms, skia-reference on macOS), whose
   first green run is the parity evidence for this entry.
+- Theme presets stay portable C++ and are not a platform-source item. `Theme::macos` now dresses cards,
+  fields, overlay scrollbars, the default control and the sidebar selection through new palette and metric
+  tokens; `Theme::fluent` keeps its twelve point gutter and gains its field well and its accent
+  primary control; `ThemeBuilder` gives the derived baseline a field well, its focus line and the shared
+  outline edge. The presets are gated by token rather than by platform, so no Windows source is involved
+  and the Windows build proves the same code.
 
 ## 9. Remaining priorities
 

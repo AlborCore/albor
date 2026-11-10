@@ -93,6 +93,13 @@ indicator on the bottom edge of the selected header. A vertical strip is as wide
 tab and as tall as its tabs stacked, with the indicator on the left edge of the selected header.
 A strip longer than the view is clipped, not scrolled.
 
+A preset may fill the selection row instead of the indicator. When `tab_selection_plate` carries a
+colour, a **vertical** strip paints the selected header as a rounded row inset by
+`tab_row_inset` — which is what gives a macOS source list its 28px row — and drops the 2px
+indicator. The row label resolves `tab_selection_label`, which the macOS preset fills with white,
+so a plain `label` reads over the accent. A **top** strip always keeps the indicator. A composed
+`TabTitle` over a row draws its own children, so it supplies its own ink.
+
 ## Vertical example
 
 ```text

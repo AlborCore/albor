@@ -68,7 +68,7 @@ namespace albor
         // replace the work a press performs, which is what the activate action and the click path both run (§8.3, §10.1)
         void set_on_click(std::function<void()> handler);
 
-        // mark the button as the dialog's default, which return runs when nothing claimed it (§8.3)
+        // mark the button as the dialog's default, which return runs and the preset paints as primary (§8.3, §8.4)
         void set_default(bool is_default);
 
         // report whether the button is the dialog's default (§8.3)
@@ -156,6 +156,9 @@ namespace albor
 
         // the plate colours the button resolves through, which are the installed palette when a theme is present (§6.1)
         [[nodiscard]] const Color* plate_colors() const;
+
+        // report whether the preset fills the default control role, which makes a default button read differently (§8.4)
+        [[nodiscard]] bool paints_default_role() const;
 
         // the label colours the button resolves through, which are the installed palette when a theme is present (§6.1)
         [[nodiscard]] const Color* label_colors() const;

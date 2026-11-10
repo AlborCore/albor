@@ -99,3 +99,8 @@ both edges.
   `cancel: true` marks the control a plain Escape runs. A key the focused control claimed is
   never overridden, so a multi-line field still inserts its break. See
   [Windows and dialogs](../consuming.md#windows-and-dialogs).
+- The flag also selects the preset's primary plate: a preset that fills `button_plate_default`
+  paints the default control with its accent and its own `button_label_default`. A theme that
+  leaves that role transparent keeps the neutral plate; the derived preset is accent throughout, so
+  its default control is filled by the plain button role. An authored `background` wins over the
+  whole role, and a role with no label falls back rather than hiding its caption.
