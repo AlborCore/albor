@@ -138,8 +138,8 @@ namespace albor
                 return;
             // the event is claimed, so no ancestor acts on the same wheel (§8.3)
             event.handled = true;
-            // the delta is converted here, because this container owns the policy (§8.3)
-            scroll_by(event.scroll * wheel_scale(event));
+            // a positive wheel turns toward the start, so it subtracts from the offset (§8.3)
+            scroll_by(-event.scroll * wheel_scale(event));
             return;
         }
         // a move that continues a thumb drag steers the offset, which is what dragging the bar means (§8.3)

@@ -647,12 +647,19 @@ TEST(ScrollViewChecks, ATrackpadWheelMovesByItsOwnDelta) {
     Size measured{};
     view.measure(SizeConstraints::unconstrained(), measured);
     view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
-    Event wheel{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 25.0f, .precision = ScrollPrecision::Point};
-    // act
-    view.dispatch_event(wheel);
-    // assert a trackpad already counts points, so the delta is the distance and no second momentum is applied (§8.3)
-    EXPECT_FLOAT_EQ(view.offset(), 25.0f);
-    EXPECT_TRUE(wheel.handled);
+    view.scroll_to(100.0f);
+    Event up{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 25.0f, .precision = ScrollPrecision::Point};
+    // act an up notch, whose point delta is the distance, so no second momentum is applied (§8.3)
+    view.dispatch_event(up);
+    // assert positive turns toward the start, which is the direction the platform reports (§8.3)
+    EXPECT_FLOAT_EQ(view.offset(), 75.0f);
+    EXPECT_TRUE(up.handled);
+    Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -25.0f, .precision = ScrollPrecision::Point};
+    // act the matching down notch
+    view.dispatch_event(down);
+    // assert the other sign returns the viewport to the offset it started from (§8.3)
+    EXPECT_FLOAT_EQ(view.offset(), 100.0f);
+    EXPECT_TRUE(down.handled);
 }
 
 TEST(ScrollViewChecks, ANotchedWheelMovesByTheThemedLineExtent) {
@@ -666,11 +673,159 @@ TEST(ScrollViewChecks, ANotchedWheelMovesByTheThemedLineExtent) {
     Size measured{};
     view.measure(SizeConstraints::unconstrained(), measured);
     view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.scroll_to(100.0f);
+    Event up{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
+    // act an up notch, which is one themed line toward the start (§8.3)
+    view.dispatch_event(up);
+    // assert the container owns the conversion, because inheriting the platform policy a second time is the defect (§8.3)
+    EXPECT_FLOAT_EQ(view.offset(), 60.0f);
+    Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act the matching down notch
+    view.dispatch_event(down);
+    // assert the line extent applies to both directions, so only the sign changes (§8.3)
+    EXPECT_FLOAT_EQ(view.offset(), 100.0f);
+}
+
+TEST(ScrollViewChecks, AnUpWheelNotchMovesTowardTheStart) {
+    // arrange a viewport whose offset starts in the middle of its range (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.scroll_to(100.0f);
     Event wheel{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
     // act
     view.dispatch_event(wheel);
-    // assert the container owns the conversion, because inheriting the platform policy a second time is the defect (§8.3)
-    EXPECT_FLOAT_EQ(view.offset(), 40.0f);
+    // assert an up notch moves the content toward its start, which is the native direction (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 60.0f);
+}
+
+TEST(ScrollViewChecks, ADownWheelNotchMovesTowardTheEnd) {
+    // arrange a viewport whose offset starts in the middle of its range (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.scroll_to(100.0f);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act
+    view.dispatch_event(wheel);
+    // assert a down notch moves the content toward its end, which mirrors the up notch (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 140.0f);
+}
+
+TEST(ScrollViewChecks, AThemedLineExtentScalesTheWheelNotItsSign) {
+    // arrange a themed viewport whose line extent is twenty five (§6.1)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scroll_line_extent(25.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.scroll_to(100.0f);
+    Event up{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
+    // act
+    view.dispatch_event(up);
+    // assert the themed extent scales the distance toward the start, not the sign (§6.1, §8.3)
+    EXPECT_FLOAT_EQ(view.offset(), 75.0f);
+    Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act
+    view.dispatch_event(down);
+    // assert the same themed extent applies the other way (§6.1, §8.3)
+    EXPECT_FLOAT_EQ(view.offset(), 100.0f);
+}
+
+TEST(ScrollViewChecks, TheWheelClampsAtBothEnds) {
+    // arrange a viewport at its leading edge (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    Event up{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
+    // act an up notch already at the start
+    view.dispatch_event(up);
+    // assert nothing moves but the wheel is still claimed, which keeps nested handling for the chaining issue (§8.3)
+    EXPECT_TRUE(up.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+    view.scroll_to(view.maximum_offset());
+    Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act a down notch already at the end
+    view.dispatch_event(down);
+    // assert the offset stays at the maximum and the notch is claimed (§8.2, §8.3)
+    EXPECT_TRUE(down.handled);
+    EXPECT_FLOAT_EQ(view.offset(), view.maximum_offset());
+}
+
+TEST(ScrollViewChecks, AWheelOverContentThatFitsIsClaimedAndMovesNothing) {
+    // arrange content shorter than the viewport, so the viewport has no travel (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 200.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    Event up{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
+    // act
+    view.dispatch_event(up);
+    // assert the wheel is still claimed, while the clamped range keeps the content where it is (§8.2, §8.3)
+    EXPECT_TRUE(up.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+    Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act
+    view.dispatch_event(down);
+    // assert the other sign cannot move a viewport that has no travel either (§8.2, §8.3)
+    EXPECT_TRUE(down.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+}
+
+TEST(ScrollViewChecks, APointWheelWithAFractionalDeltaMovesByExactlyThatManyPoints) {
+    // arrange a viewport in the middle of its range (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.scroll_to(100.0f);
+    Event up{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 12.5f, .precision = ScrollPrecision::Point};
+    // act
+    view.dispatch_event(up);
+    // assert a fractional point delta is applied without rounding, because the trackpad counts points (§8.3)
+    EXPECT_FLOAT_EQ(view.offset(), 87.5f);
+    Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -12.5f, .precision = ScrollPrecision::Point};
+    // act
+    view.dispatch_event(down);
+    // assert the matching down delta returns to the starting offset exactly (§8.3)
+    EXPECT_FLOAT_EQ(view.offset(), 100.0f);
 }
 
 TEST(ScrollViewChecks, TheOffsetIsClampedToTheContent) {
@@ -1035,11 +1190,12 @@ TEST(ScrollViewChecks, AHiddenViewTakesNoEventAndIsNotAHit) {
     view.measure(SizeConstraints::unconstrained(), measured);
     view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
     view.set_visible(false);
-    Event wheel{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 40.0f, .precision = ScrollPrecision::Point};
+    Event wheel{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -40.0f, .precision = ScrollPrecision::Point};
     // act
     view.dispatch_event(wheel);
     // assert a hidden view draws nothing to aim at, so it neither claims nor hits (§8.3)
     EXPECT_FALSE(wheel.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
     EXPECT_FALSE(view.hit_test(Point{10.0f, 10.0f}));
 }
 
@@ -1055,7 +1211,7 @@ TEST(ScrollViewChecks, ADisabledViewRefusesTheWheelTheKeysAndTheHitTest) {
     view.measure(SizeConstraints::unconstrained(), measured);
     view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
     view.set_disabled(true);
-    Event wheel{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 40.0f, .precision = ScrollPrecision::Point};
+    Event wheel{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -40.0f, .precision = ScrollPrecision::Point};
     Event page{.kind = EventKind::KeyDown, .key = Key::PageDown};
     // act
     view.dispatch_event(wheel);

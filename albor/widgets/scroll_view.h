@@ -122,7 +122,7 @@ namespace albor
         // report whether the content extends past the content viewport, which the thumb and the paint read (§8)
         [[nodiscard]] bool scrollable() const;
 
-        // move the offset by a signed amount, which a wheel notch and a key press both ask for (§8.3)
+        // move the offset by a signed amount, where positive moves toward the end (§8.3)
         void scroll_by(float amount);
 
         // move the offset to an absolute place, which a scrollbar drag and a binding both ask for (§8.2)

@@ -99,6 +99,9 @@ reuses the existing element and rebinds it, rather than rebuilding the list.
   that main axis ([above](#filling-the-space-a-parent-leaves)).
 - `overscan` trades a band of pre-built rows against visible populate cost; it is measured
   in the same units as the viewport.
+- A positive wheel delta scrolls toward the start and a negative one toward the end. A
+  fine-grained delta moves by its own distance; a notched wheel moves by the themed line
+  extent.
 - `Scrollbar.on` forces the rail even when it is not needed; `Scrollbar.off` removes it —
   useful when a custom indicator is drawn instead.
 - `row_height` is the pitch virtualization assumes; a row whose measured height differs

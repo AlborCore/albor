@@ -261,7 +261,7 @@ namespace albor
     // the unit a wheel delta arrives in, which the platform knows and the scroll container converts (§8.3)
     enum class ScrollPrecision
     {
-        // the delta counts notches, which is what a notched wheel with momentum already applied reports (§8.3)
+        // the delta counts notches, which is what a notched wheel reports (§8.3)
         Line,
 
         // the delta counts points, which is what a trackpad or a precision wheel reports (§8.3)
@@ -280,7 +280,7 @@ namespace albor
         // the logical position the pointer event started from, which a drag measures against
         Point origin{};
 
-        // the wheel delta a wheel event carries, which is zero for every other kind
+        // the wheel delta a wheel event carries, positive toward the start and zero for other kinds (§8.3)
         float scroll = 0.0f;
 
         // the unit the wheel delta arrives in, which is what lets a scroll container own the conversion (§8.3)

@@ -1068,6 +1068,53 @@ TEST(ListBoxChecks, TheGutterThumbDragsWithoutSelectingARow) {
     EXPECT_FALSE(fixture.box.has_selection());
 }
 
+TEST(ListBoxChecks, TheWheelScrollsTheInternalViewportInTheNativeDirection) {
+    // arrange a scrollable list whose internal viewport owns the wheel (§8.2, §8.3)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    fixture.layout(320.0f, 160.0f);
+    InputController controller;
+    controller.attach(fixture.box);
+    // act an up notch at the leading edge, which is claimed but cannot move (§8.3)
+    Event up{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = 1.0f};
+    controller.deliver(up);
+    // assert the viewport stays at the start, because the up notch turns toward it (§8.3)
+    EXPECT_TRUE(up.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 0.0f);
+    // act a down notch, which turns toward the end
+    Event down{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = -1.0f};
+    controller.deliver(down);
+    // assert the internal viewport follows the sign and clamps at the range end (§8.2, §8.3)
+    EXPECT_TRUE(down.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 32.0f);
+    // act an up notch from the end
+    Event back{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = 1.0f};
+    controller.deliver(back);
+    // assert the wheel returns toward the start by the same line extent (§8.3)
+    EXPECT_TRUE(back.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 0.0f);
+}
+
+TEST(ListBoxChecks, AWheelOverADisabledListIsRefused) {
+    // arrange a disabled list that owns an internal viewport (§8.3)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    fixture.layout(320.0f, 160.0f);
+    fixture.box.set_disabled(true);
+    InputController controller;
+    controller.attach(fixture.box);
+    // act a down notch that would scroll an enabled list toward the end (§8.3)
+    Event wheel{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = -1.0f};
+    controller.deliver(wheel);
+    // assert the disabled state reaches the internal viewport, which refuses the wheel and keeps its place (§8.3)
+    EXPECT_FALSE(wheel.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 0.0f);
+}
+
 TEST(ListBoxChecks, TheSelectionBandStopsAtTheBarGutter) {
     // arrange a themed, overflowing list whose selection is drawn under the rows (§6.1, §8.2)
     Fixture fixture;
