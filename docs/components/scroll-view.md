@@ -102,6 +102,10 @@ reuses the existing element and rebinds it, rather than rebuilding the list.
 - A positive wheel delta scrolls toward the start and a negative one toward the end. A
   fine-grained delta moves by its own distance; a notched wheel moves by the themed line
   extent.
+- A nested `ScrollView` chains the wheel: the inner viewport claims a notch only while it
+  moves. When the content fits, or the offset is already at the end the notch turns toward,
+  the event is left to the surrounding tree, so an enclosing viewport or the application can
+  take it. A notch that moves the content is consumed whole.
 - `Scrollbar.on` forces the rail even when it is not needed; `Scrollbar.off` removes it —
   useful when a custom indicator is drawn instead.
 - `row_height` is the pitch virtualization assumes; a row whose measured height differs

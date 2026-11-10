@@ -118,3 +118,6 @@ list's `row_height` is the pitch virtualization divides the viewport by.
   which is what screen readers and automation read.
 - A `ListBox` is a viewport over its rows, so a free-scrolling surface without selection is a
   [ScrollView](scroll-view.md); the list does not expose a writable `offset` of its own.
+- The internal viewport chains the wheel like a [ScrollView](scroll-view.md): when the rows
+  fit, or the list is already at the end the wheel turns toward, an enclosing `ScrollView`
+  takes over.

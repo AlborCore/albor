@@ -7,8 +7,10 @@
 #include "albor/commands/command.h"
 #include "albor/core/constraints.h"
 #include "albor/core/scrollable_content.h"
+#include "albor/input/input_dispatcher.h"
 #include "albor/layout/column_layout.h"
 #include "albor/layout/row_layout.h"
+#include "albor/layout/stack_layout.h"
 #include "albor/runtime/binding_engine.h"
 #include "albor/semantics/semantic_node.h"
 #include "albor/ui/ui_event.h"
@@ -767,19 +769,19 @@ TEST(ScrollViewChecks, TheWheelClampsAtBothEnds) {
     Event up{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
     // act an up notch already at the start
     view.dispatch_event(up);
-    // assert nothing moves but the wheel is still claimed, which keeps nested handling for the chaining issue (§8.3)
-    EXPECT_TRUE(up.handled);
+    // assert nothing moves and the notch is left for an ancestor, which is what lets nested viewports chain (§8.3)
+    EXPECT_FALSE(up.handled);
     EXPECT_FLOAT_EQ(view.offset(), 0.0f);
     view.scroll_to(view.maximum_offset());
     Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
     // act a down notch already at the end
     view.dispatch_event(down);
-    // assert the offset stays at the maximum and the notch is claimed (§8.2, §8.3)
-    EXPECT_TRUE(down.handled);
+    // assert the offset stays at the maximum and the notch is left unclaimed (§8.2, §8.3)
+    EXPECT_FALSE(down.handled);
     EXPECT_FLOAT_EQ(view.offset(), view.maximum_offset());
 }
 
-TEST(ScrollViewChecks, AWheelOverContentThatFitsIsClaimedAndMovesNothing) {
+TEST(ScrollViewChecks, AWheelOverContentThatFitsIsLeftToTheParent) {
     // arrange content shorter than the viewport, so the viewport has no travel (§8.2)
     BindingEngine engine;
     ScrollView view(&engine);
@@ -793,14 +795,14 @@ TEST(ScrollViewChecks, AWheelOverContentThatFitsIsClaimedAndMovesNothing) {
     Event up{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
     // act
     view.dispatch_event(up);
-    // assert the wheel is still claimed, while the clamped range keeps the content where it is (§8.2, §8.3)
-    EXPECT_TRUE(up.handled);
+    // assert a wheel that cannot move the content is left for an ancestor (§8.3)
+    EXPECT_FALSE(up.handled);
     EXPECT_FLOAT_EQ(view.offset(), 0.0f);
     Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
     // act
     view.dispatch_event(down);
-    // assert the other sign cannot move a viewport that has no travel either (§8.2, §8.3)
-    EXPECT_TRUE(down.handled);
+    // assert the other sign cannot claim a viewport that has no travel either (§8.2, §8.3)
+    EXPECT_FALSE(down.handled);
     EXPECT_FLOAT_EQ(view.offset(), 0.0f);
 }
 
@@ -826,6 +828,408 @@ TEST(ScrollViewChecks, APointWheelWithAFractionalDeltaMovesByExactlyThatManyPoin
     view.dispatch_event(down);
     // assert the matching down delta returns to the starting offset exactly (§8.3)
     EXPECT_FLOAT_EQ(view.offset(), 100.0f);
+}
+
+TEST(ScrollViewChecks, AnInnerViewportThatFitsLeavesTheWheelToItsParent) {
+    // arrange an outer viewport whose inner viewport has no travel of its own (§8.2)
+    BindingEngine engine;
+    ScrollView outer(&engine);
+    auto inner = std::make_unique<ScrollView>(&engine);
+    inner->set_viewport_extent(Size{0.0f, 400.0f});
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 100.0f};
+    inner->add_child(std::move(content));
+    ScrollView* inner_ptr = inner.get();
+    outer.add_child(std::move(inner));
+    outer.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    outer.measure(SizeConstraints::unconstrained(), measured);
+    outer.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    ASSERT_FLOAT_EQ(inner_ptr->maximum_offset(), 0.0f);
+    ASSERT_FLOAT_EQ(outer.maximum_offset(), 100.0f);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act the wheel turns down over the inner viewport
+    InputDispatcher::dispatch(outer, wheel);
+    // assert the inner declines and the enclosing viewport takes the notch (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(outer.offset(), 40.0f);
+    EXPECT_FLOAT_EQ(inner_ptr->offset(), 0.0f);
+}
+
+TEST(ScrollViewChecks, AnInnerViewportAtItsStartLeavesTheUpWheelToItsParent) {
+    // arrange an inner viewport at its leading edge inside an outer viewport already scrolled (§8.2)
+    BindingEngine engine;
+    ScrollView outer(&engine);
+    auto inner = std::make_unique<ScrollView>(&engine);
+    inner->set_viewport_extent(Size{0.0f, 400.0f});
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    inner->add_child(std::move(content));
+    ScrollView* inner_ptr = inner.get();
+    outer.add_child(std::move(inner));
+    outer.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    outer.measure(SizeConstraints::unconstrained(), measured);
+    outer.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    outer.scroll_to(50.0f);
+    ASSERT_FLOAT_EQ(inner_ptr->offset(), 0.0f);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
+    // act an up notch over the inner, which is already at its start
+    InputDispatcher::dispatch(outer, wheel);
+    // assert the inner declines and the outer moves toward its own start (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(inner_ptr->offset(), 0.0f);
+    EXPECT_FLOAT_EQ(outer.offset(), 10.0f);
+}
+
+TEST(ScrollViewChecks, AnInnerViewportAtItsEndLeavesTheDownWheelToItsParent) {
+    // arrange an inner viewport at its trailing edge inside an outer viewport already scrolled (§8.2)
+    BindingEngine engine;
+    ScrollView outer(&engine);
+    auto inner = std::make_unique<ScrollView>(&engine);
+    inner->set_viewport_extent(Size{0.0f, 400.0f});
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    inner->add_child(std::move(content));
+    ScrollView* inner_ptr = inner.get();
+    outer.add_child(std::move(inner));
+    outer.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    outer.measure(SizeConstraints::unconstrained(), measured);
+    outer.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    outer.scroll_to(50.0f);
+    inner_ptr->scroll_to(inner_ptr->maximum_offset());
+    ASSERT_FLOAT_EQ(inner_ptr->offset(), 500.0f);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act a down notch over the inner, which is already at its end
+    InputDispatcher::dispatch(outer, wheel);
+    // assert the inner declines and the outer moves toward its own end (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(inner_ptr->offset(), 500.0f);
+    EXPECT_FLOAT_EQ(outer.offset(), 90.0f);
+}
+
+TEST(ScrollViewChecks, AnInnerViewportThatMovesConsumesTheWheel) {
+    // arrange an inner viewport in the middle of its range inside a scrolled outer viewport (§8.2)
+    BindingEngine engine;
+    ScrollView outer(&engine);
+    auto inner = std::make_unique<ScrollView>(&engine);
+    inner->set_viewport_extent(Size{0.0f, 400.0f});
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    inner->add_child(std::move(content));
+    ScrollView* inner_ptr = inner.get();
+    outer.add_child(std::move(inner));
+    outer.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    outer.measure(SizeConstraints::unconstrained(), measured);
+    outer.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    outer.scroll_to(50.0f);
+    inner_ptr->scroll_to(100.0f);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
+    // act an up notch the inner viewport can honour
+    InputDispatcher::dispatch(outer, wheel);
+    // assert the moving viewport consumes the notch whole and the outer keeps its place (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(inner_ptr->offset(), 60.0f);
+    EXPECT_FLOAT_EQ(outer.offset(), 50.0f);
+}
+
+TEST(ScrollViewChecks, ADisabledInnerViewportLeavesTheWheelToItsParent) {
+    // arrange a disabled inner viewport inside a scrolled outer viewport (§8.3)
+    BindingEngine engine;
+    ScrollView outer(&engine);
+    auto inner = std::make_unique<ScrollView>(&engine);
+    inner->set_viewport_extent(Size{0.0f, 400.0f});
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    inner->add_child(std::move(content));
+    ScrollView* inner_ptr = inner.get();
+    outer.add_child(std::move(inner));
+    outer.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    outer.measure(SizeConstraints::unconstrained(), measured);
+    outer.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    outer.scroll_to(50.0f);
+    inner_ptr->set_disabled(true);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
+    // act an up notch over the disabled inner
+    InputDispatcher::dispatch(outer, wheel);
+    // assert the inner is not a hit and the outer takes the wheel (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(inner_ptr->offset(), 0.0f);
+    EXPECT_FLOAT_EQ(outer.offset(), 10.0f);
+}
+
+TEST(ScrollViewChecks, AWheelAtTheEdgeDoesNotDetachABoundOffset) {
+    // arrange a binding that asks for more than the range holds (§7.3, AD-24)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    struct Pin
+    {
+        // the offset the expression produces, which stands for content extent less viewport extent (§7.3)
+        float target = 1000.0f;
+    };
+    Pin pin;
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.bind_offset(
+        [](void* context) {
+            // the evaluator reads its own context, which is what keeps the binding allocation free (§13.3)
+            return static_cast<Pin*>(context)->target;
+        },
+        &pin, {});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    (void)engine.settle();
+    ASSERT_FLOAT_EQ(view.offset(), 600.0f);
+    ASSERT_FALSE(view.user_scrolled());
+    std::vector<float> reported;
+    view.set_on_scroll([&reported](float offset) {
+        // the handler records any write, which is what a no-op notch must not raise (§8.3)
+        reported.push_back(offset);
+    });
+    Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act a down notch at the presented end, which the binding already overran
+    view.dispatch_event(down);
+    // assert the presented offset did not move, so the event is left alone and the binding still owns the value (§7.3)
+    EXPECT_FALSE(down.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 600.0f);
+    EXPECT_FALSE(view.user_scrolled());
+    EXPECT_TRUE(reported.empty());
+}
+
+TEST(ScrollViewChecks, AnOverrunBindingIsDetachedOnlyWhenTheOffsetMoves) {
+    // arrange a binding that asks for more than the range holds (§7.3, AD-24)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    struct Pin
+    {
+        // the offset the expression produces, which stands for content extent less viewport extent (§7.3)
+        float target = 1000.0f;
+    };
+    Pin pin;
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.bind_offset(
+        [](void* context) {
+            // the evaluator reads its own context, which is what keeps the binding allocation free (§13.3)
+            return static_cast<Pin*>(context)->target;
+        },
+        &pin, {});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    (void)engine.settle();
+    ASSERT_FLOAT_EQ(view.offset(), 600.0f);
+    ASSERT_FALSE(view.user_scrolled());
+    // act an imperative write naming the presented offset, which is a no-op
+    view.set_offset(600.0f);
+    // assert the binding still owns the value, because the presented offset did not change (§7.3)
+    EXPECT_FALSE(view.user_scrolled());
+    std::vector<float> reported;
+    view.set_on_scroll([&reported](float offset) {
+        // the handler records the value the moving notch reports (§8.3)
+        reported.push_back(offset);
+    });
+    Event up{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
+    // act an up notch, which can move the presented offset
+    view.dispatch_event(up);
+    // assert the moving notch takes precedence over the binding and reports the new offset (§7.3, §8.3)
+    EXPECT_TRUE(up.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 560.0f);
+    EXPECT_TRUE(view.user_scrolled());
+    ASSERT_EQ(reported.size(), 1u);
+    EXPECT_FLOAT_EQ(reported.at(0), 560.0f);
+}
+
+TEST(ScrollViewChecks, AnInnerViewportConsumesTheWholeNotchAtItsEnd) {
+    // arrange an inner viewport twenty points from its end inside a scrolled outer viewport (§8.2)
+    BindingEngine engine;
+    ScrollView outer(&engine);
+    auto inner = std::make_unique<ScrollView>(&engine);
+    inner->set_viewport_extent(Size{0.0f, 400.0f});
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    inner->add_child(std::move(content));
+    ScrollView* inner_ptr = inner.get();
+    outer.add_child(std::move(inner));
+    outer.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    outer.measure(SizeConstraints::unconstrained(), measured);
+    outer.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    outer.scroll_to(50.0f);
+    inner_ptr->scroll_to(480.0f);
+    Event first{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act a notch that reaches the inner end after twenty points
+    InputDispatcher::dispatch(outer, first);
+    // assert the partial notch is consumed whole and the outer keeps its place (§8.3)
+    EXPECT_TRUE(first.handled);
+    EXPECT_FLOAT_EQ(inner_ptr->offset(), 500.0f);
+    EXPECT_FLOAT_EQ(outer.offset(), 50.0f);
+    Event second{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act the next notch, which the inner can no longer move
+    InputDispatcher::dispatch(outer, second);
+    // assert the next notch starts on the outer viewport (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_FLOAT_EQ(inner_ptr->offset(), 500.0f);
+    EXPECT_FLOAT_EQ(outer.offset(), 90.0f);
+}
+
+TEST(ScrollViewChecks, TheNearestMovableViewportClaimsTheWheel) {
+    // arrange three viewports where the middle one is the nearest that can move (§8.2)
+    BindingEngine engine;
+    ScrollView outer(&engine);
+    auto middle = std::make_unique<ScrollView>(&engine);
+    middle->set_viewport_extent(Size{0.0f, 400.0f});
+    auto inner = std::make_unique<ScrollView>(&engine);
+    inner->set_viewport_extent(Size{0.0f, 600.0f});
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 100.0f};
+    inner->add_child(std::move(content));
+    ScrollView* inner_ptr = inner.get();
+    middle->add_child(std::move(inner));
+    ScrollView* middle_ptr = middle.get();
+    outer.add_child(std::move(middle));
+    outer.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    outer.measure(SizeConstraints::unconstrained(), measured);
+    outer.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    outer.scroll_to(50.0f);
+    ASSERT_FLOAT_EQ(inner_ptr->maximum_offset(), 0.0f);
+    Event first{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act a notch over the innermost viewport, which cannot move
+    InputDispatcher::dispatch(outer, first);
+    // assert the middle viewport takes the notch and the outer keeps its place (§8.3)
+    EXPECT_TRUE(first.handled);
+    EXPECT_FLOAT_EQ(inner_ptr->offset(), 0.0f);
+    EXPECT_FLOAT_EQ(middle_ptr->offset(), 40.0f);
+    EXPECT_FLOAT_EQ(outer.offset(), 50.0f);
+    middle_ptr->scroll_to(middle_ptr->maximum_offset());
+    Event second{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act another notch once the middle viewport reached its end
+    InputDispatcher::dispatch(outer, second);
+    // assert the walk continues to the outer viewport (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_FLOAT_EQ(middle_ptr->offset(), 200.0f);
+    EXPECT_FLOAT_EQ(outer.offset(), 90.0f);
+}
+
+TEST(ScrollViewChecks, AZeroWheelIsLeftAlone) {
+    // arrange a scrollable viewport in the middle of its range (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.scroll_to(100.0f);
+    std::vector<float> reported;
+    view.set_on_scroll([&reported](float offset) {
+        // the handler records any write, which a zero delta must not raise (§8.3)
+        reported.push_back(offset);
+    });
+    Event zero{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 0.0f, .precision = ScrollPrecision::Line};
+    // act a wheel event with no delta, which is what a horizontal gesture produces
+    view.dispatch_event(zero);
+    // assert the viewport neither moves nor claims the event (§8.3)
+    EXPECT_FALSE(zero.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 100.0f);
+    EXPECT_TRUE(reported.empty());
+}
+
+TEST(ScrollViewChecks, APointWheelChainsByItsOwnDelta) {
+    // arrange an outer viewport whose inner viewport has no travel (§8.2)
+    BindingEngine engine;
+    ScrollView outer(&engine);
+    auto inner = std::make_unique<ScrollView>(&engine);
+    inner->set_viewport_extent(Size{0.0f, 400.0f});
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 100.0f};
+    inner->add_child(std::move(content));
+    ScrollView* inner_ptr = inner.get();
+    outer.add_child(std::move(inner));
+    outer.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    outer.measure(SizeConstraints::unconstrained(), measured);
+    outer.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    Event wheel{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = -12.5f, .precision = ScrollPrecision::Point};
+    // act a point delta over the inner viewport
+    InputDispatcher::dispatch(outer, wheel);
+    // assert the outer applies the point delta once, because the inner declined it (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(outer.offset(), 12.5f);
+    EXPECT_FLOAT_EQ(inner_ptr->offset(), 0.0f);
+}
+
+TEST(ScrollViewChecks, ADeclinedWheelFallsThroughToALowerSibling) {
+    // arrange two overlaid viewports where only the lower one can move toward the start (§8.2)
+    BindingEngine engine;
+    StackLayout stack;
+    auto bottom = std::make_unique<ScrollView>(&engine);
+    auto bottom_content = std::make_unique<ContentNode>();
+    bottom_content->intrinsic = Size{100.0f, 900.0f};
+    bottom->add_child(std::move(bottom_content));
+    auto top = std::make_unique<ScrollView>(&engine);
+    auto top_content = std::make_unique<ContentNode>();
+    top_content->intrinsic = Size{100.0f, 900.0f};
+    top->add_child(std::move(top_content));
+    ScrollView* bottom_ptr = bottom.get();
+    ScrollView* top_ptr = top.get();
+    stack.add_child(std::move(bottom));
+    stack.add_child(std::move(top));
+    Size measured{};
+    stack.measure(SizeConstraints::tight(Size{200.0f, 300.0f}), measured);
+    stack.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    bottom_ptr->scroll_to(100.0f);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{5.0f, 5.0f}, .scroll = 1.0f, .precision = ScrollPrecision::Line};
+    // act an up notch over the top viewport, which is already at its start
+    InputDispatcher::dispatch(stack, wheel);
+    // assert the declined event is offered to the lower sibling, as every positioned event is (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(top_ptr->offset(), 0.0f);
+    EXPECT_FLOAT_EQ(bottom_ptr->offset(), 60.0f);
+}
+
+TEST(ScrollViewChecks, AnOutOfRangeOverrideRestoresWhenTheRangeGrows) {
+    // arrange a user scroll at the end of a long range (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.set_offset(600.0f);
+    ASSERT_TRUE(view.user_scrolled());
+    // act the content shrinks so the presented offset is clamped below the stored one
+    content_ptr->intrinsic = Size{100.0f, 400.0f};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    ASSERT_FLOAT_EQ(view.offset(), 100.0f);
+    Event down{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = -1.0f, .precision = ScrollPrecision::Line};
+    // act a notch at the shrunken end, which cannot move the presented offset
+    view.dispatch_event(down);
+    EXPECT_FALSE(down.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 100.0f);
+    // act the content grows back to its old extent
+    content_ptr->intrinsic = Size{100.0f, 900.0f};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the stored user position is restored, which is why the guard preserves it (§7.3)
+    EXPECT_FLOAT_EQ(view.offset(), 600.0f);
+    EXPECT_TRUE(view.user_scrolled());
 }
 
 TEST(ScrollViewChecks, TheOffsetIsClampedToTheContent) {

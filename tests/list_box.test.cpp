@@ -1077,11 +1077,11 @@ TEST(ListBoxChecks, TheWheelScrollsTheInternalViewportInTheNativeDirection) {
     fixture.layout(320.0f, 160.0f);
     InputController controller;
     controller.attach(fixture.box);
-    // act an up notch at the leading edge, which is claimed but cannot move (§8.3)
+    // act an up notch at the leading edge, which cannot move and is left for a parent (§8.3)
     Event up{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = 1.0f};
     controller.deliver(up);
-    // assert the viewport stays at the start, because the up notch turns toward it (§8.3)
-    EXPECT_TRUE(up.handled);
+    // assert the viewport stays at the start and declines the event, because the up notch turns toward it (§8.3)
+    EXPECT_FALSE(up.handled);
     EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 0.0f);
     // act a down notch, which turns toward the end
     Event down{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = -1.0f};
@@ -1113,6 +1113,68 @@ TEST(ListBoxChecks, AWheelOverADisabledListIsRefused) {
     // assert the disabled state reaches the internal viewport, which refuses the wheel and keeps its place (§8.3)
     EXPECT_FALSE(wheel.handled);
     EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 0.0f);
+}
+
+TEST(ListBoxChecks, AListWhoseViewportFitsLeavesTheWheelToThePage) {
+    // arrange a list whose rows fit inside its own viewport, hosted by a page viewport it overflows (§8.2)
+    BindingEngine engine;
+    ScrollView page(&engine);
+    auto list = std::make_unique<ListBox>(&engine);
+    list->set_viewport_extent(Size{0.0f, 400.0f});
+    list->set_row_height(24.0f);
+    auto rows = std::make_unique<RowContent>();
+    rows->add_plain_row();
+    rows->add_plain_row();
+    list->scroll_view().add_child(std::move(rows));
+    list->set_item_count(2);
+    ListBox* list_ptr = list.get();
+    page.add_child(std::move(list));
+    page.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    page.measure(SizeConstraints::unconstrained(), measured);
+    page.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    ASSERT_FLOAT_EQ(list_ptr->scroll_view().maximum_offset(), 0.0f);
+    ASSERT_FLOAT_EQ(page.maximum_offset(), 100.0f);
+    InputController controller;
+    controller.attach(page);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = -1.0f};
+    // act a down notch over the list, which has nowhere to scroll
+    controller.deliver(wheel);
+    // assert the list declines and the page takes the notch (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(page.offset(), 40.0f);
+    EXPECT_FLOAT_EQ(list_ptr->scroll_view().offset(), 0.0f);
+}
+
+TEST(ListBoxChecks, AListThatCanScrollKeepsTheWheelFromThePage) {
+    // arrange a list with enough rows to scroll, hosted by a page viewport it overflows (§8.2)
+    BindingEngine engine;
+    ScrollView page(&engine);
+    auto list = std::make_unique<ListBox>(&engine);
+    list->set_viewport_extent(Size{0.0f, 400.0f});
+    list->set_row_height(24.0f);
+    auto rows = std::make_unique<RowContent>();
+    for (int index = 0; index < 20; index++)
+        rows->add_plain_row();
+    list->scroll_view().add_child(std::move(rows));
+    list->set_item_count(20);
+    ListBox* list_ptr = list.get();
+    page.add_child(std::move(list));
+    page.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    page.measure(SizeConstraints::unconstrained(), measured);
+    page.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    ASSERT_FLOAT_EQ(list_ptr->scroll_view().maximum_offset(), 80.0f);
+    ASSERT_FLOAT_EQ(page.maximum_offset(), 100.0f);
+    InputController controller;
+    controller.attach(page);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = -1.0f};
+    // act a down notch over the list, which can honour it
+    controller.deliver(wheel);
+    // assert the list consumes the notch and the page keeps its place (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(list_ptr->scroll_view().offset(), 40.0f);
+    EXPECT_FLOAT_EQ(page.offset(), 0.0f);
 }
 
 TEST(ListBoxChecks, TheSelectionBandStopsAtTheBarGutter) {

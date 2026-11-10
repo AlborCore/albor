@@ -35,7 +35,7 @@ namespace albor
         // place the content at the current offset, which is what makes the offset move the content (§8.2)
         void arrange(const Rect& bounds) override;
 
-        // override: claim the wheel and the paging keys, which is what scrolling the content means (§8.3)
+        // override: claim the wheel while it moves the content, and the paging keys (§8.3)
         void dispatch_event(Event& event) override;
 
         // override: report whether a point lands inside the bounds, because a scrolled away row is not there (§8.3)
@@ -83,7 +83,7 @@ namespace albor
         // bind the offset over its sources, which lets a log view pin itself to the bottom (§7.3, AD-24)
         void bind_offset(Property<float>::StaticEvaluator evaluator, void* context, std::span<const PropertyId> dependencies);
 
-        // hand the offset to a caller, which is an imperative write and takes precedence over a binding (§7.3, AD-24)
+        // hand the offset to a caller, which detaches a binding when the presented offset changes (§7.3, AD-24)
         void set_offset(float offset);
 
         // hand out the offset the viewport currently presents, which a binding or a user scroll wrote (§7.3)
@@ -122,11 +122,11 @@ namespace albor
         // report whether the content extends past the content viewport, which the thumb and the paint read (§8)
         [[nodiscard]] bool scrollable() const;
 
-        // move the offset by a signed amount, where positive moves toward the end (§8.3)
-        void scroll_by(float amount);
+        // move the offset by a signed amount, where positive moves toward the end, and report whether it moved (§8.3)
+        bool scroll_by(float amount);
 
-        // move the offset to an absolute place, which a scrollbar drag and a binding both ask for (§8.2)
-        void scroll_to(float offset);
+        // move the offset to an absolute place, which a drag, a key and a write ask for, and report a move (§8.2)
+        bool scroll_to(float destination);
 
         // install the work told about every change of the offset, which is what the signal reports (§8.3)
         void set_on_scroll(std::function<void(float)> handler);

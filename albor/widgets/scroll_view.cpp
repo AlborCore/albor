@@ -136,10 +136,10 @@ namespace albor
             // a disabled view does not claim the wheel, because it refuses input (§8.3)
             if (disabled())
                 return;
-            // the event is claimed, so no ancestor acts on the same wheel (§8.3)
-            event.handled = true;
             // a positive wheel turns toward the start, so it subtracts from the offset (§8.3)
-            scroll_by(-event.scroll * wheel_scale(event));
+            const bool moved = scroll_by(-event.scroll * wheel_scale(event));
+            // a notch that found an edge stays unclaimed, so an enclosing viewport takes it (§8.3)
+            event.handled = moved;
             return;
         }
         // a move that continues a thumb drag steers the offset, which is what dragging the bar means (§8.3)
@@ -326,7 +326,7 @@ namespace albor
     }
 
     void ScrollView::set_offset(float offset) {
-        // the offset is written as a user scroll writes it, so it detaches a binding (§7.3, AD-24)
+        // a write that changes the presented offset detaches a binding, while a no-op keeps it (§7.3, AD-24)
         scroll_to(offset);
     }
 
@@ -398,14 +398,14 @@ namespace albor
 
     bool ScrollView::scrollable() const { return m_content_extent.height > content_viewport().height + 0.0f; }
 
-    void ScrollView::scroll_by(float amount) { scroll_to(offset() + amount); }
+    bool ScrollView::scroll_by(float amount) { return scroll_to(offset() + amount); }
 
-    void ScrollView::scroll_to(float offset) {
+    bool ScrollView::scroll_to(float destination) {
         // the destination is clamped into the range, which is what stops a drag overshooting the content (§8.2)
-        const float clamped = std::clamp(offset, 0.0f, maximum_offset());
-        // an unchanged destination moves nothing, so no write and no report (§8.2)
-        if (m_offset.get() == clamped)
-            return;
+        const float clamped = std::clamp(destination, 0.0f, maximum_offset());
+        // the presented offset decides the no-op; the stored channel keeps its value for a range that grows (§7.3)
+        if (offset() == clamped)
+            return false;
         // a press on the bar is a user scroll, which takes precedence over a bound offset (§7.3, AD-24)
         m_offset.set(clamped);
         // the offset moved the content, so only the placement runs (§8.2)
@@ -413,6 +413,8 @@ namespace albor
         // a handler that is installed is told, which is what the signal reports (§8.3)
         if (m_on_scroll)
             m_on_scroll(clamped);
+        // the offset moved, which is what the wheel claim reads (§8.3)
+        return true;
     }
 
     void ScrollView::set_on_scroll(std::function<void(float)> handler) { m_on_scroll = std::move(handler); }
