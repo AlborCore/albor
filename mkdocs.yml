@@ -53,25 +53,25 @@ nav:
       - Native components: concepts/native-components.md
   - Components:
       - Overview: components/index.md
-      - Label: components/label.md
       - Button: components/button.md
-      - ComboBox: components/combo-box.md
-      - TextField: components/text-field.md
-      - Slider: components/slider.md
-      - ProgressBar: components/progress-bar.md
-      - CheckBox: components/checkbox.md
-      - RadioGroup and RadioButton: components/radio-group.md
-      - NumericStepper: components/numeric-stepper.md
       - Canvas: components/canvas.md
-      - Image: components/image.md
-      - ScrollView: components/scroll-view.md
-      - ListBox: components/list-box.md
-      - TabView: components/tab-view.md
+      - CheckBox: components/checkbox.md
       - Column: components/column.md
-      - Row: components/row.md
+      - ComboBox: components/combo-box.md
+      - Grid: components/grid.md
+      - Image: components/image.md
+      - Label: components/label.md
+      - ListBox: components/list-box.md
+      - NumericStepper: components/numeric-stepper.md
       - Padding: components/padding.md
       - Panel and Card: components/panel.md
+      - ProgressBar: components/progress-bar.md
+      - RadioGroup and RadioButton: components/radio-group.md
+      - Row: components/row.md
+      - ScrollView: components/scroll-view.md
+      - Slider: components/slider.md
       - Stack: components/stack.md
-      - Grid: components/grid.md
+      - TabView: components/tab-view.md
+      - TextField: components/text-field.md
   - Tooling: tooling.md
   - Status and platforms: status.md

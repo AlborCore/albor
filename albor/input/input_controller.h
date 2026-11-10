@@ -45,7 +45,7 @@ namespace albor
         // report whether a pointer drag is captured, which the tests assert on (§8.3)
         [[nodiscard]] bool capturing() const;
 
-        // drop a capture whose window is leaving the screen, which ends the drag without a release (§8.3)
+        // drop a capture whose window is losing the interaction, which ends the drag without a release (§8.3)
         void cancel_pointer_capture();
 
         // report the node the pointer is over, which is the innermost hovered node (§8.3)
