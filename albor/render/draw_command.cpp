@@ -206,6 +206,8 @@ namespace albor
     void DrawCommand::set_clip_radius(float radius) {
         // the radius rides with the clip, which the replay rounds the scissor by (§6.2)
         m_clip_radius = radius;
+        // the clip is part of what the bound measured, so a later change drops the computed one (§6.1)
+        m_damage_bounds.reset();
     }
 
     float DrawCommand::clip_radius() const {
@@ -216,14 +218,20 @@ namespace albor
     void DrawCommand::set_clip(Rect clip) {
         // the clip is stamped before the command joins the list, so it is fixed for good (§6.2)
         m_clip = clip;
+        // the clip is part of what the bound measured, so a later change drops the computed one (§6.1)
+        m_damage_bounds.reset();
     }
 
     void DrawCommand::set_transform(Transform transform) {
         // the transform is stamped before the command joins the list, so it is fixed for good (§6.4)
         m_transform = transform;
+        // the transform is part of what the bound measured, so a later change drops the computed one (§6.1)
+        m_damage_bounds.reset();
     }
 
     void DrawCommand::scale_alpha(float factor) {
+        // a scaled command drops the bound, because its ink may no longer paint at all (§6.1)
+        m_damage_bounds.reset();
         // a cast carries its colour in its own geometry, because a shadow command has no paint of its own (§6.2)
         if (auto* cast = std::get_if<ShadowGeometry>(&m_geometry)) {
             // the cast takes the factor once, because it is the same coverage multiplier the paint would take (§6.2)
@@ -493,6 +501,9 @@ namespace albor
     }
 
     Rect DrawCommand::damage_bounds() const {
+        // a bound stage one computed while culling answers here, which keeps stage two from walking it again (§6.1)
+        if (m_damage_bounds.has_value())
+            return *m_damage_bounds;
         // a command that draws nothing has no damage, which keeps a zero length primitive out (§6.1)
         if (draws_nothing())
             return Rect{};
@@ -547,6 +558,11 @@ namespace albor
         }
         // the reach grows every edge explicitly, because a horizontal or vertical line has one zero extent (§6.1)
         return Rect{.x = area.x - reach, .y = area.y - reach, .width = area.width + reach * 2.0f, .height = area.height + reach * 2.0f};
+    }
+
+    void DrawCommand::cache_damage_bounds() {
+        // the bound is walked once, when stage one knows it will cull against it (§6.1)
+        m_damage_bounds = damage_bounds();
     }
 
     Rect DrawCommand::shadow_bounds() const {

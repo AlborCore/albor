@@ -1825,6 +1825,26 @@ TEST(SceneBuilder, AnUnfilteredBuildKeepsTheWholeCommandList) {
     EXPECT_EQ(scene->command_count(), full->command_count());
 }
 
+TEST(SceneBuilder, AWholeSurfaceDamageIsRecordedAsAFullFrame) {
+    // arrange a settled tree whose one child covers the whole surface and then invalidates itself (§6.1)
+    SceneBuilder builder;
+    TestNode root;
+    auto child = std::make_unique<TestNode>();
+    TestNode* leaf = child.get();
+    root.add_child(std::move(child));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f);
+    const std::shared_ptr<const FrameScene> full = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    leaf->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    leaf->invalidate();
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f), true);
+    // assert a region covering the surface excludes nothing, so the scene is whole and culls no command (§6.1)
+    EXPECT_FALSE(scene->is_partial());
+    EXPECT_FALSE(scene->culls_commands());
+    EXPECT_FALSE(scene->damage_rect().has_value());
+    EXPECT_EQ(scene->command_count(), full->command_count());
+}
+
 TEST(SceneRecorder, ACulledSceneDropsTheDrawsOutsideTheRegion) {
     // arrange a recorder that culls against the top left corner (§6.1)
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
