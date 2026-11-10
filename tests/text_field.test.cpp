@@ -3876,7 +3876,7 @@ TEST(TextFieldKeyboardChecks, AShiftControlEndExtendsToTheDocumentEnd) {
     field.set_multiline(true);
     field.set_caret(5);
     // act the chord that extends the selection to the end (§8.3)
-    Event end{.kind = EventKind::KeyDown, .key = Key::End, .modifiers = Modifiers{.control = true, .shift = true}};
+    Event end{.kind = EventKind::KeyDown, .key = Key::End, .modifiers = Modifiers{.shift = true, .control = true}};
     field.dispatch_event(end);
     // assert the anchor held while the caret reached the end (§8.3)
     EXPECT_TRUE(end.handled);
