@@ -132,6 +132,47 @@ namespace
         int& m_deliveries;
     };
 
+    // the leaf that owns a drag, which records the cancel that ends it (§8.3)
+    class CancelRecordingLeaf final : public albor::UiNode
+    {
+    public:
+        // build the leaf over the counters the test reads back (§8.3)
+        CancelRecordingLeaf(int& cancels, albor::PointerCancelReason& reason) :
+            m_cancels(cancels), m_reason(reason) {}
+
+        void measure(const albor::SizeConstraints& constraints, albor::Size& out_size) override {
+            // the leaf fills the offer, because the extent is not what this suite is about (§8.2)
+            out_size = constraints.constrain(albor::Size{50.0f, 50.0f});
+            m_measured_size = out_size;
+        }
+
+        [[nodiscard]] bool hit_test(albor::Point) const override {
+            // every press lands on the leaf, which is the drag target under test (§8.3)
+            return true;
+        }
+
+        void dispatch_event(albor::Event& event) override {
+            // a press claims the drag, which is what arms the capture (§8.3)
+            if (event.kind == albor::EventKind::PointerDown) {
+                event.handled = true;
+                return;
+            }
+            // a cancel is counted with its reason, because the test asserts why the drag ended (§8.3)
+            if (event.kind == albor::EventKind::PointerCancel) {
+                m_cancels++;
+                m_reason = event.cancel_reason;
+                event.handled = true;
+            }
+        }
+
+    private:
+        // how many cancels reached the leaf, which proves the drag ended (§8.3)
+        int& m_cancels;
+
+        // the reason the last cancel named, which the test asserts (§8.3)
+        albor::PointerCancelReason& m_reason;
+    };
+
     // the leaf that schedules one repeating animation the first time it is measured (§7.3)
     class AnimatedLeaf final : public albor::UiNode
     {
@@ -991,6 +1032,195 @@ TEST(MainWindow, AFilePanelSavePressDoesNotKeepTheNextPress) {
     EXPECT_EQ(activations, 2);
     // cleanup the parent, which owns nothing after the panel returns (§5.1)
     EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, AFocusLossCancelsTheDragWithCaptureLost) {
+    // arrange a window whose leaf owns a press, which is the drag focus loss interrupts (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle owner;
+    int cancels = 0;
+    albor::PointerCancelReason reason = albor::PointerCancelReason::Escape;
+    albor::RootBuilder builder = [&cancels, &reason](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<CancelRecordingLeaf>(cancels, reason); };
+    owner = application.create_window(albor::WindowOptions{}, builder);
+    ASSERT_TRUE(owner.valid());
+    application.pump();
+    albor::WindowStage* stage = application.stage(owner);
+    ASSERT_NE(stage, nullptr);
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    ASSERT_TRUE(press.handled);
+    // act the platform reports the window lost key status (§5.3)
+    application.window(owner)->on_platform_focus_lost();
+    // assert the captured leaf was told once with the interaction loss it cannot release (§8.3)
+    EXPECT_EQ(cancels, 1);
+    EXPECT_EQ(reason, albor::PointerCancelReason::CaptureLost);
+    // act press again, which a stale capture would swallow (§8.3)
+    albor::Event second{.kind = albor::EventKind::PointerDown, .position = albor::Point{7.0f, 7.0f}};
+    stage->deliver(second);
+    // assert the next press reached the leaf, so the cancel cleared the drag (§8.3)
+    EXPECT_TRUE(second.handled);
+    // cleanup the window, which owns the cancelled drag (§5.1)
+    EXPECT_TRUE(application.destroy_window(owner));
+}
+
+TEST(MainWindow, AHiddenWindowCancelsTheDragWithWindowHidden) {
+    // arrange a window whose leaf owns a press, which hiding takes away (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle owner;
+    int cancels = 0;
+    albor::PointerCancelReason reason = albor::PointerCancelReason::Escape;
+    albor::RootBuilder builder = [&cancels, &reason](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<CancelRecordingLeaf>(cancels, reason); };
+    owner = application.create_window(albor::WindowOptions{}, builder);
+    ASSERT_TRUE(owner.valid());
+    application.pump();
+    albor::WindowStage* stage = application.stage(owner);
+    ASSERT_NE(stage, nullptr);
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    ASSERT_TRUE(press.handled);
+    // act the window leaves the screen, which no release can follow (§5.1)
+    application.window(owner)->hide();
+    // assert the captured leaf was told once with the hidden surface it belonged to (§8.3)
+    EXPECT_EQ(cancels, 1);
+    EXPECT_EQ(reason, albor::PointerCancelReason::WindowHidden);
+    // act press again, which a stale capture would swallow (§8.3)
+    albor::Event second{.kind = albor::EventKind::PointerDown, .position = albor::Point{7.0f, 7.0f}};
+    stage->deliver(second);
+    // assert the next press reached the leaf, so the cancel cleared the drag (§8.3)
+    EXPECT_TRUE(second.handled);
+    // cleanup the hidden window, which owns the cancelled drag (§5.1)
+    EXPECT_TRUE(application.destroy_window(owner));
+}
+
+TEST(MainWindow, AClosedPopupCancelsTheDragWithWindowHidden) {
+    // arrange an owner and a popup whose leaf claims a drag (§5.1, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle owner = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(owner.valid());
+    application.pump();
+    int cancels = 0;
+    albor::PointerCancelReason reason = albor::PointerCancelReason::Escape;
+    albor::RootBuilder builder = [&cancels, &reason](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<CancelRecordingLeaf>(cancels, reason); };
+    const albor::WindowHandle popup = application.open_popup(*application.root(owner), albor::Rect::from_origin_size(albor::Point{10.0f, 20.0f}, albor::Size{120.0f, 30.0f}), albor::Size{240.0f, 120.0f}, std::move(builder), albor::Color::rgb(0.1f, 0.1f, 0.1f), [] {});
+    ASSERT_TRUE(popup.valid());
+    albor::WindowStage* stage = application.stage(popup);
+    ASSERT_NE(stage, nullptr);
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    ASSERT_TRUE(press.handled);
+    // act the popup closes while the drag is live, which hides the surface it belonged to (§5.1)
+    application.close_popup(popup);
+    // assert the captured leaf was told once with the hidden surface reason (§8.3)
+    EXPECT_EQ(cancels, 1);
+    EXPECT_EQ(reason, albor::PointerCancelReason::WindowHidden);
+    // cleanup the popup and the owner (§5.1)
+    application.destroy_popup(popup);
+    EXPECT_TRUE(application.destroy_window(owner));
+}
+
+TEST(MainWindow, AFilePanelOpenedDuringADragCancelsIt) {
+    // arrange a leaf that claims a press and opens a native panel on the first move (§5.3, §8.3)
+    class PanelOpeningLeaf final : public albor::UiNode
+    {
+    public:
+        PanelOpeningLeaf(albor::Application& application, albor::WindowHandle& owner, int& cancels, int& presses, albor::PointerCancelReason& reason) :
+            m_application(application), m_owner(owner), m_cancels(cancels), m_presses(presses), m_reason(reason) {}
+
+        void measure(const albor::SizeConstraints& constraints, albor::Size& out_size) override {
+            // the leaf fills the offer, because the extent is not what this suite is about (§8.2)
+            out_size = constraints.constrain(albor::Size{50.0f, 50.0f});
+            m_measured_size = out_size;
+        }
+
+        [[nodiscard]] bool hit_test(albor::Point) const override {
+            // every press lands on the leaf, which is the drag target under test (§8.3)
+            return true;
+        }
+
+        void dispatch_event(albor::Event& event) override {
+            // a press claims the drag, which is what puts the capture on this leaf (§8.3)
+            if (event.kind == albor::EventKind::PointerDown) {
+                m_presses++;
+                m_pressed = true;
+                event.handled = true;
+                return;
+            }
+            // the first move opens the panel while the capture is alive, which is the regression (§5.3)
+            if (event.kind == albor::EventKind::PointerMove && m_pressed && !m_opened) {
+                m_opened = true;
+                albor::OpenFileOptions options;
+                options.parent = m_owner;
+                (void)m_application.open_file(options);
+                event.handled = true;
+                return;
+            }
+            // the cancel the panel triggers is counted with its reason, because it must arrive exactly once (§8.3)
+            if (event.kind == albor::EventKind::PointerCancel) {
+                m_cancels++;
+                m_reason = event.cancel_reason;
+                m_pressed = false;
+                event.handled = true;
+            }
+        }
+
+    private:
+        // the application that owns the panel and the window (§5.1)
+        albor::Application& m_application;
+
+        // the handle the panel is parented to, which the test assigns after creation (§5.1)
+        albor::WindowHandle& m_owner;
+
+        // how many cancels reached the leaf, which proves the drag ended (§8.3)
+        int& m_cancels;
+
+        // how many presses reached the leaf, which proves the next one was not swallowed (§8.3)
+        int& m_presses;
+
+        // the reason the last cancel named, which the panel path asserts (§8.3)
+        albor::PointerCancelReason& m_reason;
+
+        // whether a press holds the drag that opens the panel (§8.3)
+        bool m_pressed = false;
+
+        // whether the panel already opened, so it runs once (§5.3)
+        bool m_opened = false;
+    };
+    InstalledScope scope;
+    albor::headless::reset_file_dialogs();
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle owner;
+    int cancels = 0;
+    int presses = 0;
+    albor::PointerCancelReason reason = albor::PointerCancelReason::Escape;
+    albor::RootBuilder builder = [&application, &owner, &cancels, &presses, &reason](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<PanelOpeningLeaf>(application, owner, cancels, presses, reason); };
+    owner = application.create_window(albor::WindowOptions{}, builder);
+    ASSERT_TRUE(owner.valid());
+    application.pump();
+    albor::WindowStage* stage = application.stage(owner);
+    ASSERT_NE(stage, nullptr);
+    // act press the leaf, which arms the capture the panel will take away (§8.3)
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(presses, 1);
+    // act move while captured, which opens the panel and asks the stage to cancel the drag (§5.3)
+    albor::Event move{.kind = albor::EventKind::PointerMove, .position = albor::Point{6.0f, 6.0f}};
+    stage->deliver(move);
+    // assert the captured leaf was told once with the interaction loss and the panel took it (§8.3)
+    EXPECT_EQ(cancels, 1);
+    EXPECT_EQ(reason, albor::PointerCancelReason::CaptureLost);
+    EXPECT_EQ(albor::headless::file_dialog_count(), 1U);
+    // act press again, which a stale capture would swallow (§8.3)
+    albor::Event second{.kind = albor::EventKind::PointerDown, .position = albor::Point{7.0f, 7.0f}};
+    stage->deliver(second);
+    // assert the next press reached the leaf, so the cancel cleared the drag (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_EQ(presses, 2);
+    // cleanup the window, which owns nothing after the panel returns (§5.1)
+    EXPECT_TRUE(application.destroy_window(owner));
 }
 
 TEST(MainWindow, AStalePortableParentIsRefusedRatherThanMadeTopLevel) {

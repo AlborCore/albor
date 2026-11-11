@@ -138,12 +138,12 @@ namespace albor
         m_pipeline->root().invalidate_layout();
     }
 
-    void WindowStage::cancel_pointer_capture() {
+    void WindowStage::cancel_pointer_capture(PointerCancelReason reason) {
         // an unwired stage has no input to cancel, which the window betrayed at creation time (§8.3)
         if (!m_input)
             return;
-        // the controller drops the drag, because the window it belonged to lost the interaction (§8.3)
-        m_input->cancel_pointer_capture();
+        // the controller drops the drag and tells its node, because the window it belonged to lost the interaction (§8.3)
+        m_input->cancel_pointer_capture(reason);
     }
 
     void WindowStage::set_close_request(std::function<void()> handler) {

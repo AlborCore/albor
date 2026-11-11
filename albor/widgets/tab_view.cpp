@@ -301,8 +301,8 @@ namespace albor
         // a hidden view takes no event at all, because it draws nothing to aim at (§8.3)
         if (!visible())
             return;
-        // a hover or a release is pointer state the strip carries whether or not it claims the press (§8.3)
-        if (event.kind == EventKind::PointerEnter || event.kind == EventKind::PointerLeave || event.kind == EventKind::PointerUp)
+        // a hover, a release or a cancel is pointer state the strip carries whether or not it claims the press (§8.3)
+        if (event.kind == EventKind::PointerEnter || event.kind == EventKind::PointerLeave || event.kind == EventKind::PointerUp || event.kind == EventKind::PointerCancel)
             handle_hover_transitions(event);
         // the strip is current before a press is mapped through it (§8.1)
         sync_tabs();

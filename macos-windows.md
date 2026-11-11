@@ -69,6 +69,14 @@ intentional asymmetry in this area; `Shift+F10` and each platform's menu key ope
 right-press, middle-press, extra-button and menu-key adapter tests are mirrored, and the outside-click dismissal
 test is repeated with the secondary button on both sides.
 
+Losing key status now reconciles the framework capture on both platforms. AppKit observes
+`NSWindowDidResignKeyNotification` and Win32 handles `WM_ACTIVATE` with `WA_INACTIVE`; both raise
+`PlatformWindowListener::on_platform_focus_lost`, which `Application` routes to the window's stage as
+`PointerCancelReason::CaptureLost`. A window hidden through the framework cancels its drag with
+`PointerCancelReason::WindowHidden` before the native surface leaves. The mirrored adapter suites carry the new
+notification test, and the application tests prove a live drag receives one `PointerCancel` and that the next press
+starts a fresh drag.
+
 Window teardown now follows one ordering on both platforms. A window is created with `releasedWhenClosed = NO`,
 because ARC already owns it and `close` must not send a second release; that extra release was the over-release the
 display cycle surfaced in the Touch Bar finder. A child is also detached from its owner before it is ordered out,

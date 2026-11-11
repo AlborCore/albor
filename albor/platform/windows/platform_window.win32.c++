@@ -669,6 +669,13 @@ namespace albor
                 state->listener->on_platform_event(message);
                 return 0;
             }
+            case WM_ACTIVATE: {
+                // losing activation ends a drag whose release the window will never receive (§5.1, §8.3)
+                if (LOWORD(wparam) == WA_INACTIVE)
+                    state->listener->on_platform_focus_lost();
+                // the activation flow needs no other answer, which the default procedure carries (§5.3)
+                return DefWindowProcW(window, code, wparam, lparam);
+            }
             case WM_ACTIVATEAPP: {
                 // losing activation is announced to the window that had it, and every popup dismisses on (§5.1, §8.4)
                 if (wparam == FALSE)

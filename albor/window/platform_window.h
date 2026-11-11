@@ -34,6 +34,9 @@ namespace albor
         // report a normalized input event, which the platform adapter produces in logical coordinates (§5.3, §8.3)
         virtual void on_platform_event(const Event& event) = 0;
 
+        // report that the native window lost key status, which ends a drag no release can finish (§5.3, §8.3)
+        virtual void on_platform_focus_lost() = 0;
+
         // report that the appearance the system renders with changed while the window is alive (§5.3, §8.4)
         virtual void on_platform_appearance_changed(const SystemAppearance& appearance) = 0;
     };

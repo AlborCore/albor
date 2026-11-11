@@ -988,6 +988,37 @@ TEST(Window, AnEventWithoutAnInputHandlerIsDropped) {
     EXPECT_FALSE(event.handled);
 }
 
+TEST(Window, APlatformFocusLossReachesTheFocusLostHandler) {
+    // arrange a window that cancels its drag when key status leaves (§8.3)
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    bool called = false;
+    window.set_focus_lost_handler([&called] { called = true; });
+    // act
+    window.on_platform_focus_lost();
+    // assert the platform report reached the handler, because the drag it owns has no release left (§8.3)
+    EXPECT_TRUE(called);
+}
+
+TEST(Window, AHideReachesTheHiddenHandlerBeforeTheNativeWindow) {
+    // arrange a window whose handler cancels the drag while the tree is still alive (§8.3)
+    auto native = std::make_unique<TestPlatformWindow>();
+    TestPlatformWindow* observed = native.get();
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::move(native));
+    bool called = false;
+    bool native_hidden_first = false;
+    window.set_hidden_handler([&called, &native_hidden_first, observed] {
+        called = true;
+        native_hidden_first = observed->hide_count > 0;
+    });
+    // act
+    window.hide();
+    // assert the handler ran before the native hide, so the captured node was still reachable (§8.3)
+    EXPECT_TRUE(called);
+    EXPECT_FALSE(native_hidden_first);
+    EXPECT_EQ(observed->hide_count, 1u);
+    EXPECT_FALSE(window.visible());
+}
+
 TEST(Window, ACloseRequestWithoutAHandlerIsGranted) {
     // arrange, act
     Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());

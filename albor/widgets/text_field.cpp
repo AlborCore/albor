@@ -725,6 +725,20 @@ namespace albor
             extend_caret(byte_at_point(event.position));
             return;
         }
+        // a cancel ends a thumb drag without a release, which leaves the offset where the drag put it (§8.3)
+        if (event.kind == EventKind::PointerCancel && m_dragging_thumb) {
+            // the drag ends with the cancel, so the next press starts a fresh one (§8.3)
+            m_dragging_thumb = false;
+            // the event is claimed, because the press that started the drag claimed it too (§8.3)
+            event.handled = true;
+            return;
+        }
+        // a cancel ends a selection drag, which leaves the selection where the last move put it (§8.3)
+        if (event.kind == EventKind::PointerCancel && m_dragging) {
+            // the drag is over, which the next press restarts (§8.3)
+            m_dragging = false;
+            return;
+        }
         // a release ends a thumb drag, which leaves the offset where the drag put it (§8.3)
         if (event.kind == EventKind::PointerUp && m_dragging_thumb) {
             // the drag ends with the release, so the next press starts a fresh one (§8.3)

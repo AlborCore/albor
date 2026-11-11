@@ -1000,6 +1000,20 @@ The menu surface itself is the `PopupHost` of §5.1 under `WindowRole::Popup`, s
 deactivation and teardown dismissal are the popup role's, not a second mechanism; an unclaimed
 `Escape` in the owner window closes the popups that window owns.
 
+**A Capture Ends With a Cancel, Not a Release (settled during implementation):**
+
+A pointer drag can end while the button is still down: Escape aborts it, a native panel or modal
+takes the interaction, the window loses key status, the surface hides, or the captured subtree
+leaves the tree. Clearing the capture silently leaves the widget in its dragging state, and
+synthesizing `PointerUp` makes it commit a gesture the user cancelled, so neither is the contract.
+
+The controller therefore clears the capture first and then delivers exactly one
+`EventKind::PointerCancel` to the captured node, carrying the last pointer position, the button
+that armed the drag, and a reason (`Escape`, `CaptureLost`, `WindowHidden`, `Detached`). The capture
+is already gone when the handler runs, so a handler that asks the controller sees no drag and a
+second cancel is a no-op. `PointerCancel` never becomes `PointerUp`: a normal release is the only
+event that commits a gesture, and the release path of §8.3 is unchanged.
+
 ---
 
 ### 8.4 Style and Theming (settled during implementation)

@@ -61,6 +61,9 @@ namespace albor
         // a window without a native window was never on screen (§5.1)
         if (!m_platform)
             return;
+        // a hidden surface cannot receive the release its drag expects, so the handler cancels it first (§8.3)
+        if (m_hidden_handler)
+            m_hidden_handler();
         m_platform->hide();
         m_visible = false;
     }
@@ -155,6 +158,16 @@ namespace albor
         m_input_handler = std::move(handler);
     }
 
+    void Window::set_focus_lost_handler(std::function<void()> handler) {
+        // the handler cancels the drag a lost key status leaves without a release (§8.3)
+        m_focus_lost_handler = std::move(handler);
+    }
+
+    void Window::set_hidden_handler(std::function<void()> handler) {
+        // the handler cancels the drag before the native surface leaves the screen (§8.3)
+        m_hidden_handler = std::move(handler);
+    }
+
     void Window::close() {
         // closing a window that never existed is a no operation rather than an error (§5.2)
         if (!m_platform) {
@@ -226,6 +239,13 @@ namespace albor
         if (!m_input_handler)
             return;
         m_input_handler(event);
+    }
+
+    void Window::on_platform_focus_lost() {
+        // a window without a handler has no drag to cancel, which is the quiet default of §8.3
+        if (!m_focus_lost_handler)
+            return;
+        m_focus_lost_handler();
     }
 
     void Window::on_platform_appearance_changed(const SystemAppearance& appearance) {

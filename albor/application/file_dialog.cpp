@@ -57,9 +57,8 @@ namespace albor
             std::fprintf(stderr, "albor: the file dialog backend built no panel\n");
             return std::nullopt;
         }
-        // a native panel takes the interaction from its owner, so the press that opened it never sees its release (§8.3)
-        if (WindowStage* owner = stage(options.parent))
-            owner->cancel_pointer_capture();
+        // a native panel takes the interaction from its owner, so the drag that opened it is cancelled (§8.3)
+        cancel_stage_capture(options.parent, PointerCancelReason::CaptureLost);
         // the panel runs on the ui thread, which is the thread that owns every native window (§5.1)
         return dialog->open(options, parent);
     }
@@ -88,9 +87,8 @@ namespace albor
             std::fprintf(stderr, "albor: the file dialog backend built no panel\n");
             return std::nullopt;
         }
-        // a native panel takes the interaction from its owner, so the press that opened it never sees its release (§8.3)
-        if (WindowStage* owner = stage(options.parent))
-            owner->cancel_pointer_capture();
+        // a native panel takes the interaction from its owner, so the drag that opened it is cancelled (§8.3)
+        cancel_stage_capture(options.parent, PointerCancelReason::CaptureLost);
         // the panel runs on the ui thread, which is the thread that owns every native window (§5.1)
         return dialog->save(options, parent);
     }

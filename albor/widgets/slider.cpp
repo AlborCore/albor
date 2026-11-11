@@ -201,6 +201,14 @@ namespace albor
             jump_to(event.position);
             return;
         }
+        // a cancel ends a drag without a release, which leaves the value where the last move put it (§8.3)
+        if (event.kind == EventKind::PointerCancel && m_dragging) {
+            // the event is claimed, so no ancestor reacts to the same cancel (§8.3)
+            event.handled = true;
+            // the drag ends with the cancel, so the next press starts a fresh one (§8.3)
+            m_dragging = false;
+            return;
+        }
         // a release ends a drag, which leaves the value where the last move put it (§8.3)
         if (event.kind == EventKind::PointerUp && m_dragging) {
             // the event is claimed, so no ancestor reacts to the same release (§8.3)

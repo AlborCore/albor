@@ -375,6 +375,15 @@ namespace albor
             invalidate();
             return;
         }
+        // a cancel ends the gesture wherever the pointer is, which clears the held press (§8.3)
+        if (event.kind == EventKind::PointerCancel) {
+            // a widget that held no press changes nothing, so it is not repainted (§6.1)
+            if (!m_pressed)
+                return;
+            m_pressed = false;
+            invalidate();
+            return;
+        }
         // a move that arrives outside the bounds clears the press, so dragging away releases it (§8.3)
         if (event.kind == EventKind::PointerMove && m_pressed) {
             // a press held inside the widget survives the move, because the drag belongs to it (§8.3)

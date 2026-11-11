@@ -21,6 +21,9 @@ namespace albor
         // a pointer moved to a logical position
         PointerMove,
 
+        // a captured pointer gesture was cancelled, which is not a release (§8.3)
+        PointerCancel,
+
         // the pointer entered a node's bounds, which the dispatcher synthesizes at a boundary (§8.3)
         PointerEnter,
 
@@ -60,6 +63,22 @@ namespace albor
 
         // any button beyond the three named ones, which only an application binds (§8.3)
         Other
+    };
+
+    // why a captured pointer gesture ended without a release, which a widget branches on when its cleanup differs (§8.3)
+    enum class PointerCancelReason
+    {
+        // the escape key aborted the drag while the pointer was still down (§8.3)
+        Escape,
+
+        // the window lost the interaction to a native panel, a modal or another surface (§8.3)
+        CaptureLost,
+
+        // the surface that owned the drag is going away, which a popup dismissal does (§8.3)
+        WindowHidden,
+
+        // the subtree holding the capture left the tree, so no release can reach it (§8.3)
+        Detached
     };
 
     // one portable key name, which a platform adapter normalizes a key event onto (§8.3)
@@ -301,6 +320,9 @@ namespace albor
 
         // the pointer button the event belongs to, which the primary one defaults to (§8.3)
         PointerButton button = PointerButton::Left;
+
+        // why a cancel ended the gesture, which every other kind ignores (§8.3)
+        PointerCancelReason cancel_reason = PointerCancelReason::CaptureLost;
 
         // the logical position the pointer event started from, which a drag measures against
         Point origin{};

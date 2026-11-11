@@ -45,8 +45,8 @@ namespace albor
         // report whether a pointer drag is captured, which the tests assert on (§8.3)
         [[nodiscard]] bool capturing() const;
 
-        // drop a capture whose window is losing the interaction, which ends the drag without a release (§8.3)
-        void cancel_pointer_capture();
+        // drop a capture whose window is losing the interaction, which tells the captured node it was cancelled (§8.3)
+        void cancel_pointer_capture(PointerCancelReason reason = PointerCancelReason::CaptureLost);
 
         // report the node the pointer is over, which is the innermost hovered node (§8.3)
         [[nodiscard]] UiNode* hovered() const;
@@ -88,6 +88,9 @@ namespace albor
         // route a keyboard event, which traverses the ring before the caret gets it (§8.3)
         void deliver_key(Event& event);
 
+        // clear the live capture and deliver the one cancel the captured node gets, which every ending shares (§8.3)
+        void release_capture(PointerCancelReason reason);
+
         // offer the key to a bound accelerator, which returns whether one claimed it (§18.5)
         [[nodiscard]] bool deliver_shortcut(const Event& event);
 
@@ -102,6 +105,9 @@ namespace albor
 
         // the button that armed the drag, which only its own release ends (§8.3)
         PointerButton m_capture_button = PointerButton::Left;
+
+        // the last pointer position a routed event carried, which a cancel hands back to the captured node (§8.3)
+        Point m_last_pointer{};
 
         // the capture sequence, which tells a dispatch that a hide ended the drag (§8.3)
         std::uint64_t m_capture_generation = 0;

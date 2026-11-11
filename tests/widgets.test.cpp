@@ -2139,6 +2139,72 @@ TEST(SliderChecks, AReleaseEndsTheDrag) {
     EXPECT_FLOAT_EQ(slider.value(), settled);
 }
 
+TEST(SliderChecks, ACancelEndsTheDrag) {
+    // arrange a drag that moved the thumb to the end (§8.3)
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{60.0f, 8.0f}};
+    slider.dispatch_event(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{119.0f, 8.0f}};
+    slider.dispatch_event(move);
+    const float cancelled_at = slider.value();
+    Event cancel{.kind = EventKind::PointerCancel, .position = Point{119.0f, 8.0f}};
+    // act
+    slider.dispatch_event(cancel);
+    Event after{.kind = EventKind::PointerMove, .position = Point{10.0f, 8.0f}};
+    slider.dispatch_event(after);
+    // assert the cancel ended the drag, so the next move steers nothing (§8.3)
+    EXPECT_TRUE(cancel.handled);
+    EXPECT_FALSE(after.handled);
+    EXPECT_FLOAT_EQ(slider.value(), cancelled_at);
+}
+
+TEST(SliderChecks, HidingTheCapturedSliderCancelsTheDrag) {
+    // arrange a slider the controller captured for a drag (§8.3)
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    InputController controller;
+    controller.attach(slider);
+    Event press{.kind = EventKind::PointerDown, .position = Point{60.0f, 8.0f}};
+    controller.deliver(press);
+    ASSERT_TRUE(controller.capturing());
+    const float cancelled_at = slider.value();
+    // act the slider hides while the drag is live, which is the detaching path (§8.3)
+    slider.set_visible(false);
+    Event after{.kind = EventKind::PointerMove, .position = Point{10.0f, 8.0f}};
+    controller.deliver(after);
+    // assert the cancel reached the still visible widget, and the later move steers nothing (§8.3)
+    EXPECT_FALSE(controller.capturing());
+    EXPECT_FALSE(after.handled);
+    EXPECT_FLOAT_EQ(slider.value(), cancelled_at);
+}
+
+TEST(SliderChecks, EscapeThroughTheControllerCancelsTheDrag) {
+    // arrange a slider the controller captured for a drag (§8.3)
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    InputController controller;
+    controller.attach(slider);
+    Event press{.kind = EventKind::PointerDown, .position = Point{60.0f, 8.0f}};
+    controller.deliver(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{119.0f, 8.0f}};
+    controller.deliver(move);
+    const float cancelled_at = slider.value();
+    Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
+    // act
+    controller.deliver(escape);
+    Event after{.kind = EventKind::PointerMove, .position = Point{10.0f, 8.0f}};
+    controller.deliver(after);
+    // assert the controller and the widget both dropped the drag, so the next move steers nothing (§8.3)
+    EXPECT_TRUE(escape.handled);
+    EXPECT_FALSE(controller.capturing());
+    EXPECT_FALSE(after.handled);
+    EXPECT_FLOAT_EQ(slider.value(), cancelled_at);
+}
+
 TEST(SliderChecks, AMoveWithoutAPressDoesNotSteerTheSlider) {
     // arrange
     BindingEngine engine;
@@ -3773,6 +3839,22 @@ TEST(ControlStateChecks, AMoveInsideBoundsKeepsAHeldPress) {
     button.dispatch_event(move);
     // assert a drag inside the control keeps the press, because the drag belongs to it (§8.3)
     EXPECT_TRUE(button.pressed());
+}
+
+TEST(ControlStateChecks, ACancelReleasesAHeldPress) {
+    // arrange a control holding a press inside its plate (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 5.0f}};
+    button.dispatch_event(press);
+    ASSERT_TRUE(button.pressed());
+    Event cancel{.kind = EventKind::PointerCancel, .position = Point{10.0f, 5.0f}};
+    // act
+    button.dispatch_event(cancel);
+    // assert a cancelled gesture leaves no pressed visual behind (§8.3)
+    EXPECT_FALSE(button.pressed());
 }
 
 TEST(ThemeChecks, ACheckBoxKeepsItsOwnExtentWithoutATheme) {

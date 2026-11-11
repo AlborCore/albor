@@ -55,8 +55,8 @@ namespace albor
         // route one normalized event into the tree, which is where the widgets answer (§8.3)
         void deliver(Event& event);
 
-        // drop the pointer capture when the window loses the interaction, which ends a press with no release (§8.3)
-        void cancel_pointer_capture();
+        // drop the pointer capture when the window loses the interaction, which tells the captured node why (§8.3)
+        void cancel_pointer_capture(PointerCancelReason reason = PointerCancelReason::CaptureLost);
 
         // hand out the root of the driven tree, which is what an application installs a theme over (§6.1, §8.4)
         [[nodiscard]] UiNode& root() const;

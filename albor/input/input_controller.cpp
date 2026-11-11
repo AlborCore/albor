@@ -26,15 +26,23 @@ namespace albor
                 }
             }
         }
-        // a leaving subtree drops the drag capture it held, because moves must not reach a hidden control (§8.3)
+        // a leaving subtree reports the drag capture it held, because moves must not reach a hidden control (§8.3)
+        bool leaves_capture = false;
         if (m_capture != nullptr) {
-            // the captured node descends from the leaving subtree, so the capture is released (§8.3)
+            // the captured node descends from the leaving subtree, so the capture goes with it (§8.3)
             for (const UiNode* current = m_capture; current != nullptr; current = current->parent()) {
                 if (current == node) {
-                    m_capture = nullptr;
+                    leaves_capture = true;
                     break;
                 }
             }
+        }
+        // the captured node is still alive and still in the tree, so it is told before the mutation (§8.3)
+        if (leaves_capture) {
+            // the generation advances, because a dispatch walking this press must not arm a new capture (§8.3)
+            m_capture_generation++;
+            // the cancel is the ending the node would never receive from a release (§8.3)
+            release_capture(PointerCancelReason::Detached);
         }
         // the chain runs deepest first, so the node's descendants stand before it and its ancestors behind (§8.3)
         const auto found = std::find(m_hover_chain.begin(), m_hover_chain.end(), node);
@@ -112,6 +120,18 @@ namespace albor
     }
 
     void InputController::deliver_pointer(Event& event) {
+        // every routed pointer event records the position a later cancel hands back (§8.3)
+        m_last_pointer = event.position;
+        // a cancel ends the capture, which is not a gesture the tree can claim by position (§8.3)
+        if (event.kind == EventKind::PointerCancel) {
+            // only a live capture is the event's to claim, because a cancel without a drag has nothing to end (§8.3)
+            const bool captured = m_capture != nullptr;
+            // the capture drops through the one path that tells its node (§8.3)
+            cancel_pointer_capture(event.cancel_reason);
+            // the cancel is claimed exactly when it ended a drag (§8.3)
+            event.handled = captured;
+            return;
+        }
         // a request that already reached the controller carries its own gesture, so no hover is diffed for it (§8.3)
         if (event.kind == EventKind::ContextMenu) {
             deliver_context_menu(event);
@@ -194,13 +214,8 @@ namespace albor
         if (event.kind == EventKind::KeyDown && event.key == Key::Escape) {
             // a live drag is the first escape target, because it owns the pointer until it aborts (§8.3)
             if (m_capture != nullptr) {
-                // the captured node is told the drag is over, because a node clears its drag flags on a release (§8.3)
-                UiNode* captured = m_capture;
-                // the capture is dropped first, so a release that asks the controller sees no capture left (§8.3)
-                m_capture = nullptr;
-                // the release is what makes the node forget the drag, which an escape otherwise leaves armed (§8.3)
-                Event release{.kind = EventKind::PointerUp};
-                InputDispatcher::dispatch_to_focused(*m_root, release, captured);
+                // the capture drops through the cancel path, so the node never mistakes the abort for a release (§8.3)
+                cancel_pointer_capture(PointerCancelReason::Escape);
                 // the escape itself is claimed, because it cancelled the drag the pointer owned (§8.3)
                 event.handled = true;
                 return;
@@ -285,13 +300,29 @@ namespace albor
         return m_capture != nullptr;
     }
 
-    void InputController::cancel_pointer_capture() {
+    void InputController::cancel_pointer_capture(PointerCancelReason reason) {
         // the next dispatch must not arm a capture the window cannot release, so the generation advances (§8.3)
         m_capture_generation++;
-        // a window that lost the interaction owns no drag, so the stale node is cleared with it (§8.3)
+        // the capture drops through the one path that tells its node, because a silent drop leaves it dragging (§8.3)
+        release_capture(reason);
+    }
+
+    void InputController::release_capture(PointerCancelReason reason) {
+        // a controller with no live capture has nothing to tell, which makes a repeated cancel a no op (§8.3)
+        if (m_capture == nullptr)
+            return;
+        // the captured node is read before the capture is cleared, because the cancel is delivered to it (§8.3)
+        UiNode* captured = m_capture;
+        // the button that armed the drag is what the cancel names, so a widget can match the gesture (§8.3)
+        const PointerButton button = m_capture_button;
+        // the capture drops before the node is told, so a handler that asks the controller sees no drag (§8.3)
         m_capture = nullptr;
         // the drag forgets its button with the node, because a stale button must not end a later drag (§8.3)
         m_capture_button = PointerButton::Left;
+        // the cancel carries the position the pointer last held, because the abort has no point of its own (§8.3)
+        Event cancel{.kind = EventKind::PointerCancel, .position = m_last_pointer, .button = button, .cancel_reason = reason};
+        // the captured node is the only owner of the gesture, so it is told exactly once (§8.3)
+        InputDispatcher::dispatch_to_chain(std::vector<UiNode*>{captured}, cancel);
     }
 
     void InputController::set_command_registry(CommandRegistry* registry) {
