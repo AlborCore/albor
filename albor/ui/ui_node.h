@@ -85,6 +85,15 @@ namespace albor
         // offer the event to this node only, because the dispatcher walks the tree so each node is offered once (§8.3)
         virtual void dispatch_event(Event& event);
 
+        // install the work a context-menu request runs, which receives the point in this node's own coordinates (§8.3)
+        void set_on_context_menu(std::function<void(Point)> handler);
+
+        // report whether the node carries a context-menu handler, which the dispatcher consults (§8.3)
+        [[nodiscard]] bool has_on_context_menu() const;
+
+        // run the context-menu handler when the point lands on the node, reporting whether one took it (§8.3)
+        [[nodiscard]] bool request_context_menu(Point logical_point);
+
         // hand out the bounds a parent arranged this node to (§8.2)
         [[nodiscard]] const Rect& bounds() const;
 
@@ -270,6 +279,9 @@ namespace albor
 
         // the handler told about an attached subtree, which only the root carries (§8.4)
         std::function<void(UiNode*)> m_attached_handler;
+
+        // the work a context-menu request runs on this node, which carries the node-local point (§8.3)
+        std::function<void(Point)> m_on_context_menu;
 
         // whether the node asked for a redraw since the last frame (§6.1)
         bool m_render_dirty = true;

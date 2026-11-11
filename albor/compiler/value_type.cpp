@@ -603,6 +603,14 @@ namespace albor::compiler
         text_decoration.fields.push_back(RecordFieldType{.name = "underline", .type = scalar(TypeKind::Bool)});
         // the record joins the builtins, because a field decoration names no manifest (§9.1)
         catalog.add_record(text_decoration);
+        // every builtin raises the context-menu request, because the handler lives on the node itself (§8.3)
+        for (ElementType& type : catalog.m_types) {
+            // a type that already declares the signal keeps its own, because a manifest may name one (§11.2, AD-17)
+            if (type.find_signal("context_menu") != nullptr)
+                continue;
+            // the payload is the node-local position, which the language carries as two scalars (§8.3)
+            type.signals.push_back(ElementSignal{.name = "context_menu", .parameter_types = {scalar(TypeKind::Float), scalar(TypeKind::Float)}, .parameter_names = {"x", "y"}});
+        }
         // every builtin arranges inside a parent, so the common properties are appended once (§8.2)
         catalog.add_common_properties();
         return catalog;

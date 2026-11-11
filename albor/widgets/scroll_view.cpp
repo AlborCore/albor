@@ -169,6 +169,9 @@ namespace albor
         }
         // a press on the thumb starts a drag, which is what grabbing the bar means (§8.3)
         if (event.kind == EventKind::PointerDown) {
+            // only the primary button scrolls the view, because the others are their own gesture (§8.3)
+            if (event.button != PointerButton::Left)
+                return;
             // a disabled view does not claim a press, because it refuses input (§8.3)
             if (disabled())
                 return;

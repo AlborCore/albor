@@ -342,8 +342,9 @@ TEST(ElementCatalog, ExposesTheImageProperties) {
     EXPECT_TRUE(image->find_property("description")->assignable);
     EXPECT_TRUE(image->find_property("width")->assignable);
     EXPECT_TRUE(image->find_property("height")->assignable);
-    // assert an image raises no signal, because the user does not drive it (§8)
-    EXPECT_TRUE(image->signals.empty());
+    // assert the only signal is the context-menu request, which every builtin raises (§8.3)
+    ASSERT_EQ(image->signals.size(), 1u);
+    EXPECT_EQ(image->signals.front().name, "context_menu");
 }
 
 TEST(ElementCatalog, ExposesTheHandledSignals) {

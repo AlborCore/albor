@@ -311,6 +311,9 @@ namespace albor
             return;
         // a press on a header selects the page it names, which is the one pointer action of the strip (§8.3)
         if (event.kind == EventKind::PointerDown) {
+            // only the primary button selects a tab, because the others are their own gesture (§8.3)
+            if (event.button != PointerButton::Left)
+                return;
             // a press outside the view belongs to nothing it holds, even when an overflow header sits there (§8.3)
             if (!hit_test(event.position))
                 return;

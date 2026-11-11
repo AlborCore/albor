@@ -1625,3 +1625,55 @@ TEST(MainWindow, FocusFirstControlOffLeavesTheFocusWhereItWas) {
     EXPECT_TRUE(application.destroy_window(dialog));
     EXPECT_TRUE(application.destroy_window(parent));
 }
+
+TEST(MainWindow, AnUnclaimedEscapeDismissesThePopupTheWindowOwns) {
+    // arrange the composition root and a main window whose tree claims nothing (§5.1)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle owner = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(owner.valid());
+    albor::UiNode* root = application.root(owner);
+    ASSERT_NE(root, nullptr);
+    const albor::WindowHandle popup = application.open_popup(*root, albor::Rect::from_origin_size(albor::Point{10.0f, 10.0f}, albor::Size{}), albor::Size{80.0f, 40.0f}, empty_form(), albor::Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), [] {});
+    ASSERT_TRUE(popup.valid());
+    albor::Window* popup_window = application.window(popup);
+    ASSERT_NE(popup_window, nullptr);
+    ASSERT_TRUE(popup_window->visible());
+    // act an escape the owner tree left unclaimed reaches the application (§8.3)
+    application.window(owner)->on_platform_event(albor::Event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Escape});
+    // assert the owned popup hid, while its stage and tree survived for a reopen (§5.1)
+    EXPECT_FALSE(popup_window->visible());
+    EXPECT_NE(application.root(popup), nullptr);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(owner));
+}
+
+TEST(MainWindow, AClaimedEscapeLeavesThePopupOpen) {
+    // arrange a main window whose root claims every key, which is what a focused control does (§8.3)
+    class ClaimingNode final : public albor::UiNode
+    {
+    public:
+        void dispatch_event(albor::Event& event) override { event.handled = true; }
+    };
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle owner = application.create_window(albor::WindowOptions{}, [](albor::BindingEngine&, albor::TextEngine&) -> std::unique_ptr<albor::UiNode> { return std::make_unique<ClaimingNode>(); });
+    ASSERT_TRUE(owner.valid());
+    albor::UiNode* root = application.root(owner);
+    ASSERT_NE(root, nullptr);
+    // the caller arranges the tree before the first frame, which is what gives the caret somewhere to point (§8.2)
+    root->arrange(albor::Rect::from_origin_size(albor::Point{0.0f, 0.0f}, albor::Size{200.0f, 200.0f}));
+    // the claiming control takes the caret, which is what puts the escape on its path (§8.3)
+    application.stage(owner)->focus().request_focus(root);
+    ASSERT_EQ(application.stage(owner)->focus().focused(), root);
+    const albor::WindowHandle popup = application.open_popup(*root, albor::Rect::from_origin_size(albor::Point{10.0f, 10.0f}, albor::Size{}), albor::Size{80.0f, 40.0f}, empty_form(), albor::Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), [] {});
+    ASSERT_TRUE(popup.valid());
+    albor::Window* popup_window = application.window(popup);
+    ASSERT_NE(popup_window, nullptr);
+    // act an escape the tree claimed belongs to the control, not the dismissal (§8.3)
+    application.window(owner)->on_platform_event(albor::Event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Escape});
+    // assert the popup stays open, because the control owns the key (§8.3)
+    EXPECT_TRUE(popup_window->visible());
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(owner));
+}

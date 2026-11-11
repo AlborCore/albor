@@ -82,6 +82,9 @@ namespace albor
         // route a positioned event, which moves the focus and captures a drag on a claimed press (§8.3)
         void deliver_pointer(Event& event);
 
+        // route a context-menu request, which a secondary press and the keyboard both produce (§8.3)
+        void deliver_context_menu(Event& event);
+
         // route a keyboard event, which traverses the ring before the caret gets it (§8.3)
         void deliver_key(Event& event);
 
@@ -96,6 +99,9 @@ namespace albor
 
         // the node dragging, which claims the moves until the button comes up (§8.3)
         UiNode* m_capture = nullptr;
+
+        // the button that armed the drag, which only its own release ends (§8.3)
+        PointerButton m_capture_button = PointerButton::Left;
 
         // the capture sequence, which tells a dispatch that a hide ended the drag (§8.3)
         std::uint64_t m_capture_generation = 0;

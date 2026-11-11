@@ -794,6 +794,9 @@ namespace albor::compiler
             // the generated name of a handler, which a row body distinguishes from an open tree node (§11.3, §18.1)
             [[nodiscard]] static std::string handler_name(const NodeSlot& slot, std::string_view signal);
 
+            // the lambda that wires one handler, which adapts the raised arguments to the written body (§11.3)
+            [[nodiscard]] std::string handler_lambda(const NodeSlot& slot, const CheckedHandler& handler, std::string_view capture) const;
+
             // emit the drawing bodies a canvas wrote, which the builder wires to set_draw (§6.4)
             void emit_draw_bodies();
 
@@ -1266,6 +1269,9 @@ namespace albor::compiler
             // a manifest component names its slot after the signal, as the generated glue spells it (§11.2)
             if (native_construction(element) != nullptr)
                 return "set_on_" + std::string(signal);
+            // the context-menu request is raised by every builtin, so its setter is not a per element key (§8.3)
+            if (signal == "context_menu")
+                return "set_on_context_menu";
             // the composite key is assembled, because the map is keyed by the pair (§11.3)
             const std::string key = std::string(element) + "." + std::string(signal);
             // the signal to setter map is the closed catalogue of §8 (§11.3)
@@ -1345,6 +1351,9 @@ namespace albor::compiler
                 // a signal the manifest never declared carries no parameters, which only a blocked output reaches (§11.2)
                 return {};
             }
+            // a context-menu request carries the node-local point, which the language spells as two scalars (§8.3)
+            if (signal == "context_menu")
+                return {{"float", "x"}, {"float", "y"}};
             // a slider change carries the new value, and the catalog names it (§11.3)
             if (element == "Slider" && signal == "changed")
                 return {{"float", "value"}};
@@ -2972,16 +2981,7 @@ namespace albor::compiler
                 // the callback setter comes from the element and the signal, which the catalog named (§11.3)
                 const std::string setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
                 // the lambda carries the signal parameters by name, so the body reads what the widget raised (§11.3)
-                const std::vector<std::pair<std::string, std::string>> named = named_signal_params(slot.node->element_type, handler.name);
-                std::string lambda_parameters;
-                std::string lambda_arguments;
-                // each parameter joins both lists, because a lambda declares and forwards the same names (§11.3)
-                for (const std::pair<std::string, std::string>& parameter : named) {
-                    lambda_parameters += (lambda_parameters.empty() ? "" : ", ") + parameter.first + " " + parameter.second;
-                    lambda_arguments += (lambda_arguments.empty() ? "" : ", ") + parameter.second;
-                }
-                // the wiring forwards every parameter, which is how the body reads the raised value (§11.3)
-                const std::string lambda = "[this](" + lambda_parameters + ") { " + handler_name(slot, handler.name) + "(this" + (lambda_arguments.empty() ? "" : ", " + lambda_arguments) + "); }";
+                const std::string lambda = handler_lambda(slot, handler, "this");
                 line(2, "// wire the " + handler.name + " to the generated handler, which runs the written body (§11.3)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + lambda + ");");
             }
@@ -3063,16 +3063,7 @@ namespace albor::compiler
                 // the callback setter comes from the element and the signal, which the catalog named (§11.3)
                 const std::string setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
                 // the lambda carries the signal parameters by name, so the body reads what the widget raised (§11.3)
-                const std::vector<std::pair<std::string, std::string>> named = named_signal_params(slot.node->element_type, handler.name);
-                std::string lambda_parameters;
-                std::string lambda_arguments;
-                // each parameter joins both lists, because a lambda declares and forwards the same names (§11.3)
-                for (const std::pair<std::string, std::string>& parameter : named) {
-                    lambda_parameters += (lambda_parameters.empty() ? "" : ", ") + parameter.first + " " + parameter.second;
-                    lambda_arguments += (lambda_arguments.empty() ? "" : ", ") + parameter.second;
-                }
-                // the handler body is the written one, which is what the row runs (§11.3, §18.1)
-                const std::string lambda = "[self](" + lambda_parameters + ") { " + handler_name(slot, handler.name) + "(self" + (lambda_arguments.empty() ? "" : ", " + lambda_arguments) + "); }";
+                const std::string lambda = handler_lambda(slot, handler, "self");
                 line(2, "// wire the " + handler.name + ", which runs the written handler for this row (§11.3, §18.1)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + lambda + ");");
             }
@@ -3890,6 +3881,25 @@ namespace albor::compiler
             const std::string prefix = slot.row_body ? "handle_row_" : "handle_";
             // the name joins the slot index and the signal, which is what the wiring and the definition share (§11.3)
             return prefix + std::to_string(slot.index) + "_" + sanitize(signal);
+        }
+
+        std::string ComponentEmitter::handler_lambda(const NodeSlot& slot, const CheckedHandler& handler, std::string_view capture) const {
+            // the written body is the generated function, which every path runs (§11.3)
+            const std::string body = handler_name(slot, handler.name);
+            // a builtin context-menu request carries a point, while the language body reads the two scalars (§8.3)
+            if (handler.name == "context_menu" && !declared_component(slot.node->element_type) && native_construction(slot.node->element_type) == nullptr)
+                return "[" + std::string(capture) + "](Point point) { " + body + "(" + std::string(capture) + ", point.x, point.y); }";
+            // the lambda carries the signal parameters by name, so the body reads what the widget raised (§11.3)
+            const std::vector<std::pair<std::string, std::string>> named = named_signal_params(slot.node->element_type, handler.name);
+            std::string lambda_parameters;
+            std::string lambda_arguments;
+            // each parameter joins both lists, because a lambda declares and forwards the same names (§11.3)
+            for (const std::pair<std::string, std::string>& parameter : named) {
+                lambda_parameters += (lambda_parameters.empty() ? "" : ", ") + parameter.first + " " + parameter.second;
+                lambda_arguments += (lambda_arguments.empty() ? "" : ", ") + parameter.second;
+            }
+            // the wiring forwards every parameter, which is how the body reads the raised value (§11.3)
+            return "[" + std::string(capture) + "](" + lambda_parameters + ") { " + body + "(" + std::string(capture) + (lambda_arguments.empty() ? "" : ", " + lambda_arguments) + "); }";
         }
 
         std::vector<const ComponentEmitter::NodeSlot*> ComponentEmitter::handler_slots() const {

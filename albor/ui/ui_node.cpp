@@ -285,6 +285,28 @@ namespace albor
         // the offer is the node, the dispatcher already walked the children and a second walk delivers twice (§8.3)
     }
 
+    void UiNode::set_on_context_menu(std::function<void(Point)> handler) {
+        // the handler belongs to this node, because a menu anchored at a child is not the parent's menu (§8.3)
+        m_on_context_menu = std::move(handler);
+    }
+
+    bool UiNode::has_on_context_menu() const {
+        // an installed callback is the whole of the answer, because a handler never runs without one (§8.3)
+        return m_on_context_menu != nullptr;
+    }
+
+    bool UiNode::request_context_menu(Point logical_point) {
+        // a node without a handler leaves the request to its ancestors, which is the bubble of §8.3
+        if (!m_on_context_menu)
+            return false;
+        // a hidden or disabled node refuses the request, because it also refuses a hit test (§8.3)
+        if (disabled() || !hit_test(logical_point))
+            return false;
+        // the handler reads the point against its own corner, which is the space a canvas draws in (§6.4, §8.3)
+        m_on_context_menu(Point{logical_point.x - m_bounds.x, logical_point.y - m_bounds.y});
+        return true;
+    }
+
     const Rect& UiNode::bounds() const {
         // the bounds are the ones a parent assigned (§8.2)
         return m_bounds;

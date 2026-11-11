@@ -34,7 +34,8 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Outside-click, trigger-click and deactivation dismissal | Present and tested, with anchor exclusion | Present and tested, with trigger forwarding | Parity |
 | Resize, DPI/scale changes | AppKit notifications | `WM_SIZE`, `WM_DPICHANGED`, tested | Parity |
 | Window size contract | `setContentSize`, metrics read the content view | `AdjustWindowRectEx`, metrics read the client rect | Parity |
-| Keyboard/mouse/wheel | Present | Present | Parity |
+| Keyboard/mouse/wheel | Present, all four buttons, Control click is secondary | Present, all four buttons | Parity |
+| Context-menu request | `ContextMenu` from a secondary press, menu key and `Shift+F10`, tested | `ContextMenu` from a secondary press, dedicated menu key and `Shift+F10`, tested | Parity, with Control click as the macOS-only gesture |
 | IME/text composition | `NSTextInputClient` | `WM_IME_*`, candidate anchor/selection, tested | Parity |
 | Clipboard | Pasteboard implementation | Win32 clipboard implementation, tested | Parity |
 | Event loop pacing | CVDisplayLink | Waitable timer thread, tested | Different mechanism, same contract |
@@ -52,13 +53,21 @@ frame comparison is deliberately not part of CI, because a runner may have no on
 the issue's 24x16 window-server delta still needs a desktop reproduction before it is claimed gone.
 
 The popup suites cover ownership, anchor placement, trigger-click forwarding, owner-move following, a parented
-dialog, re-activating a visible dialog and the parented-dialog teardown. The macOS suite carries 18 tests and the
-Windows suite 17, because each platform adds the teardown test its native mechanism needs: AppKit removes a closed
+dialog, re-activating a visible dialog and the parented-dialog teardown. The macOS suite carries 26 tests and the
+Windows suite 22, because each platform adds the teardown test its native mechanism needs: AppKit removes a closed
 child from its owner's child list, while Win32 lets the system destroy the owned window with its owner. The AppKit-only
 `ThePopupLayerIsNonopaque` has no direct Win32 equivalent, while Win32 adds the opening-press capture handoff that
 has no AppKit counterpart. A press that hides the surface from inside its own dispatch now drops the popup stage's
 capture, so the next open accepts its first click. A separate macOS suite drives a parented dialog end to end
 through `Application`, its key dispatch and its pump, which is the path issue #150 reported.
+
+Every button now reaches the framework on both platforms: `WM_RBUTTON*`, `WM_MBUTTON*` and `WM_XBUTTON*` no longer
+fall through to `DefWindowProcW`, and AppKit's `rightMouse*` and `otherMouse*` are overridden, so a secondary press
+asks for a context menu, a middle press arrives as a press a control can claim, and an extra button arrives as
+`PointerButton::Other`. Control click is the macOS secondary gesture and has no Windows equivalent, which is the one
+intentional asymmetry in this area; `Shift+F10` and each platform's menu key open the same request by keyboard. The
+right-press, middle-press, extra-button and menu-key adapter tests are mirrored, and the outside-click dismissal
+test is repeated with the secondary button on both sides.
 
 Window teardown now follows one ordering on both platforms. A window is created with `releasedWhenClosed = NO`,
 because ARC already owns it and `close` must not send a second release; that extra release was the over-release the

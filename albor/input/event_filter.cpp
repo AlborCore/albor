@@ -24,6 +24,6 @@ namespace albor
 
     bool EventFilter::positioned(const Event& event) {
         // a key press or a text commit carries no position, because it has no pointer behind it (§8.3)
-        return is_pointer(event) || is_scroll(event);
+        return is_pointer(event) || is_scroll(event) || event.kind == EventKind::ContextMenu;
     }
 } // namespace albor
