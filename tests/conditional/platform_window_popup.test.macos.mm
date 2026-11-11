@@ -30,6 +30,8 @@ namespace
 
         void on_platform_event(const Event& event) override { last_event = event; }
 
+        void on_platform_focus_lost() override { focus_lost++; }
+
         void on_platform_appearance_changed(const SystemAppearance&) override { appearance_changed++; }
 
         // the metrics the window last reported, which the resize observer pushes (§9.1)
@@ -46,6 +48,9 @@ namespace
 
         // the last normalized event the window raised, which an inside click delivers (§8.3)
         Event last_event{};
+
+        // how many focus losses the window raised, which a key status change drives (§8.3)
+        int focus_lost = 0;
 
         // how many appearance changes the window raised, which a theme flip drives (§8.4)
         int appearance_changed = 0;
@@ -458,6 +463,30 @@ TEST(MacosPopupWindow, ANormalWindowIsNotClosedByDeactivation) {
     EXPECT_EQ(listener.closed, 0);
     // assert the ordinary window stays on screen, which a deactivation leaves it (§5.3)
     EXPECT_TRUE(platform->visible());
+}
+
+TEST(MacosPopupWindow, ALostKeyStatusReportsTheFocusLoss) {
+    // arrange a shown normal window with a listener, which owns a drag until key status leaves (§8.3)
+    WindowOptions options;
+    options.title = "focus-lost";
+    options.size = albor::Size{200.0f, 200.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* window = nil;
+    for (NSWindow* candidate in [NSApplication sharedApplication].windows) {
+        if ([candidate.title isEqualToString:@"focus-lost"])
+            window = candidate;
+    }
+    ASSERT_NE(window, nil);
+    // act the window resigns key, which is what a focus change posts (§5.1)
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSWindowDidResignKeyNotification object:window];
+    // assert the framework was told the drag can no longer finish (§8.3)
+    EXPECT_EQ(listener.focus_lost, 1);
+    // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
 }
 
 TEST(MacosWindowMetrics, CreatingAWindowReportsTheContentSizeItWasGiven) {

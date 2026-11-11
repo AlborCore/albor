@@ -3,8 +3,8 @@
 namespace albor
 {
     bool EventFilter::is_pointer(const Event& event) {
-        // the three pointer kinds are the ones the hit test path serves (§8.3)
-        return event.kind == EventKind::PointerDown || event.kind == EventKind::PointerUp || event.kind == EventKind::PointerMove;
+        // the pointer kinds are the ones the hit test and capture paths serve (§8.3)
+        return event.kind == EventKind::PointerDown || event.kind == EventKind::PointerUp || event.kind == EventKind::PointerMove || event.kind == EventKind::PointerCancel;
     }
 
     bool EventFilter::is_keyboard(const Event& event) {

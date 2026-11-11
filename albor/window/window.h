@@ -93,6 +93,12 @@ namespace albor
         // install the callback a normalized input event reaches, which routes the native input of §8.3
         void set_input_handler(std::function<void(const Event&)> handler);
 
+        // install the callback a native focus loss reaches, which cancels the drag the window held (§5.1, §8.3)
+        void set_focus_lost_handler(std::function<void()> handler);
+
+        // install the callback a hide reaches, which cancels the drag before the surface leaves (§5.1, §8.3)
+        void set_hidden_handler(std::function<void()> handler);
+
         // close the window outright, which is what a granted close request and application shutdown do (§5.2)
         void close();
 
@@ -116,6 +122,9 @@ namespace albor
 
         // override: deliver a normalized input event to the input handler (§5.3, §8.3)
         void on_platform_event(const Event& event) override;
+
+        // override: report a native focus loss to the focus lost handler (§5.3, §8.3)
+        void on_platform_focus_lost() override;
 
         // override: report a system appearance change to the appearance handler (§5.3, §8.4)
         void on_platform_appearance_changed(const SystemAppearance& appearance) override;
@@ -144,6 +153,12 @@ namespace albor
 
         // the callback a normalized input event reaches
         std::function<void(const Event&)> m_input_handler;
+
+        // the callback a native focus loss reaches, which cancels the drag no release will finish (§8.3)
+        std::function<void()> m_focus_lost_handler;
+
+        // the callback a hide reaches, which cancels the drag before the surface leaves (§8.3)
+        std::function<void()> m_hidden_handler;
 
         // the callback an appearance change reaches, which is null when nobody listens (§8.4)
         std::function<void(const SystemAppearance&)> m_appearance_handler;

@@ -81,17 +81,17 @@ namespace albor
             // an unset alignment resolves to stretch, which is what fills the viewport rather than the widest row (§8.2)
             const Align horizontal = resolve_align(child->horizontal_align(), Align::Stretch);
             // a stretch takes the whole content viewport, while an authored alignment keeps its measured width (§8.2)
-            const float width = horizontal == Align::Stretch ? viewport.width : std::min(m_content_extent.width, viewport.width);
+            const float content_width = horizontal == Align::Stretch ? viewport.width : std::min(m_content_extent.width, viewport.width);
             // the leading edge is the default position, which is where start and stretch both put the content (§8.2)
             float x = viewport.x;
             // a centred content splits the leftover width across both edges (§8.2)
             if (horizontal == Align::Center)
-                x += (viewport.width - width) * 0.5f;
+                x += (viewport.width - content_width) * 0.5f;
             // an end aligned content meets the trailing edge, which is the leftover it did not take (§8.2)
             else if (horizontal == Align::End)
-                x += viewport.width - width;
+                x += viewport.width - content_width;
             // the content sits at the offset and the resolved position, which is what moves it (§8.2)
-            const Rect content = Rect::from_origin_size(Point{.x = x, .y = viewport.y - offset()}, Size{.width = width, .height = m_content_extent.height});
+            const Rect content = Rect::from_origin_size(Point{.x = x, .y = viewport.y - offset()}, Size{.width = content_width, .height = m_content_extent.height});
             // the content child is placed at the offset, which is what the viewport scrolls (§8.2)
             arrange_if_changed(*child, content);
         }
@@ -155,6 +155,16 @@ namespace albor
             event.handled = true;
             // the travel the pointer covered becomes the offset, because the bar maps one onto the other (§8.3)
             drag_to(event.position);
+            return;
+        }
+        // a cancel ends a thumb drag without a release, which leaves the offset where the drag put it (§8.3)
+        if (event.kind == EventKind::PointerCancel && m_dragging_thumb) {
+            // the event is claimed, so no ancestor reacts to the same cancel (§8.3)
+            event.handled = true;
+            // the drag ends with the cancel, so the next press starts a fresh one (§8.3)
+            m_dragging_thumb = false;
+            // the thumb returns to its resting width, so the wide strip it drew has to be repainted (§6.1)
+            invalidate();
             return;
         }
         // a release ends a thumb drag, which leaves the offset where the drag put it (§8.3)

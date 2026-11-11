@@ -8,7 +8,7 @@ namespace albor
     class EventFilter
     {
     public:
-        // report whether the event came from a pointer, which is what the hit test path serves (§8.3)
+        // report whether the event came from a pointer, which is what the hit test and capture paths serve (§8.3)
         [[nodiscard]] static bool is_pointer(const Event& event);
 
         // report whether the event came from the keyboard, which is what the focus path serves (§8.3)

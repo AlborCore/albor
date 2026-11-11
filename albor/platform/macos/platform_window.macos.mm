@@ -523,6 +523,9 @@ namespace albor
         // the distributed accent change observer, which is removed before the state is released (§8.4)
         id accent_observer = nil;
 
+        // the key status observer, which reports the focus loss that cancels a drag (§5.1, §8.3)
+        id focus_observer = nil;
+
         // whether a frame was requested and not yet drawn, which is per window pacing (AD-18b)
         bool frame_requested = false;
 
@@ -743,6 +746,17 @@ namespace albor
                                                     // the framework receives the metrics the platform now reports (§9.1)
                                                     state->listener->on_platform_resize(metrics_of(state->window));
                                                   }];
+        // a key status change ends the drag the lost window can never release, so the focus loss is raised (§5.1, §8.3)
+        state->focus_observer = [center addObserverForName:NSWindowDidResignKeyNotification
+                                                    object:window
+                                                     queue:nil
+                                                usingBlock:^(NSNotification*) {
+                                                  // a gone listener drops the event, because the window died (§4.2)
+                                                  if (state->listener == nullptr)
+                                                      return;
+                                                  // the framework cancels the drag the window can no longer finish (§8.3)
+                                                  state->listener->on_platform_focus_lost();
+                                                }];
         // the popup flag is kept so the show path knows not to activate, and the teardown knows it owns a monitor (§5.1)
         state->popup = popup;
         // the owner is the appkit window the registry resolved, which an owned surface follows (§5.1)
@@ -811,6 +825,10 @@ namespace albor
         if (m_state->backing_observer != nil) {
             [center removeObserver:m_state->backing_observer];
             m_state->backing_observer = nil;
+        }
+        if (m_state->focus_observer != nil) {
+            [center removeObserver:m_state->focus_observer];
+            m_state->focus_observer = nil;
         }
         if (m_state->accent_observer != nil) {
             [[NSDistributedNotificationCenter defaultCenter] removeObserver:m_state->accent_observer];

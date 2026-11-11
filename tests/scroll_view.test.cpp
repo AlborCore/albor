@@ -1984,6 +1984,33 @@ TEST(ScrollViewChecks, DraggingTheThumbMovesTheOffset) {
     EXPECT_FLOAT_EQ(view.offset(), 600.0f);
 }
 
+TEST(ScrollViewChecks, ACancelEndsAThumbDrag) {
+    // arrange a viewport whose thumb is being dragged toward the end (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{195.0f, 50.0f}};
+    view.dispatch_event(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{195.0f, 250.0f}};
+    view.dispatch_event(move);
+    ASSERT_FLOAT_EQ(view.offset(), 600.0f);
+    Event cancel{.kind = EventKind::PointerCancel, .position = Point{195.0f, 250.0f}};
+    // act
+    view.dispatch_event(cancel);
+    Event after{.kind = EventKind::PointerMove, .position = Point{195.0f, 50.0f}};
+    view.dispatch_event(after);
+    // assert the cancel ended the drag, so the next move scrolls nothing (§8.3)
+    EXPECT_TRUE(cancel.handled);
+    EXPECT_FALSE(after.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 600.0f);
+}
+
 TEST(ScrollViewChecks, APressOnTheGrooveOrOutsideTheBarIsNotAClaim) {
     // arrange
     BindingEngine engine;

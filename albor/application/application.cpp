@@ -270,10 +270,7 @@ namespace albor
         Window* window = m_windows.find(popup);
         if (window == nullptr || window->options().role != WindowRole::Popup)
             return;
-        // a press may be closing the surface, so the popup stage drops any capture before it hides (§8.3)
-        if (WindowStage* closing_stage = this->stage(popup))
-            closing_stage->cancel_pointer_capture();
-        // hiding keeps the stage and its tree alive, which is what makes reopening cheap and safe (§5.1)
+        // hiding keeps the stage alive, and the hide path cancels the drag before it goes (§5.1, §8.3)
         window->hide();
     }
 
@@ -373,7 +370,7 @@ namespace albor
             for (const std::pair<const std::uint64_t, std::unique_ptr<WindowStage>>& entry : m_stages) {
                 // a window the modal does not constrain keeps its drag, because its release still arrives (§5.1)
                 if (input_blocked(WindowHandle::from_id(entry.first)))
-                    entry.second->cancel_pointer_capture();
+                    cancel_stage_capture(WindowHandle::from_id(entry.first), PointerCancelReason::CaptureLost);
             }
         }
         // only a dialog takes the interaction on open, because an ordinary window does not steal focus (§5.1)
@@ -661,6 +658,20 @@ namespace albor
         return m_event_loop->running();
     }
 
+    void Application::cancel_stage_capture(WindowHandle handle, PointerCancelReason reason) {
+        // a stale handle or a window without a stage has no capture to cancel (§5.2, §8.3)
+        WindowStage* routed_to = stage(handle);
+        if (routed_to == nullptr)
+            return;
+        // the cancel dispatches application code, so a teardown it asks for waits for the walk to unwind (§4.2)
+        m_dispatch_depth++;
+        routed_to->cancel_pointer_capture(reason);
+        m_dispatch_depth--;
+        // a teardown a handler requested is posted, because the window that raised the cancel is still on its stack (§4.2)
+        if (m_dispatch_depth == 0 && !m_deferred.empty())
+            (void)m_tasks.post([this] { drain_deferred_stages(); });
+    }
+
     bool Application::deliver_input(WindowHandle handle, Event& event) {
         // a window an open modal constrains receives no input, whoever delivers it (§5.1, AD-08)
         if (input_blocked(handle))
@@ -719,6 +730,10 @@ namespace albor
             m_frame_handler();
         });
 
+        // a window that loses key status cannot release its drag, so the drag is cancelled (§5.1, §8.3)
+        window.set_focus_lost_handler([this, handle] { cancel_stage_capture(handle, PointerCancelReason::CaptureLost); });
+        // a window that leaves the screen cancels the drag before it hides (§5.1, §8.3)
+        window.set_hidden_handler([this, handle] { cancel_stage_capture(handle, PointerCancelReason::WindowHidden); });
         // a normalized input event reaches the application input handler, where routing belongs (§8.3)
         window.set_input_handler([this, handle](const Event& event) {
             // a window an open modal constrains receives no input at all, which is what modality means (§5.1, AD-08)
@@ -757,9 +772,8 @@ namespace albor
         window.set_closed_handler([this, handle, on_native_closed = std::move(on_native_closed), keep_on_native_close] {
             // a popup dismisses itself without ending its tree, so the owner is told and the stage stays alive (§5.1)
             if (keep_on_native_close) {
-                // the native surface left the screen, so its input does not keep a stale drag (§8.3)
-                if (WindowStage* dismissed = this->stage(handle))
-                    dismissed->cancel_pointer_capture();
+                // the native surface left the screen, so its input cancels the drag it cannot release (§8.3)
+                cancel_stage_capture(handle, PointerCancelReason::WindowHidden);
                 if (on_native_closed)
                     on_native_closed();
                 return;

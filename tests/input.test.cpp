@@ -29,6 +29,12 @@ namespace
         // how many pointer leave transitions this node was told (§8.3)
         std::size_t leaves = 0;
 
+        // how many cancel events this node was told, which a cancelled drag receives once (§8.3)
+        std::size_t cancels = 0;
+
+        // how many release events this node was told, which a cancel must never synthesize (§8.3)
+        std::size_t releases = 0;
+
         // whether this node claims the events it is offered (§8.3)
         bool claims = false;
 
@@ -44,6 +50,12 @@ namespace
         // the last event kind and button the node was offered, which the button tests read (§8.3)
         EventKind last_kind = EventKind::PointerDown;
         PointerButton last_button = PointerButton::Left;
+
+        // the last pointer position the node was offered, which a cancel carries from the last move (§8.3)
+        Point last_position{};
+
+        // the reason the last cancel named, which separates an escape from a lost capture (§8.3)
+        PointerCancelReason last_cancel_reason = PointerCancelReason::CaptureLost;
 
         [[nodiscard]] bool disabled() const override {
             // the flag is the reported state, which the focus ring reads (§8.3)
@@ -74,11 +86,20 @@ namespace
                 leaves++;
                 return;
             }
+            // a cancel and a release are counted apart, because that difference is the contract (§8.3)
+            if (event.kind == EventKind::PointerCancel)
+                cancels++;
+            if (event.kind == EventKind::PointerUp)
+                releases++;
             // the delivery is counted before the claim, so a refusing node is still observable (§8.3)
             deliveries++;
-            // the kind and the button are kept, because the routing tests assert what arrived (§8.3)
+            // the kind, the button and the position are kept, because the routing tests assert what arrived (§8.3)
             last_kind = event.kind;
             last_button = event.button;
+            last_position = event.position;
+            // the reason is kept for the cancel tests, because a cancel is the only kind that names one (§8.3)
+            if (event.kind == EventKind::PointerCancel)
+                last_cancel_reason = event.cancel_reason;
             // a claiming node marks the event handled, which stops the walk (§8.3)
             if (claims)
                 event.handled = true;
@@ -135,6 +156,13 @@ TEST(EventFilterChecks, PointerUpIsAPointerEvent) {
 TEST(EventFilterChecks, PointerMoveIsAPointerEvent) {
     // arrange
     Event event{.kind = EventKind::PointerMove};
+    // act assert
+    EXPECT_TRUE(EventFilter::is_pointer(event));
+}
+
+TEST(EventFilterChecks, PointerCancelIsAPointerEvent) {
+    // arrange
+    Event event{.kind = EventKind::PointerCancel};
     // act assert
     EXPECT_TRUE(EventFilter::is_pointer(event));
 }
@@ -200,11 +228,13 @@ TEST(EventFilterChecks, PointerAndWheelEventsCarryAPosition) {
     Event down{.kind = EventKind::PointerDown};
     Event up{.kind = EventKind::PointerUp};
     Event move{.kind = EventKind::PointerMove};
+    Event cancel{.kind = EventKind::PointerCancel};
     Event wheel{.kind = EventKind::Wheel};
     // act assert
     EXPECT_TRUE(EventFilter::positioned(down));
     EXPECT_TRUE(EventFilter::positioned(up));
     EXPECT_TRUE(EventFilter::positioned(move));
+    EXPECT_TRUE(EventFilter::positioned(cancel));
     EXPECT_TRUE(EventFilter::positioned(wheel));
 }
 
@@ -1004,8 +1034,11 @@ TEST(InputControllerChecks, AReleaseEndsTheCapture) {
     Event release{.kind = EventKind::PointerUp, .position = Point{400.0f, 400.0f}};
     // act
     controller.deliver(release);
-    // assert the release closed the drag, so the next press starts a fresh one (§8.3)
+    // assert the release closed the drag without a cancel, so the next press starts a fresh one (§8.3)
     EXPECT_EQ(root.deliveries, 2u);
+    EXPECT_EQ(root.releases, 1u);
+    EXPECT_EQ(root.cancels, 0u);
+    EXPECT_EQ(root.last_kind, EventKind::PointerUp);
     EXPECT_TRUE(release.handled);
     EXPECT_FALSE(controller.capturing());
 }
@@ -1024,8 +1057,8 @@ TEST(InputControllerChecks, AnUngrabbedMoveRoutesByPosition) {
     EXPECT_FALSE(controller.capturing());
 }
 
-TEST(InputControllerChecks, EscapeCancelsACapture) {
-    // arrange
+TEST(InputControllerChecks, EscapeCancelsACaptureWithACancelNotARelease) {
+    // arrange a captured drag that moved away from where it started (§8.3)
     InputController controller;
     RecordingNode root;
     root.claims = true;
@@ -1033,13 +1066,271 @@ TEST(InputControllerChecks, EscapeCancelsACapture) {
     controller.attach(root);
     Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
     controller.deliver(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{40.0f, 40.0f}};
+    controller.deliver(move);
     Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
     // act
     controller.deliver(escape);
-    // assert the escape swallowed the drag before the tree saw it, and told the captured node it ended (§8.3)
+    // assert the escape swallowed the drag and told the captured node it was cancelled at the last point (§8.3)
     EXPECT_TRUE(escape.handled);
-    EXPECT_EQ(root.deliveries, 2u);
+    EXPECT_EQ(root.deliveries, 3u);
+    EXPECT_EQ(root.cancels, 1u);
+    EXPECT_EQ(root.releases, 0u);
+    EXPECT_EQ(root.last_kind, EventKind::PointerCancel);
+    EXPECT_EQ(root.last_position, (Point{40.0f, 40.0f}));
+    EXPECT_EQ(root.last_cancel_reason, PointerCancelReason::Escape);
     EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, ASecondEscapeAfterACancelTellsNoSecondCancel) {
+    // arrange a drag that escape already cancelled (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    Event first{.kind = EventKind::KeyDown, .key = Key::Escape};
+    controller.deliver(first);
+    ASSERT_EQ(root.cancels, 1u);
+    const std::size_t after_cancel = root.deliveries;
+    Event second{.kind = EventKind::KeyDown, .key = Key::Escape};
+    // act a second escape arrives with no drag left to end (§8.3)
+    controller.deliver(second);
+    // assert the second key reached the focus but produced no cancel of its own (§8.3)
+    EXPECT_EQ(root.cancels, 1u);
+    EXPECT_EQ(root.deliveries, after_cancel + 1u);
+    EXPECT_EQ(root.last_kind, EventKind::KeyDown);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, ACancelClearsTheSelectionWithoutApplyingTheZoom) {
+    // arrange a chart-shaped node that commits the zoom on release and drops the selection on cancel (§8.3)
+    class ChartNode final : public UiNode
+    {
+    public:
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the node fills the offer, because the gesture is not about its extent (§8.2)
+            out_size = constraints.constrain(Size{50.0f, 50.0f});
+            m_measured_size = out_size;
+        }
+
+        [[nodiscard]] bool hit_test(Point) const override {
+            // every press lands on the chart, which is the gesture surface (§8.3)
+            return true;
+        }
+
+        void dispatch_event(Event& event) override {
+            // a press claims the drag, which is what arms the capture (§8.3)
+            if (event.kind == EventKind::PointerDown) {
+                event.handled = true;
+                return;
+            }
+            // a release applies the current selection, which is the commit path (§8.3)
+            if (event.kind == EventKind::PointerUp) {
+                zoom_window = selection;
+                event.handled = true;
+                return;
+            }
+            // a cancel clears the selection and never applies the zoom window (§8.3)
+            if (event.kind == EventKind::PointerCancel) {
+                selection = 0;
+                last_reason = event.cancel_reason;
+                event.handled = true;
+            }
+        }
+
+        // the zoom window the release would apply, where zero means it applied nothing (§8.3)
+        int zoom_window = 0;
+
+        // the transient selection the drag carries, where zero means it was cleared (§8.3)
+        int selection = 1;
+
+        // the reason the cancel named, which the chart path asserts (§8.3)
+        PointerCancelReason last_reason = PointerCancelReason::CaptureLost;
+    };
+    InputController controller;
+    ChartNode chart;
+    chart.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(chart);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{30.0f, 30.0f}};
+    controller.deliver(move);
+    Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
+    // act
+    controller.deliver(escape);
+    // assert the selection was cleared and the zoom window was never applied (§8.3)
+    EXPECT_EQ(chart.last_reason, PointerCancelReason::Escape);
+    EXPECT_EQ(chart.selection, 0);
+    EXPECT_EQ(chart.zoom_window, 0);
+    // act a second drag ends in a real release, which is the path that applies the zoom (§8.3)
+    Event second{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(second);
+    chart.selection = 2;
+    Event release{.kind = EventKind::PointerUp, .position = Point{30.0f, 30.0f}};
+    controller.deliver(release);
+    // assert the release applied the selection, so the cancel is what kept the first zoom unapplied (§8.3)
+    EXPECT_EQ(chart.zoom_window, 2);
+}
+
+TEST(InputControllerChecks, CancellingACaptureTellsTheNodeTheLastPointerPosition) {
+    // arrange a captured drag that moved before the window lost the interaction (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{30.0f, 40.0f}};
+    controller.deliver(move);
+    // act
+    controller.cancel_pointer_capture();
+    // assert exactly one cancel reached the node at the last point, and no release was synthesized (§8.3)
+    EXPECT_EQ(root.cancels, 1u);
+    EXPECT_EQ(root.releases, 0u);
+    EXPECT_EQ(root.last_kind, EventKind::PointerCancel);
+    EXPECT_EQ(root.last_position, (Point{30.0f, 40.0f}));
+    EXPECT_EQ(root.last_cancel_reason, PointerCancelReason::CaptureLost);
+    EXPECT_FALSE(controller.capturing());
+    // act a repeated cancel finds no capture to end (§8.3)
+    controller.cancel_pointer_capture();
+    // assert
+    EXPECT_EQ(root.cancels, 1u);
+}
+
+TEST(InputControllerChecks, AnIncomingPointerCancelEndsTheCapture) {
+    // arrange a captured drag and a cancel the controller is handed rather than synthesizing (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    Event cancel{.kind = EventKind::PointerCancel, .position = Point{20.0f, 20.0f}, .cancel_reason = PointerCancelReason::WindowHidden};
+    // act
+    controller.deliver(cancel);
+    // assert the incoming cancel was claimed, cleared the capture and carried its reason to the node (§8.3)
+    EXPECT_TRUE(cancel.handled);
+    EXPECT_FALSE(controller.capturing());
+    EXPECT_EQ(root.cancels, 1u);
+    EXPECT_EQ(root.last_position, (Point{20.0f, 20.0f}));
+    EXPECT_EQ(root.last_cancel_reason, PointerCancelReason::WindowHidden);
+}
+
+TEST(InputControllerChecks, ASecondPressAfterACancelStartsAFreshDrag) {
+    // arrange a captured drag that the window cancelled (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    controller.cancel_pointer_capture();
+    ASSERT_FALSE(controller.capturing());
+    Event second{.kind = EventKind::PointerDown, .position = Point{20.0f, 20.0f}};
+    // act
+    controller.deliver(second);
+    // assert the next press reached the tree and armed a new drag, because the cancel left nothing behind (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_TRUE(controller.capturing());
+    EXPECT_EQ(root.cancels, 1u);
+}
+
+TEST(InputControllerChecks, RemovingTheCapturedNodeCancelsTheDragBeforeItLeaves) {
+    // arrange a captured child that the application is about to remove (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    child->claims = true;
+    child->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    RecordingNode* captured = child.get();
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    ASSERT_TRUE(controller.capturing());
+    // act the subtree leaves the tree, which is a capture loss no release can announce (§8.3)
+    const std::unique_ptr<UiNode> removed = root.remove_child(captured);
+    // assert the node was told while it was still alive, and the controller keeps no stale capture (§8.3)
+    ASSERT_NE(removed, nullptr);
+    EXPECT_EQ(captured->cancels, 1u);
+    EXPECT_EQ(captured->releases, 0u);
+    EXPECT_EQ(captured->last_cancel_reason, PointerCancelReason::Detached);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, HidingTheCapturedNodeCancelsTheDrag) {
+    // arrange a captured child that hides itself, which is the second detaching source (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    child->claims = true;
+    child->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    RecordingNode* captured = child.get();
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    ASSERT_TRUE(controller.capturing());
+    // act the captured node hides, which is a capture loss no release announces (§8.3)
+    captured->set_visible(false);
+    // assert the node was told once while it was still alive, and the capture is gone (§8.3)
+    EXPECT_EQ(captured->cancels, 1u);
+    EXPECT_EQ(captured->last_cancel_reason, PointerCancelReason::Detached);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, HidingAnAncestorCancelsTheCapturedDescendantsDrag) {
+    // arrange a captured grandchild under a container the application hides (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto branch = std::make_unique<RecordingNode>();
+    auto child = std::make_unique<RecordingNode>();
+    child->claims = true;
+    child->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    RecordingNode* captured = child.get();
+    branch->add_child(std::move(child));
+    branch->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{30.0f, 30.0f}));
+    root.add_child(std::move(branch));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    ASSERT_TRUE(controller.capturing());
+    // act the ancestor hides, which takes the captured descendant off the tree with it (§8.3)
+    root.child_at(0)->set_visible(false);
+    // assert the descendant was told once and the capture does not outlive it (§8.3)
+    EXPECT_EQ(captured->cancels, 1u);
+    EXPECT_EQ(captured->last_cancel_reason, PointerCancelReason::Detached);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, ACancelWithNoLiveCaptureTouchesNothing) {
+    // arrange a hovered tree with no drag, which is the state a stray cancel finds (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event hover{.kind = EventKind::PointerMove, .position = Point{10.0f, 10.0f}};
+    controller.deliver(hover);
+    ASSERT_EQ(controller.hovered(), &root);
+    const std::size_t deliveries = root.deliveries;
+    const std::size_t enters = root.enters;
+    Event cancel{.kind = EventKind::PointerCancel, .position = Point{20.0f, 20.0f}};
+    // act a cancel arrives with no capture to end (§8.3)
+    controller.deliver(cancel);
+    // assert it is left unhandled and the hover chain is untouched (§8.3)
+    EXPECT_FALSE(cancel.handled);
+    EXPECT_EQ(root.deliveries, deliveries);
+    EXPECT_EQ(root.enters, enters);
+    EXPECT_EQ(controller.hovered(), &root);
 }
 
 TEST(InputControllerChecks, AnEscapeTheControlDeclinedStaysUnhandled) {

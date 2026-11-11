@@ -1205,6 +1205,25 @@ TEST(TextFieldSelectionChecks, AReleaseEndsTheDrag) {
     EXPECT_EQ(field.selection_end(), 3u);
 }
 
+TEST(TextFieldSelectionChecks, ACancelEndsTheDrag) {
+    // arrange a selection drag that extended the span (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event down{.kind = EventKind::PointerDown, .position = Point{14.0f, 10.0f}};
+    field.dispatch_event(down);
+    Event move{.kind = EventKind::PointerMove, .position = Point{34.0f, 10.0f}};
+    field.dispatch_event(move);
+    const std::size_t extended = field.selection_end();
+    Event cancel{.kind = EventKind::PointerCancel, .position = Point{34.0f, 10.0f}};
+    // act
+    field.dispatch_event(cancel);
+    Event move_after{.kind = EventKind::PointerMove, .position = Point{54.0f, 10.0f}};
+    field.dispatch_event(move_after);
+    // assert the cancel ended the drag, so the next move extends nothing (§8.3)
+    EXPECT_EQ(field.selection_end(), extended);
+}
+
 TEST(TextFieldSelectionChecks, ASelectionPaintsAHighlight) {
     // arrange
     EditingTextEngine engine;

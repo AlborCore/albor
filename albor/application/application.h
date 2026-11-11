@@ -293,6 +293,9 @@ namespace albor
         // resolve the native owner a file panel is parented to, reporting false for a stale handle (§5.1)
         [[nodiscard]] bool resolve_file_dialog_parent(WindowHandle handle, NativeWindowHandle& parent) const;
 
+        // cancel a stage capture under the dispatch bracket, because its handler may tear a window down (§4.2, §8.3)
+        void cancel_stage_capture(WindowHandle handle, PointerCancelReason reason);
+
         // apply the teardowns that arrived while a frame pass was walking the stages (§4.2)
         void drain_deferred_stages();
 
