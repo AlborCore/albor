@@ -163,6 +163,17 @@ namespace
         }
         return false;
     }
+
+    ElementCatalog with_waveform_native() {
+        // the builtin catalog is the base, because a native component sits beside the widgets (§11.1, §8)
+        ElementCatalog catalog = ElementCatalog::with_builtins();
+        // the wrapped leaf is what the snapshot property carries, which the checker resolves by name (§11.2, §13.2)
+        catalog.add_native_data("WaveformData");
+        // the type publishes the surface a manifest would register, which is what codegen resolves (§11.2, AD-17)
+        catalog.add_native(ElementType{.name = "WaveformView", .properties = {ElementProperty{.name = "data", .type = ValueType::parameterized(TypeKind::Snapshot, ValueType::native("WaveformData")), .assignable = false}, ElementProperty{.name = "line_color", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "zoom", .type = scalar(TypeKind::Float), .assignable = true}}, .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"time_pos"}}, ElementSignal{.name = "cleared", .parameter_types = {}, .parameter_names = {}}}, .accepts_children = false}, NativeConstruction{.header = "chart/waveform_view.h", .factory = "create_WaveformView"});
+        // the catalog is returned by value, because a suite configures it once and hands it to the generator (§11.2)
+        return catalog;
+    }
 } // namespace
 
 TEST(Codegen, AReferenceComponentEmitsItsHeaderAndSource) {
@@ -374,6 +385,156 @@ TEST(Codegen, ANativeElementBlocksTheOutput) {
     // assert
     EXPECT_TRUE(files.empty());
     EXPECT_TRUE(has_code(diagnostics, "E0501"));
+    // the message names the missing factory, because that is what the application must define (§11.2, AD-17)
+    bool names_factory = false;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        names_factory = names_factory || diagnostic.message.find("no construction factory") != std::string::npos;
+    EXPECT_TRUE(names_factory);
+}
+
+TEST(Codegen, ANativeElementConstructsThroughItsFactory) {
+    // arrange a native child whose surface comes from a manifest, which codegen must construct (§11.2, AD-17)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component C { Column { WaveformView { line_color: #FF0000; zoom: 2.0; } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, with_waveform_native());
+    // assert the native header joins the unit, because the facade type is what the node is declared as (§11.2)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "#include \"chart/waveform_view.h\""));
+    // assert the node is built by the factory rather than make_unique, because the facade is abstract (§11.2, AD-17)
+    EXPECT_TRUE(contains(cpp.content, "auto node_1 = create_WaveformView(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "WaveformView* const n1 = node_1.get();"));
+    // assert the written properties reach the facade setters, which is the surface the manifest declared (§11.2)
+    EXPECT_TRUE(contains(cpp.content, "n1->set_line_color(Color::rgb(1.0f, 0.0f, 0.0f));"));
+    EXPECT_TRUE(contains(cpp.content, "n1->set_zoom(2.0f);"));
+}
+
+TEST(Codegen, ANativeRootConstructsThroughItsFactory) {
+    // arrange a native element as the whole body, which is the root path an existing application uses (§11.2, AD-17)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component C { WaveformView { line_color: #00FF00; } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, with_waveform_native());
+    // assert
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the root is built by the factory, which is the path the issue asks to preserve (§11.2, AD-17)
+    EXPECT_TRUE(contains(cpp.content, "auto node_0 = create_WaveformView(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "WaveformView* const n0 = node_0.get();"));
+    EXPECT_TRUE(contains(cpp.content, "owner->add_child(std::move(node_0));"));
+}
+
+TEST(Codegen, ANativeBoundPropertyWritesThroughTheFacade) {
+    // arrange a source the native property reads, because a bound property evaluates through its setter (§13.3)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component C { in property<Snapshot<WaveformData>> source; Column { WaveformView { data: source; } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, with_waveform_native());
+    // assert the evaluator writes the computed snapshot through the facade setter (§11.2, §13.3)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "self->m_node_1->set_data(value);"));
+    // assert the sink carries the snapshot type the manifest declared (§13.2)
+    EXPECT_TRUE(contains(cpp.content, "Property<std::shared_ptr<const WaveformData>> m_sink_1_data;"));
+}
+
+TEST(Codegen, ANativeCommonPropertyUsesTheNodeSetter) {
+    // arrange a native that binds a common property, because every node carries the common set (§8.2, §11.2)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component C { inout property<bool> show; WaveformView { visible: show; opacity: 0.5; } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, with_waveform_native());
+    // assert the bound visible reaches the node setter, which is the name the base class declares (§8.2)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "self->m_node_0->set_visible(value);"));
+    // assert the reserved name is not sanitised, because only a facade accessor needs the suffix (§8.2, AD-17)
+    EXPECT_FALSE(contains(cpp.content, "set_visible_"));
+    // assert a static common property reaches its node setter in the builder (§8.2)
+    EXPECT_TRUE(contains(cpp.content, "n0->set_opacity(0.5f);"));
+}
+
+TEST(Codegen, ANativeNestedInARepeatRowWalksFromTheRowRoot) {
+    // arrange a native under a container row, because a row body may nest its widgets (§18.1, AD-13)
+    DiagnosticList diagnostics;
+    const std::string_view source = "import chart; component R { inout property<vector<Sample>> samples; Column { Repeat(sample in samples) { Row { WaveformView { line_color: #FF0000; } } } } }";
+    ElementCatalog catalog = with_waveform_native();
+    // the row type is a record the manifest declares, because a repeat walks a collection of it (§11.2, AD-13)
+    catalog.add_record(RecordType{.name = "Sample", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "peak", .type = scalar(TypeKind::Float), .is_key = false}}});
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row builder constructs the nested native through the factory (§18.1, §11.2)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "r.cpp");
+    EXPECT_TRUE(contains(cpp.content, "auto node_0 = std::make_unique<RowLayout>();"));
+    EXPECT_TRUE(contains(cpp.content, "auto node_1 = create_WaveformView(engine);"));
+    // assert the update path descends from the row root to the native child (§18.1, AD-13)
+    EXPECT_TRUE(contains(cpp.content, "WaveformView* const n1 = static_cast<WaveformView*>(static_cast<UiNode*>(n0)->child_at(0));"));
+    EXPECT_TRUE(contains(cpp.content, "n1->set_line_color(Color::rgb(1.0f, 0.0f, 0.0f));"));
+}
+
+TEST(Codegen, ANativeSignalHandlerTakesTheDeclaredParameters) {
+    // arrange a handler on the native signal, because the manifest names the parameter the body reads (§11.2)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component C { WaveformView { on_selection_changed: { } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, with_waveform_native());
+    // assert the generated handler carries the parameter type and name the manifest declared (§11.2, §11.3)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "static void handle_0_selection_changed(void* raw, [[maybe_unused]] float time_pos);"));
+    // assert the wiring installs the lambda over the facade slot, which is the native signal path (§11.2)
+    EXPECT_TRUE(contains(cpp.content, "n0->set_on_selection_changed([this](float time_pos) { handle_0_selection_changed(this, time_pos); });"));
+}
+
+TEST(Codegen, ANativeSignalWithoutParametersWiresAnEmptyLambda) {
+    // arrange a handler on a native signal that carries nothing, because a manifest may declare one (§11.2)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component C { WaveformView { on_cleared: { } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, with_waveform_native());
+    // assert the generated handler takes only the context, because the signal raised nothing (§11.2, §11.3)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "static void handle_0_cleared(void* raw);"));
+    // assert the wiring installs a zero parameter lambda, which is what the facade slot takes (§11.2)
+    EXPECT_TRUE(contains(cpp.content, "n0->set_on_cleared([this]() { handle_0_cleared(this); });"));
+}
+
+TEST(Codegen, ANativeInsideAConditionalConstructsWithTheBody) {
+    // arrange a guarded native body, because the factory must run only when the condition holds (§11.1, §11.2)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component C { inout property<bool> show; Column { if show { WaveformView { line_color: #FF0000; } } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, with_waveform_native());
+    // assert the conditional builder constructs the native through the factory (§11.1, §11.2)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "void C::Impl::build_conditional_0()"));
+    EXPECT_TRUE(contains(cpp.content, "auto node_1 = create_WaveformView(engine);"));
+    // assert the body is inserted when the condition appears, which is what materializes the native (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "m_node_0->insert_child(position_0, std::move(m_cond_root_0));"));
+}
+
+TEST(Codegen, ANativeInsideARepeatRowConstructsThroughItsFactory) {
+    // arrange a native row body with a handler, because every materialized row must use the factory (§18.1)
+    DiagnosticList diagnostics;
+    const std::string_view source = "import chart; component R { inout property<vector<Sample>> samples; Column { Repeat(sample in samples) { WaveformView { line_color: #FF0000; on_selection_changed: { } } } } }";
+    ElementCatalog catalog = with_waveform_native();
+    // the row type is a record the manifest declares, because a repeat walks a collection of it (§11.2, AD-13)
+    catalog.add_record(RecordType{.name = "Sample", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "peak", .type = scalar(TypeKind::Float), .is_key = false}}});
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row builder constructs the native through the factory (§18.1, §11.2)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "r.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::unique_ptr<UiNode> R::Impl::build_row_0("));
+    EXPECT_TRUE(contains(cpp.content, "auto node_0 = create_WaveformView(engine);"));
+    // assert the row handler captures the body rather than the facade, because a row outlives the build call (§18.1)
+    EXPECT_TRUE(contains(cpp.content, "n0->set_on_selection_changed([self](float time_pos) { handle_row_0_selection_changed(self, time_pos); });"));
+    // assert the update path casts the row root to the facade type, because the row is the native itself (§18.1)
+    EXPECT_TRUE(contains(cpp.content, "WaveformView* const n0 = static_cast<WaveformView*>(row_root);"));
 }
 
 TEST(Codegen, ASnapshotPropertyGeneratesTheFacade) {
@@ -607,6 +768,46 @@ TEST(Codegen, ASnapshotOfARecordGeneratesTheFacade) {
     EXPECT_TRUE(contains(header.content, "void set_data(std::shared_ptr<const Task> value);"));
     const GeneratedFile& cpp = file_named(files, "c.cpp");
     EXPECT_TRUE(contains(cpp.content, "Property<std::shared_ptr<const Task>> m_data;"));
+}
+
+TEST(Codegen, ARecordHeaderComesFromTheManifestThatDeclaresIt) {
+    // arrange a record declared in task, while the file imports chart first (§11.2, AD-17)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}}, "task");
+    DiagnosticList diagnostics;
+    const std::string_view source = "import chart; import task; component C { in property<Snapshot<Task>> data; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the record header names its declaring module, not the first import (§11.2, AD-17)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "#include \"task/task.h\""));
+    EXPECT_FALSE(contains(header.content, "#include \"chart/task.h\""));
+}
+
+TEST(Codegen, AnAcronymNameStemsItsGeneratedFiles) {
+    // arrange a component whose name carries an acronym, because the facade files share the stem (§14.1)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component XMLView { Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the header and the unit split the acronym before its tail, as the manifest glue does (§11.3, §14.1)
+    ASSERT_EQ(files.size(), 2U);
+    EXPECT_TRUE(contains(file_named(files, "xml_view.h").content, "class XMLView"));
+    EXPECT_TRUE(contains(file_named(files, "xml_view.cpp").content, "XMLView::XMLView("));
+}
+
+TEST(Codegen, AnAcronymRecordHeaderUsesTheSameStem) {
+    // arrange a record whose name carries an acronym, because its header path shares the spelling (§11.2, AD-17)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "XMLTask", .fields = {RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}}, "chart");
+    DiagnosticList diagnostics;
+    const std::string_view source = "import chart; component C { in property<Snapshot<XMLTask>> data; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the include names the header the glue wrote for the acronym (§11.2, AD-17)
+    ASSERT_EQ(files.size(), 2U);
+    EXPECT_TRUE(contains(file_named(files, "c.h").content, "#include \"chart/xml_task.h\""));
 }
 
 TEST(Codegen, AFileTheCheckerBlockedProducesNothing) {
@@ -3220,6 +3421,25 @@ component Entry {
     // assert the field resolves the weight through its own setter, which the catalog declared (§11.3, §9.1)
     const GeneratedFile& unit = file_named(files, "entry.cpp");
     EXPECT_TRUE(contains(unit.content, "set_font_weight(albor::FontWeight::Semibold);"));
+}
+
+TEST(Codegen, AnAcronymSourceStemsItsAssetPair) {
+    // arrange a source whose file name carries an acronym, because the asset pair follows the lowered stem (§11.3)
+    const std::string_view source = R"(
+component XMLPanel {
+    in property<image> icon: @image("icon.png");
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("XMLPanel.ui"));
+    // assert the facade and the asset pair share the lowered stem the build helper computes (§11.3, §6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(generation.files, "xml_panel.cpp");
+    EXPECT_TRUE(contains(cpp.content, "#include \"xml_panel_assets.h\""));
+    const GeneratedFile& asset_header = file_named(generation.files, "xml_panel_assets.h");
+    EXPECT_TRUE(contains(asset_header.content, "namespace xml_panel_assets"));
 }
 
 TEST(Codegen, AnEmbeddedAssetIsReadAndRegistered) {

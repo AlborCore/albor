@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "albor/compiler/ast.h"
+#include "albor/compiler/naming.h"
 #include "albor/compiler/value_type.h"
 
 namespace albor::compiler
@@ -39,34 +40,6 @@ namespace albor::compiler
                 return false;
             // the tail of the text is compared, because that is what the suffix covers (§11.3)
             return text.substr(text.size() - suffix.size()) == suffix;
-        }
-
-        // turn a component name into the file base name, which decides what the generator emits (§14.1)
-        std::string snake_case(std::string_view name) {
-            // the letters accumulate, with an underscore inserted at each word boundary (§14.1)
-            std::string out;
-            // each letter is walked, because an upper case letter starts a word (§14.1)
-            for (std::size_t index = 0; index < name.size(); index++) {
-                // the letter is read once, so the checks below look at one byte (§14.1)
-                const char letter = name[index];
-                // a word starts after lower text or a digit, except inside a run of capitals (§14.1)
-                const bool upper = letter >= 'A' && letter <= 'Z';
-                // an upper letter is only a boundary when one exists before it (§14.1)
-                if (upper && index != 0) {
-                    // the previous letter decides whether this one starts a word (§14.1)
-                    const char previous = name[index - 1];
-                    // lower text or a digit always ends the word before (§14.1)
-                    const bool after_text = (previous >= 'a' && previous <= 'z') || (previous >= '0' && previous <= '9');
-                    // a capital before a lower letter splits an acronym, which keeps the tail a word (§14.1)
-                    const bool split_acronym = previous >= 'A' && previous <= 'Z' && index + 1 < name.size() && name[index + 1] >= 'a' && name[index + 1] <= 'z';
-                    // the boundary exists after text or before the tail of an acronym (§14.1)
-                    if (after_text || split_acronym)
-                        out += '_';
-                }
-                // the letter is lowered, because the file base is lower case (§14.1)
-                out += static_cast<char>(std::tolower(static_cast<unsigned char>(letter)));
-            }
-            return out;
         }
 
         // the reserved C++ names a generated accessor may not shadow, which receive an underscore (§14.1)
@@ -314,7 +287,7 @@ namespace albor::compiler
             AssetTable(std::filesystem::path source, DiagnosticList& diagnostics) :
                 m_source(std::move(source)), m_diagnostics(diagnostics) {
                 // the stem names both generated units, which the build rule names as outputs (§14.2)
-                m_stem = m_source.stem().string();
+                m_stem = snake_case(m_source.stem().string());
                 // the namespace keeps each source file's accessors apart in one target (§6.4)
                 m_namespace = asset_identifier(m_stem) + "_assets";
                 // the header is what every component of the source includes (§6.4)
@@ -755,6 +728,9 @@ namespace albor::compiler
             // report whether an element is either a file or an imported component (§11.1)
             [[nodiscard]] bool declared_component(std::string_view element) const;
 
+            // the construction metadata of a catalog native, which is absent for every other element (§11.2, AD-17)
+            [[nodiscard]] const NativeConstruction* native_construction(std::string_view element) const;
+
             // the widget info of an element, where a file component contributes beside the builtin set (§11.3)
             [[nodiscard]] WidgetInfo info_of(std::string_view element) const;
 
@@ -1097,6 +1073,14 @@ namespace albor::compiler
             return component_named(element) != nullptr || imported_component_named(element) != nullptr;
         }
 
+        const NativeConstruction* ComponentEmitter::native_construction(std::string_view element) const {
+            // a catalog is needed, because the manifest is the only place a native construction is declared (§11.2, AD-17)
+            if (m_catalog == nullptr)
+                return nullptr;
+            // the catalog records the factory, which is what a manifest component constructs through (§11.2, AD-17)
+            return m_catalog->native_construction(element);
+        }
+
         WidgetInfo ComponentEmitter::info_of(std::string_view element) const {
             // a file component constructs through its facade, which takes both engines like a label does (§11.3)
             if (const CheckedComponent* component = component_named(element))
@@ -1104,14 +1088,44 @@ namespace albor::compiler
             // an imported component constructs through the header its own file generated (§11.3)
             if (const ImportedComponent* component = imported_component_named(element))
                 return {.header = component->header, .class_name = component->name, .needs_engine = true, .needs_text_engine = true};
+            // a manifest component constructs through the factory its catalog entry names (§11.2, AD-17)
+            if (const NativeConstruction* native = native_construction(element))
+                return {.header = native->header, .class_name = std::string(element), .needs_engine = true, .needs_text_engine = false};
             // every other element is a builtin, whose header and class the closed set names (§11.3)
             return widget_info().at(element);
         }
 
         std::string ComponentEmitter::setter_of(std::string_view element, std::string_view property) const {
-            // a generated component exposes one setter per property, named the way its facade declares it (§11.3)
-            if (declared_component(element))
-                return "set_" + sanitize(property);
+            // a file component exposes one setter per declared property, named the way its facade declares it (§11.3)
+            if (const CheckedComponent* component = component_named(element)) {
+                for (const CheckedProperty& declared : component->properties)
+                    // the declared name decides, because a property that shadows a common one keeps its accessor (§11.1)
+                    if (declared.name == property)
+                        return "set_" + sanitize(property);
+            }
+            // an imported component exposes the accessor its own file generated (§11.3)
+            else if (const ImportedComponent* imported = imported_component_named(element)) {
+                for (const CheckedProperty& declared : imported->properties)
+                    // the declared name decides, because a property that shadows a common one keeps its accessor (§11.1)
+                    if (declared.name == property)
+                        return "set_" + sanitize(property);
+            }
+            // a manifest component names its accessor after the property, as the generated glue spells it (§11.2)
+            else if (native_construction(element) != nullptr)
+                return "set_" + std::string(property);
+            // the common set decides, because alignment is a property every node owns (§8.2, §11.3)
+            static const std::vector<std::pair<std::string, std::string>> common_setters = [] {
+                // the names come from the catalogue, held apart so a returned view outlives this call (§8.2, §11.3)
+                std::vector<std::pair<std::string, std::string>> built;
+                for (const ElementProperty& common : common_element_properties())
+                    built.emplace_back(common.name, "set_" + common.name);
+                return built;
+            }();
+            for (const auto& entry : common_setters) {
+                // the name decides, so a common property resolves to exactly one setter (§8.2)
+                if (entry.first == property)
+                    return entry.second;
+            }
             // the composite key is assembled, because the map is keyed by the pair (§11.3)
             const std::string key = std::string(element) + "." + std::string(property);
             // the property to setter map is the closed catalogue of §8 (§11.3)
@@ -1238,30 +1252,20 @@ namespace albor::compiler
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
-            // a property every type carries has no per type entry, because it resolves against the common set (§8.2)
+            // a property the closed catalogue names resolves here, because the common set already had its chance (§11.3)
             if (found != setters.end())
                 return std::string(found->second);
-            // the common set decides, because alignment is a property of every node a parent arranges (§8.2, §11.3)
-            static const std::vector<std::pair<std::string, std::string>> common_setters = [] {
-                // the names come from the catalogue, held apart so a returned view outlives this call (§8.2, §11.3)
-                std::vector<std::pair<std::string, std::string>> built;
-                for (const ElementProperty& common : common_element_properties())
-                    built.emplace_back(common.name, "set_" + common.name);
-                return built;
-            }();
-            for (const auto& entry : common_setters) {
-                // the name decides, so a common property resolves to exactly one setter (§8.2)
-                if (entry.first == property)
-                    return entry.second;
-            }
             // an element with no setter carries none, which only the canvas reaches (§11.3)
             return std::string{};
         }
 
         std::string ComponentEmitter::signal_setter_of(std::string_view element, std::string_view signal) const {
-            // a generated component signal wires through the slot its facade declares (§11.3)
+            // a file or imported component signal wires through the slot its facade declares (§11.3)
             if (declared_component(element))
                 return "set_on_" + sanitize(signal);
+            // a manifest component names its slot after the signal, as the generated glue spells it (§11.2)
+            if (native_construction(element) != nullptr)
+                return "set_on_" + std::string(signal);
             // the composite key is assembled, because the map is keyed by the pair (§11.3)
             const std::string key = std::string(element) + "." + std::string(signal);
             // the signal to setter map is the closed catalogue of §8 (§11.3)
@@ -1313,6 +1317,32 @@ namespace albor::compiler
                     return named;
                 }
                 // a signal the import never declared carries no parameters, which only a blocked output reaches (§11.3)
+                return {};
+            }
+            // a manifest component signal declares its own parameters, which the raised values read by name (§11.2, AD-17)
+            if (native_construction(element) != nullptr) {
+                // the catalog is what holds the signal list, because the manifest is its only source (§11.2)
+                const ElementType* type = m_catalog == nullptr ? nullptr : m_catalog->find(element);
+                // a type absent from the catalog carries no signal the emitter can read (§11.2)
+                if (type == nullptr)
+                    return {};
+                // each declared signal is checked, because only the named one carries the parameter list (§11.2)
+                for (const ElementSignal& declared : type->signals) {
+                    // a name mismatch means another signal, which the next iteration then takes (§11.2)
+                    if (declared.name != signal)
+                        continue;
+                    // the parameters pair type and name in declaration order, which the handler signature follows (§11.3)
+                    std::vector<std::pair<std::string, std::string>> named;
+                    // each parameter is walked, because the lambda spells every one (§11.3)
+                    for (std::size_t index = 0; index < declared.parameter_types.size(); index++) {
+                        // the C++ type is the checked spelling, which the facade setter already uses (§11.3)
+                        const std::string type_name = cpp_type(declared.parameter_types[index]);
+                        // the name is shared with the facade slot, so the lambda declares the same one (§11.2)
+                        named.emplace_back(type_name, sanitize(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}));
+                    }
+                    return named;
+                }
+                // a signal the manifest never declared carries no parameters, which only a blocked output reaches (§11.2)
                 return {};
             }
             // a slider change carries the new value, and the catalog names it (§11.3)
@@ -1439,16 +1469,16 @@ namespace albor::compiler
                         m_record_headers.push_back("albor/core/geometry.h");
                     return;
                 }
-                // each imported module is searched, because the record lives in exactly one of them (§11.1, §11.2, AD-17)
-                for (const std::string& module : m_modules) {
+                // the declaring module names the header, because a ui file may import several manifests (§11.2, AD-17)
+                const std::string_view declared = m_catalog == nullptr ? std::string_view{} : m_catalog->record_module(type.native_name());
+                const std::string module = !declared.empty() ? std::string(declared) : (m_modules.empty() ? std::string{} : m_modules.front());
+                // a record with no known module has no header path, which only a hand built catalog reaches (§11.2)
+                if (!module.empty()) {
                     // the header path is the module and the snake cased record, which is what the generator wrote (§11.2)
                     const std::string header = module + "/" + snake_case(type.native_name()) + ".h";
                     // a header already collected is not repeated, because the include is written once (§14.1)
                     if (std::find(m_record_headers.begin(), m_record_headers.end(), header) == m_record_headers.end())
                         m_record_headers.push_back(header);
-                    // the first module that declares the record wins, because a name resolves to one module (§11.2, AD-17)
-                    if (m_catalog->find_record(type.native_name()) != nullptr)
-                        break;
                 }
                 return;
             }
@@ -1567,10 +1597,14 @@ namespace albor::compiler
                     validate_node(*child);
                 return;
             }
-            // an element outside the widget set is native, which has no generated construction path (§11.3, AD-17)
-            if (!widget_info().contains(std::string_view(node.element_type)) && !declared_component(std::string_view(node.element_type))) {
-                // the problem names the type, because that is what the author wrote (§11.3)
-                m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0501", "'" + node.element_type + "' is not a generated element type");
+            // an element outside the widget set is native, which constructs through its catalog factory (§11.3, AD-17)
+            if (!widget_info().contains(std::string_view(node.element_type)) && !declared_component(std::string_view(node.element_type)) && native_construction(std::string_view(node.element_type)) == nullptr) {
+                // the catalog type distinguishes a native without metadata from an unknown name (§11.2, AD-17)
+                const ElementType* type = m_catalog == nullptr ? nullptr : m_catalog->find(std::string_view(node.element_type));
+                // the problem names what is missing, because that is what the author must fix (§11.2, AD-17)
+                const std::string message = type == nullptr ? "'" + node.element_type + "' is not a generated element type" : "'" + node.element_type + "' is a native component with no construction factory";
+                // the problem is reported against the element, which is where the author wrote it (§11.3)
+                m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0501", message);
                 // the blocking flag is set, which empties the generated output (§11.3)
                 m_blocked = true;
             }
@@ -2790,7 +2824,12 @@ namespace albor::compiler
             else if (info.needs_engine)
                 arguments = "(engine)";
             line(2, "// allocate the " + slot.node->element_type + " node, which hangs under its parent (§8.1)");
-            line(2, "auto node_" + std::to_string(slot.index) + " = std::make_unique<" + std::string(info.class_name) + ">" + arguments + ";");
+            // a manifest component constructs through its factory, because its facade is abstract (§11.2, AD-17)
+            if (const NativeConstruction* native = native_construction(std::string_view(slot.node->element_type)))
+                line(2, "auto node_" + std::to_string(slot.index) + " = " + native->factory + "(engine);");
+            // every other element constructs directly, because its class is concrete (§11.3)
+            else
+                line(2, "auto node_" + std::to_string(slot.index) + " = std::make_unique<" + std::string(info.class_name) + ">" + arguments + ";");
             line(2, "// the node is configured through the raw pointer, which the unique pointer moves later (§8.1)");
             line(2, std::string(info.class_name) + "* const n" + std::to_string(slot.index) + " = node_" + std::to_string(slot.index) + ".get();");
             line(2, "// record the node, which the bindings write through (§8.1)");
@@ -2964,7 +3003,12 @@ namespace albor::compiler
                 arguments = "(engine)";
             // the local is per row rather than per component, because every row owns its own nodes (§18.1, AD-13)
             line(2, "// allocate the row node, which is local because every row owns its own (§18.1, AD-13)");
-            line(2, "auto node_" + std::to_string(slot.index) + " = std::make_unique<" + std::string(info.class_name) + ">" + arguments + ";");
+            // a manifest component constructs through its factory, because its facade is abstract (§11.2, AD-17)
+            if (const NativeConstruction* native = native_construction(std::string_view(slot.node->element_type)))
+                line(2, "auto node_" + std::to_string(slot.index) + " = " + native->factory + "(engine);");
+            // every other element constructs directly, because its class is concrete (§11.3)
+            else
+                line(2, "auto node_" + std::to_string(slot.index) + " = std::make_unique<" + std::string(info.class_name) + ">" + arguments + ";");
             line(2, "// the node is reached through the raw pointer, which the unique pointer moves later (§18.1)");
             line(2, std::string(info.class_name) + "* const n" + std::to_string(slot.index) + " = node_" + std::to_string(slot.index) + ".get();");
             // the author identity is applied, which makes the node addressable (AD-11)
@@ -3412,8 +3456,18 @@ namespace albor::compiler
             m_object = "self";
             line(2, "// the engine is resolved once, because a widget construction takes it (§7.2, §18.1)");
             line(2, "BindingEngine* const engine = self->owner->engine();");
-            line(2, "// the text engine is resolved once, because a label measures through it (§9.1, §18.1)");
-            line(2, "TextEngine* const text_engine = self->text_engine;");
+            // the row needs the text engine only when one of its widgets measures through it (§9.1, §18.1)
+            bool row_uses_text_engine = false;
+            // each body node decides, because a native row may carry no label at all (§11.2, §18.1)
+            for (const NodeSlot& body : slot.body)
+                row_uses_text_engine = row_uses_text_engine || info_of(std::string_view(body.node->element_type)).needs_text_engine;
+            // the local is emitted only when it is read, because an unused one would warn (§9.1, §18.1)
+            if (row_uses_text_engine) {
+                line(2, "// the text engine is resolved once, because a label measures through it (§9.1, §18.1)");
+                line(2, "TextEngine* const text_engine = self->text_engine;");
+            }
+            // the item is marked used, because a body that binds no field would otherwise leave it unused (§11.1, §18.1)
+            line(2, "(void)item;");
             // the index is marked used, because a body that binds no index would otherwise leave it unused (§11.1, §18.1)
             if (slot.node->repeat_index_name.empty())
                 line(2, "(void)index;");
@@ -3432,6 +3486,8 @@ namespace albor::compiler
             m_object = "self";
             line(2, "// the row root is the node the view owns, which every body node is reached from (§18.1, AD-13)");
             line(2, "UiNode* const row_root = &row;");
+            // the item is marked used, because a body that binds no field would otherwise leave it unused (§11.1, §18.1)
+            line(2, "(void)item;");
             // the index is marked used, because a body that binds no index would otherwise leave it unused (§11.1, §18.1)
             if (slot.node->repeat_index_name.empty())
                 line(2, "(void)index;");

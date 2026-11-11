@@ -1,0 +1,7 @@
+import "XMLPanel.ui";
+
+// the acronym importer fixture, which proves the imported facade header and the generated unit agree (§11.1, §11.3)
+
+component XMLShell {
+    XMLPanel {}
+}

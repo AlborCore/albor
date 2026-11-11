@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace albor::compiler
@@ -222,6 +224,16 @@ namespace albor::compiler
     // the properties every element type exposes, because a parent arranges any node it holds (§8.2)
     [[nodiscard]] std::vector<ElementProperty> common_element_properties();
 
+    // how a native component is constructed, which the manifest names and the generator emits (§11.2, AD-17)
+    struct NativeConstruction
+    {
+        // the generated header that declares the facade, which a ui unit includes (§11.2, §14.1)
+        std::string header;
+
+        // the free function the application defines, which returns its concrete subclass (§11.2, AD-17)
+        std::string factory;
+    };
+
     // one element type a ui file may instantiate, which is either a builtin widget or a manifest component (§11.1, §11.2)
     struct ElementType
     {
@@ -252,13 +264,22 @@ namespace albor::compiler
         [[nodiscard]] static ElementCatalog with_builtins();
 
         // add a native component from a manifest, which is the single source of truth for its types (§11.2, AD-17)
-        void add_native(const ElementType& type);
+        void add_native(ElementType type, std::optional<NativeConstruction> construction = std::nullopt);
+
+        // find how a native component is constructed, which a builtin lacks (§11.2, AD-17)
+        [[nodiscard]] const NativeConstruction* native_construction(std::string_view name) const;
 
         // add a native data type from a manifest, which a snapshot may carry but which is never an element (§11.2, AD-17)
         void add_native_data(std::string name);
 
-        // add a record from a manifest, which a collection of it holds and a repeat walks (§11.2, AD-17, AD-13)
+        // add a record from a ui file or a manifest, which a collection holds and a repeat walks (§11.2, AD-17, AD-13)
         void add_record(const RecordType& record);
+
+        // add a record from a manifest, where the module names the generated header it is declared in (§11.2, AD-17)
+        void add_record(const RecordType& record, std::string module);
+
+        // find the manifest module a record is declared in, which is empty for a builtin or a ui record (§11.2, AD-17)
+        [[nodiscard]] std::string_view record_module(std::string_view name) const;
 
         // find a record by name, which is what a vector element type resolves against (§11.2, AD-17)
         [[nodiscard]] const RecordType* find_record(std::string_view name) const;
@@ -288,8 +309,14 @@ namespace albor::compiler
         // the known native data types, which a snapshot may carry but which is never an element (§11.2, AD-17)
         std::vector<std::string> m_native_data;
 
+        // how each native component with a factory is constructed, which the generator emits (§11.2, AD-17)
+        std::vector<std::pair<std::string, NativeConstruction>> m_native_construction;
+
         // the known records, which a collection holds and a repeat walks (§11.2, AD-17, AD-13)
         std::vector<RecordType> m_records;
+
+        // the module each manifest record is declared in, which names its generated header (§11.2, AD-17)
+        std::vector<std::pair<std::string, std::string>> m_record_modules;
 
         // the named value sets the file declared in ui, which a property may hold one member of (§11.1)
         std::vector<NamedValueSet> m_named_value_sets;

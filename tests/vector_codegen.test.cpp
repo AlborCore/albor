@@ -26,7 +26,9 @@
 #include "scroll_log.h"
 #include "task/image_record.h"
 #include "task_list.h"
+#include "tests/vectors/waveform_fixture.h"
 #include "vector_panel.h"
+#include "waveform_panel.h"
 
 using namespace albor;
 
@@ -44,6 +46,77 @@ TEST(VectorCodegen, AnEmbeddedImageDecodesWhenTheComponentIsBuilt) {
     EXPECT_EQ(icon->pixels().size(), 4U);
     // the cache is left empty, because a suite that counts its entries must not inherit this fixture (§6.4)
     albor::resources::ImageRegistry::clear();
+}
+
+TEST(VectorCodegen, ANativeChildConstructsThroughItsFactory) {
+    // arrange a panel whose body holds a manifest component, which the generated code builds (§11.2, AD-17)
+    BindingEngine engine;
+    // act
+    WaveformPanel panel(&engine, nullptr);
+    // assert the tree holds the column the body declares, which is the native's parent (§8.1)
+    ASSERT_EQ(panel.children().size(), 1U);
+    UiNode* const column = panel.child_at(0);
+    ASSERT_NE(column, nullptr);
+    // assert the child is the concrete view the factory returned, which is what makes the manifest component real (§11.2)
+    auto* const chart = dynamic_cast<WaveformViewFixture*>(column->child_at(0));
+    ASSERT_NE(chart, nullptr);
+    // assert the written properties reached the concrete setters, which proves the facade surface is wired (§11.2)
+    EXPECT_FLOAT_EQ(chart->zoom(), 2.0f);
+    EXPECT_FLOAT_EQ(chart->line_color().red, 1.0f);
+    EXPECT_FLOAT_EQ(chart->line_color().green, 0.0f);
+}
+
+TEST(VectorCodegen, ANativePropertyReceivesThePublishedSnapshot) {
+    // arrange a panel over a native chart, whose data property binds to the component source (§11.2, §13.2)
+    BindingEngine engine;
+    WaveformPanel panel(&engine, nullptr);
+    UiNode* const column = panel.child_at(0);
+    ASSERT_NE(column, nullptr);
+    auto* const chart = dynamic_cast<WaveformViewFixture*>(column->child_at(0));
+    ASSERT_NE(chart, nullptr);
+    // act the host publishes a snapshot, which the eager binding pushes to the native (§13.3)
+    panel.set_source(std::make_shared<WaveformData>(WaveformData{.peak = 0.5f}));
+    engine.settle();
+    // assert the concrete view received the published value, which is what a bound native property does (§13.3)
+    ASSERT_NE(chart->data(), nullptr);
+    EXPECT_FLOAT_EQ(chart->data()->peak, 0.5f);
+}
+
+TEST(VectorCodegen, ANativeCommonPropertyBindsToTheNode) {
+    // arrange a panel whose chart binds the common visible property, which every node carries (§8.2, §11.2)
+    BindingEngine engine;
+    WaveformPanel panel(&engine, nullptr);
+    UiNode* const column = panel.child_at(0);
+    ASSERT_NE(column, nullptr);
+    auto* const chart = dynamic_cast<WaveformViewFixture*>(column->child_at(0));
+    ASSERT_NE(chart, nullptr);
+    // act the host shows then hides the chart, which the eager binding pushes to the node (§13.3)
+    panel.set_show(true);
+    engine.settle();
+    // assert the node stayed visible, because the published value matches the default (§8.2)
+    EXPECT_TRUE(chart->visible());
+    panel.set_show(false);
+    engine.settle();
+    // assert the node itself changed, which is what proves the common setter was wired (§8.2)
+    EXPECT_FALSE(chart->visible());
+    panel.set_show(true);
+    engine.settle();
+    // assert a later publish shows it again, which proves the binding stays live (§13.3)
+    EXPECT_TRUE(chart->visible());
+}
+
+TEST(VectorCodegen, ANativeSignalReachesTheGeneratedHandler) {
+    // arrange a panel over a native chart, whose signal the body handles (§11.2)
+    BindingEngine engine;
+    WaveformPanel panel(&engine, nullptr);
+    UiNode* const column = panel.child_at(0);
+    ASSERT_NE(column, nullptr);
+    auto* const chart = dynamic_cast<WaveformViewFixture*>(column->child_at(0));
+    ASSERT_NE(chart, nullptr);
+    // act the view raises the signal, which the generated wiring forwards to the handler (§11.2, §11.3)
+    chart->raise_selection(0.75f);
+    // assert the handler wrote the parameter it declared, which proves the name and type crossed the manifest (§11.2)
+    EXPECT_FLOAT_EQ(panel.last_position(), 0.75f);
 }
 
 TEST(VectorCodegen, AManifestRecordCarriesAnImageHandle) {

@@ -1,0 +1,37 @@
+import task;
+import waveform;
+
+// the native child fixture, which proves a manifest component constructs from a ui element (§11.2, AD-17)
+
+component WaveformPanel {
+    in property<Snapshot<WaveformData>> source;
+    inout property<vector<Task>> tasks;
+    inout property<float> last_position;
+    inout property<bool> show;
+
+    Column {
+        WaveformView {
+            id: chart;
+            data: source;
+            line_color: #FF0000;
+            zoom: 2.0;
+            visible: show;
+
+            on_selection_changed: {
+                last_position = time_pos;
+            }
+        }
+
+        if show {
+            WaveformView { data: source; }
+        }
+
+        Row {
+            WaveformView { line_color: #00FF00; }
+        }
+
+        Repeat(task in tasks) {
+            WaveformView { data: source; }
+        }
+    }
+}
