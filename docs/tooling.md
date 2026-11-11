@@ -21,6 +21,21 @@ component's `.cpp`, while a declared interface change rebuilds the header and it
 ([Build scope](concepts/native-components.md)). The CMake helpers pass the font flags from
 the target's `albor_build_font_assets` declaration; see [Fonts](ui-language/fonts.md).
 
+A `.ui` file that uses manifest records or native components passes one `--manifest` flag per
+module:
+
+```text
+albor-codegen --input panel.ui --output build/generated/panel \
+    --manifest chart.ui-manifest \
+    --manifest task.ui-manifest
+```
+
+Each manifest adds its records and native components to the catalog the checker and the
+generator share. The flag repeats, and every named manifest joins the depfile so an edit
+regenerates the units that depend on it. A native component also needs its
+`create_<Class>` factory definition at link time
+([Native components](concepts/native-components.md#using-a-native-component)).
+
 ## The shaders
 
 The GPU backend has two platform shader sources and two committed artifacts:
@@ -65,9 +80,10 @@ albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/side_panel.ui")
 albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/main.ui" IMPORTS "${CMAKE_CURRENT_SOURCE_DIR}/side_panel.ui")
 albor_build_native_record(my-app "${CMAKE_CURRENT_SOURCE_DIR}/task.ui-manifest")
 albor_build_native_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest" WaveformView)
+albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest")
 ```
 
-All four run the appropriate driver as a build step, write under the build directory, and
+All of them run the appropriate driver as a build step, write under the build directory, and
 join the target's sources and include path — an application never names a generated file.
 Declare an imported `.ui` file with its own `albor_build_ui_component` call before the file
 that imports it, and name the direct imports in `IMPORTS`. A relative `IMPORTS` path resolves
@@ -76,6 +92,13 @@ header wait for the imported units and compiles every file into the same target.
 with the same stem cannot share a target, because they would write the same generated pair.
 The target still links one public framework target, `albor` or `albor-blend2d`; see
 [Consuming Albor](consuming.md).
+
+`--manifest` repeats once per module when a `.ui` file names records or native components from
+several manifests. The manifest that declares a native component must also be wired through
+`albor_build_native_component`, before the `.ui` file that instantiates it, because the
+generated header must exist before that unit compiles. The application must define the
+generated `create_<Class>` factory — see
+[Native components](concepts/native-components.md#using-a-native-component).
 
 ## Hot reload
 

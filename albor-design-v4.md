@@ -1501,9 +1501,18 @@ native component WaveformView {
 
 The Albor manifest tool generates C++ facade glue classes. The application C++ code inherits from or implements these facades. The compiler never parses application C++ headers.
 
+For a component to be instantiated from `.ui`, the generated facade header declares a free factory:
+
+```cpp
+// generated in chart/waveform_view.h
+[[nodiscard]] std::unique_ptr<WaveformView> create_WaveformView(BindingEngine* engine);
+```
+
+The application defines it to return its concrete subclass. Generated code calls the factory for a root, a child, a conditional body and a repeat row alike, so the generated body never names an application class and the facade stays opaque. The element catalog that carries manifest records also carries the component's properties, signals, generated header and factory name; `albor-codegen` registers it from each `--manifest` argument. A catalog native without that metadata is a codegen error (`E0501`), and a missing factory definition fails at link time rather than producing a runtime name registry.
+
 ### 11.3 C++ Code Generation Model (AD-03a, AD-03b Decided)
 
-- **Concrete Facades:** For each component, the compiler generates a stable public header (`MainView.h`) exposing a concrete, non-virtual facade class.
+- **Concrete Facades:** For each component, the compiler generates a stable public header (`main_view.h`, the component name in snake case) exposing a concrete, non-virtual facade class.
 - **Write-If-Changed:** Generated headers and implementation files are rewritten only if their content has changed, ensuring build systems (CMake / Ninja) do not trigger unnecessary recompilations.
 - **Translation Unit Batching:** By default, each component generates its own `.cpp` implementation file. For large projects with hundreds of components, the compiler supports a configurable chunking option (`--tu-chunk-size=25`) to optimize clean build times without compromising incremental edit speed.
 

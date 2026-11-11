@@ -72,8 +72,8 @@ int main(int argc, char** argv) {
     std::filesystem::path output;
     // the chunk size is one component per unit, which the flag tunes for large projects (AD-03b)
     std::size_t tu_chunk_size = 1;
-    // the manifest declares the records a ui file may name, which is optional because a file may use none (§11.2, AD-17)
-    std::filesystem::path manifest;
+    // each manifest declares the records and native components a ui file may name, which is optional (§11.2, AD-17)
+    std::vector<std::filesystem::path> manifests;
     // the depfile tracks embedded assets, which the build reads, and stays optional for a direct run (§14.2)
     std::filesystem::path depfile;
     // the catalog starts with the builtin widgets, which every ui file may instantiate (§11.1, §8)
@@ -104,9 +104,9 @@ int main(int argc, char** argv) {
             }
             continue;
         }
-        // the manifest flag names the manifest that declares the records a ui file uses (§11.2, AD-17)
+        // the manifest flag names one manifest whose records and native components the ui may use (§11.2, AD-17)
         if (std::string_view(argv[i]) == "--manifest" && i + 1 < argc) {
-            manifest = argv[++i];
+            manifests.emplace_back(argv[++i]);
             continue;
         }
         // the depfile flag names the make dependency file the build reads after this run (§14.2)
@@ -158,34 +158,40 @@ int main(int argc, char** argv) {
         }
         // an unknown flag is a misuse, which the build that wired it up got wrong (§11.3)
         std::fprintf(stderr, "albor-codegen: unknown flag '%s'\n", argv[i]);
-        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file>] [--depfile <file>] [--default-font-family <family>] [--font <family> <weight> <file> ...]\n");
+        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file> ...] [--depfile <file>] [--default-font-family <family>] [--font <family> <weight> <file> ...]\n");
         return 2;
     }
     // both flags are mandatory, because a driver without a source or a target has nothing to do (§11.3)
     if (input.empty() || output.empty()) {
-        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file>] [--depfile <file>] [--default-font-family <family>] [--font <family> <weight> <file> ...]\n");
+        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file> ...] [--depfile <file>] [--default-font-family <family>] [--font <family> <weight> <file> ...]\n");
         return 2;
     }
     // the problems are collected in one list through the whole pipeline (§11.1)
     albor::compiler::DiagnosticList diagnostics;
-    // the manifest is read and parsed, because its records are what the catalog resolves (§11.2, AD-17)
-    if (!manifest.empty()) {
-        // the manifest text is read, because its records must be known before the ui file is checked (§11.2, AD-17)
+    // every manifest is parsed first, because a declaration in one may name a record another declares (§11.2, AD-17)
+    std::vector<albor::manifest::ManifestFile> parsed_manifests;
+    // each manifest is read, because its records and native components are what the catalog resolves (§11.2, AD-17)
+    for (const std::filesystem::path& manifest : manifests) {
+        // the manifest text is read, because its declarations must be known before the ui file is checked (§11.2, AD-17)
         std::ifstream manifest_stream(manifest, std::ios::binary);
-        // a manifest that cannot be read is reported, because the compiler cannot resolve records without it (§11.2)
+        // a manifest that cannot be read is reported, because its declarations cannot resolve (§11.2)
         if (!manifest_stream) {
             std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", albor::codegen::utf8_path(manifest).c_str());
             return 1;
         }
         // the module name is the file stem, which is what the glue generator names the directory after (§11.2)
         const std::string module = std::filesystem::path(manifest).stem().string();
-        // the problems of the manifest join the run, because a bad record is the author's problem too (§11.2)
+        // the problems of the manifest join the run, because a bad declaration is the author's problem too (§11.2)
         const std::vector<albor::compiler::Token> manifest_tokens = albor::compiler::Lexer(stream_text(manifest_stream), diagnostics).tokenize();
-        // the manifest is parsed into declarations, which is where the records live (§11.2, AD-17)
-        const albor::manifest::ManifestFile parsed = albor::manifest::ManifestParser(manifest_tokens, diagnostics).parse(module);
-        // the records join the catalog, which is what makes vector<Task> resolve (§11.2, AD-17, AD-13)
-        albor::manifest::register_records(parsed, catalog);
+        // the manifest is parsed into declarations, which is where the records and the components live (§11.2, AD-17)
+        parsed_manifests.push_back(albor::manifest::ManifestParser(manifest_tokens, diagnostics).parse(module));
     }
+    // every record joins first, because a component property in any manifest may name one (§11.2, AD-17, AD-13)
+    for (const albor::manifest::ManifestFile& parsed : parsed_manifests)
+        albor::manifest::register_records(parsed, catalog);
+    // the components join next, which is what makes a native element constructible (§11.2, AD-17)
+    for (const albor::manifest::ManifestFile& parsed : parsed_manifests)
+        albor::manifest::register_components(parsed, catalog);
 
     // the loader reads the root and every ui file it imports, which is what brings their components into scope (§11.1)
     const albor::compiler::UiFileReader reader = [](const std::filesystem::path& path) -> std::optional<std::string> {
@@ -238,6 +244,8 @@ int main(int argc, char** argv) {
     std::vector<std::filesystem::path> dependencies = loader.dependencies();
     // the assets are appended after the imports, because both are read by this run (§6.4, §14.2)
     dependencies.insert(dependencies.end(), generator.asset_paths().begin(), generator.asset_paths().end());
+    // the manifests are appended too, because a changed native declaration must regenerate the unit (§11.2, §14.2)
+    dependencies.insert(dependencies.end(), manifests.begin(), manifests.end());
     // the depfile is written after the units, so a build only reads dependencies for a successful run (§14.2)
     if (!depfile.empty() && !albor::codegen::write_depfile(depfile, files, output, input, dependencies)) {
         // a depfile that cannot be written leaves the build unable to track assets, which is a failed run (§14.2)

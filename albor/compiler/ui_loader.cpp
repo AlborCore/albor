@@ -127,8 +127,8 @@ namespace albor::compiler
             // a file with no component or several cannot be named by one import (§11.1)
             if (parsed->components.size() != 1)
                 file_diagnostics.add(Diagnostic::Severity::Error, SourceSpan{}, "E0804", "an imported ui file must declare exactly one component");
-            // the component must be named after the file, because the build output is the file stem (§11.1, §14.2)
-            else if (component_header_name(parsed->components.at(0).name) != normalized.stem().string() + ".h")
+            // the component must be named after the file, because the build names one unit pair per file (§11.1, §14.2)
+            else if (component_header_name(parsed->components.at(0).name) != component_header_name(normalized.stem().string()))
                 file_diagnostics.add(Diagnostic::Severity::Error, parsed->components.at(0).span, "E0805", "an imported component must match its file, so '" + normalized.stem().string() + ".ui' names it in PascalCase");
         }
         // the checker resolves the file against its own declarations and the imported interfaces (§11.1)

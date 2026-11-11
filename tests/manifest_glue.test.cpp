@@ -403,6 +403,20 @@ record Task {
     EXPECT_NE(files.at(0).content.find("struct Task"), std::string::npos);
 }
 
+TEST(RecordGlue, AnAcronymNameStemsItsHeader) {
+    // arrange a record whose name carries an acronym, because the header shares the compiler spelling (§11.3)
+    const std::string_view source = R"(
+record XMLTask {
+    key: string;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the header is the stem the generated record include names (§11.2, AD-17)
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files.at(0).path, "chart/xml_task.h");
+}
+
 TEST(RecordGlue, ARecordFieldBecomesAPlainMember) {
     // arrange
     const std::string_view source = R"(
@@ -636,6 +650,23 @@ record OptionRow {
     EXPECT_EQ(diagnostics.diagnostics().at(0).code, "E0310");
 }
 
+TEST(NativeGlue, AnAcronymNameStemsItsGeneratedUnits) {
+    // arrange a component whose name carries an acronym, because a capital run splits before its tail (§11.3)
+    const std::string_view source = R"(
+native component XMLView {
+    in property<color> line_color: #00FF00;
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the header and the unit share the stem codegen and the CMake helper compute (§11.3, §14.2)
+    const GeneratedFile& header = file_named(files, "chart/xml_view.h");
+    EXPECT_TRUE(contains(header.content, "class XMLView"));
+    const GeneratedFile& source_file = file_named(files, "chart/xml_view.cpp");
+    EXPECT_TRUE(contains(source_file.content, "XMLView::XMLView("));
+}
+
 TEST(NativeGlue, ASnapshotCollectionForwardsItsElement) {
     // arrange a native property that holds a collection of snapshots, which the header must declare (§13.2)
     const std::string_view source = R"(
@@ -738,6 +769,8 @@ record Task {
     // assert the record resolved by name, which is what makes vector<Task> a known type (§11.2, AD-17)
     const RecordType* record = catalog.find_record("Task");
     ASSERT_NE(record, nullptr);
+    // assert the declaring module is kept, because it names the header the generated unit includes (§11.2, AD-17)
+    EXPECT_EQ(catalog.record_module("Task"), "chart");
     // assert every declared field reached the catalog in declaration order (§11.2, AD-17)
     ASSERT_EQ(record->fields.size(), 3U);
     EXPECT_EQ(record->fields.at(0).name, "key");
@@ -828,4 +861,161 @@ record Task {
     ASSERT_NE(record->key_field(), nullptr);
     EXPECT_EQ(record->key_field()->name, "key");
     EXPECT_FALSE(record->find_field("title")->is_key);
+}
+
+TEST(ComponentRegistration, AComponentReachesTheCompilerCatalog) {
+    // arrange the reference manifest, because registration is what makes its keyword resolve (§11.2, AD-17)
+    const std::string_view source = R"(
+native component WaveformView {
+    in property<Snapshot<WaveformData>> data;
+    in property<color> line_color: #00FF00;
+    inout property<float> zoom: 1.0;
+    signal selection_changed(float time_pos, int button);
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("chart");
+    // the catalog starts with the builtins, which registration leaves untouched (§11.2, AD-17)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    register_components(file, catalog);
+    // assert the element resolved by the name the manifest wrote (§11.2, AD-17)
+    const ElementType* type = catalog.find("WaveformView");
+    ASSERT_NE(type, nullptr);
+    // assert a manifest native publishes no child slot, because content is not part of the manifest (§11.2)
+    EXPECT_FALSE(type->accepts_children);
+    // assert a read only property stays unassignable, because a handler may not write it (§11.2, §7)
+    ASSERT_NE(type->find_property("data"), nullptr);
+    EXPECT_FALSE(type->find_property("data")->assignable);
+    EXPECT_TRUE(type->find_property("data")->type.is(TypeKind::Snapshot));
+    // assert an inout property is assignable, because a handler writes it (§11.2, §7)
+    ASSERT_NE(type->find_property("zoom"), nullptr);
+    EXPECT_TRUE(type->find_property("zoom")->assignable);
+    // assert the signal keeps its parameters in declaration order, because the handler spells them (§11.2, §11.3)
+    const ElementSignal* signal = type->find_signal("selection_changed");
+    ASSERT_NE(signal, nullptr);
+    ASSERT_EQ(signal->parameter_types.size(), 2U);
+    EXPECT_TRUE(signal->parameter_types.at(0).is(TypeKind::Float));
+    EXPECT_TRUE(signal->parameter_types.at(1).is(TypeKind::Int));
+    ASSERT_EQ(signal->parameter_names.size(), 2U);
+    EXPECT_EQ(signal->parameter_names.at(0), "time_pos");
+    EXPECT_EQ(signal->parameter_names.at(1), "button");
+}
+
+TEST(ComponentRegistration, AComponentNamesItsGeneratedHeaderAndFactory) {
+    // arrange a component whose name spans two words, because that is what the file stem lowers (§11.3)
+    const std::string_view source = R"(
+native component SpectrumAnalyzer {
+    in property<color> line_color: #00FF00;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("chart");
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    register_components(file, catalog);
+    // assert the construction path names the generated header and the factory a ui instance calls (§11.2, AD-17)
+    const NativeConstruction* construction = catalog.native_construction("SpectrumAnalyzer");
+    ASSERT_NE(construction, nullptr);
+    EXPECT_EQ(construction->header, "chart/spectrum_analyzer.h");
+    EXPECT_EQ(construction->factory, "create_SpectrumAnalyzer");
+}
+
+TEST(ComponentRegistration, AnAcronymNameStemsTheHeaderAndFactory) {
+    // arrange a component whose name carries an acronym, because the header stem must match the glue (§11.3)
+    const std::string_view source = R"(
+native component XMLView {
+    in property<color> line_color: #00FF00;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("chart");
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    register_components(file, catalog);
+    // assert the acronym splits before its tail, which is the file name the glue writes (§11.3, AD-17)
+    const NativeConstruction* construction = catalog.native_construction("XMLView");
+    ASSERT_NE(construction, nullptr);
+    EXPECT_EQ(construction->header, "chart/xml_view.h");
+    EXPECT_EQ(construction->factory, "create_XMLView");
+}
+
+TEST(ComponentRegistration, AWrappedNativeLeafJoinsTheDataCatalog) {
+    // arrange a component whose snapshot carries an application type, which the checker must resolve (§13.2)
+    const std::string_view source = R"(
+native component WaveformView {
+    in property<Snapshot<WaveformData>> data;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("chart");
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    register_components(file, catalog);
+    // assert the wrapped leaf resolved as native data, which is what a snapshot signature names (§11.2, §13.2)
+    EXPECT_TRUE(catalog.holds_native("WaveformData"));
+    // assert the data type is not an element, because a ui file may not instantiate it (§11.2, AD-17)
+    EXPECT_EQ(catalog.find("WaveformData"), nullptr);
+}
+
+TEST(ComponentRegistration, ARecordIsNotRegisteredAsNativeData) {
+    // arrange a manifest whose component carries a snapshot of a record the same file declares (§11.2, §13.2)
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    title: string;
+}
+
+native component TaskView {
+    in property<Snapshot<Task>> task;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("chart");
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act the records join first, which is the order the driver and the build use (§11.2, AD-17, AD-13)
+    register_records(file, catalog);
+    register_components(file, catalog);
+    // assert the record resolved through the record table, which is where its header lives (§11.2, AD-17)
+    EXPECT_NE(catalog.find_record("Task"), nullptr);
+    // assert the record is not duplicated as opaque native data, because its generated header carries its shape (§11.2)
+    EXPECT_FALSE(catalog.holds_native("Task"));
+}
+
+TEST(ComponentRegistration, ARecordFromAnotherManifestIsNotNativeData) {
+    // arrange two manifests, where one component's snapshot names a record the other declares (§11.2, AD-17)
+    const std::string_view chart_source = R"(
+native component TaskView {
+    in property<Snapshot<Task>> task;
+}
+)";
+    const std::string_view task_source = R"(
+record Task {
+    key: string;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile chart = ManifestParser(Lexer(chart_source, diagnostics).tokenize(), diagnostics).parse("chart");
+    const ManifestFile tasks = ManifestParser(Lexer(task_source, diagnostics).tokenize(), diagnostics).parse("task");
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act the driver joins every record before any component, because one manifest may name another's record (§11.2)
+    register_records(chart, catalog);
+    register_records(tasks, catalog);
+    register_components(chart, catalog);
+    register_components(tasks, catalog);
+    // assert the record kept its generated header route, because it is not opaque data (§11.2, AD-17)
+    EXPECT_NE(catalog.find_record("Task"), nullptr);
+    EXPECT_FALSE(catalog.holds_native("Task"));
+    // assert the component still resolves its snapshot against the record and names its factory (§11.2)
+    ASSERT_NE(catalog.find("TaskView"), nullptr);
+    const NativeConstruction* construction = catalog.native_construction("TaskView");
+    ASSERT_NE(construction, nullptr);
+    EXPECT_EQ(construction->header, "chart/task_view.h");
+}
+
+TEST(ComponentRegistration, ABuiltinCarriesNoConstructionPath) {
+    // arrange the builtin catalog, which every ui file may instantiate without a manifest (§11.1, §8)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // assert a builtin has no manifest factory, so codegen constructs it directly (§11.3)
+    EXPECT_EQ(catalog.native_construction("Label"), nullptr);
 }

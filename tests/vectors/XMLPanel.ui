@@ -1,0 +1,7 @@
+// the acronym ui fixture, which proves the build helper and the generator stem a capital run the same way (§11.3)
+
+component XMLPanel {
+    Column {
+        spacing: 4px;
+    }
+}

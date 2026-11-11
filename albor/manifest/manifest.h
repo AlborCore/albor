@@ -166,6 +166,9 @@ namespace albor::manifest
     // register the records a manifest declares into a catalog, which is what makes vector<Task> resolve (§11.2, AD-13)
     void register_records(const ManifestFile& file, compiler::ElementCatalog& catalog);
 
+    // register the components a manifest declares, which is what gives their element a factory (§11.2, AD-17)
+    void register_components(const ManifestFile& file, compiler::ElementCatalog& catalog);
+
     // the parser that turns a scanned manifest into a declaration list, which reports rather than throws (§11.2)
     class ManifestParser
     {

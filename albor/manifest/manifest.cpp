@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "albor/compiler/naming.h"
+
 namespace albor::manifest
 {
     namespace
@@ -650,7 +652,69 @@ namespace albor::manifest
                 record.fields.push_back(compiler::RecordFieldType{.name = field.name, .type = field_value_type(field.type), .is_key = field.is_key});
             }
             // the record joins the catalog, which is what makes vector<Task> resolve (§11.2, AD-17, AD-13)
-            catalog.add_record(record);
+            catalog.add_record(record, file.module);
+        }
+    }
+
+    namespace
+    {
+        // collect the native data a wrapped type carries, which a snapshot needs declared ahead (§11.2, AD-17, §13.2)
+        void collect_native_data(const compiler::ValueType& type, ElementCatalog& catalog) {
+            // a native leaf is the data type a snapshot transports, which the catalog must hold (§11.2, AD-17)
+            if (type.is(compiler::TypeKind::Native)) {
+                // a record carries its own header, so it is not registered as an opaque data type (§11.2, AD-17)
+                if (!type.native_name().empty() && catalog.find_record(type.native_name()) == nullptr)
+                    catalog.add_native_data(std::string(type.native_name()));
+                return;
+            }
+            // a wrapper carries its element inside, which may itself be wrapped (§8.1, §13.2)
+            if (type.kind() == compiler::TypeKind::Vector || type.kind() == compiler::TypeKind::Snapshot)
+                collect_native_data(type.element(), catalog);
+        }
+    } // namespace
+
+    void register_components(const ManifestFile& file, ElementCatalog& catalog) {
+        // the components are walked in declaration order, which is the order a ui file reads their surface (§11.2, AD-17)
+        for (const NativeComponent& declaration : file.components) {
+            // the element starts with its name, because that is the keyword a ui file writes (§11.2, AD-17)
+            compiler::ElementType type;
+            // the name is the manifest name, which the checker and the glue agree on (§11.2)
+            type.name = declaration.name;
+            // a native component publishes its surface but no child slot, because the manifest declares no content (§11.2)
+            type.accepts_children = false;
+            // the generated header and the factory are the construction path codegen emits (§11.2, AD-17)
+            const compiler::NativeConstruction construction{.header = file.module + "/" + compiler::snake_case(declaration.name) + ".h", .factory = "create_" + declaration.name};
+            // each property joins the surface with the direction the manifest declared (§11.2, §7)
+            for (const NativeProperty& property : declaration.properties) {
+                // the written type becomes the one a binding resolves, which is the bridge records use too (§11.2)
+                const compiler::ValueType property_type = field_value_type(property.type);
+                // the property keeps its direction, because a handler may only write an inout property (§11.2, §7)
+                type.properties.push_back(compiler::ElementProperty{.name = property.name, .type = property_type, .assignable = property.direction == PropertyDirection::InOut});
+                // a wrapped native leaf joins the data types, because a snapshot needs it declared (§11.2, §13.2)
+                collect_native_data(property_type, catalog);
+            }
+            // each signal joins the surface with its parameters in declaration order (§11.2)
+            for (const NativeSignal& signal : declaration.signals) {
+                // the signal starts with its name and collects the parameters the handler reads (§11.2)
+                compiler::ElementSignal element_signal;
+                // the name is what the author writes after the handler prefix (§11.2)
+                element_signal.name = signal.name;
+                // each parameter keeps its type and its name, because the generated lambda spells both (§11.2, §11.3)
+                for (const SignalParameter& parameter : signal.parameters) {
+                    // the written type becomes the checked parameter type (§11.2)
+                    const compiler::ValueType parameter_type = field_value_type(parameter.type);
+                    // the type is what an invocation must match (§11.2)
+                    element_signal.parameter_types.push_back(parameter_type);
+                    // the name is what a handler body reads the raised value by (§11.2)
+                    element_signal.parameter_names.push_back(parameter.name);
+                    // a wrapped native leaf joins the data types, which a signal signature also needs (§11.2, §13.2)
+                    collect_native_data(parameter_type, catalog);
+                }
+                // the signal joins the component surface, which the checker resolves a handler against (§11.2)
+                type.signals.push_back(std::move(element_signal));
+            }
+            // the element joins the catalog, which makes its keyword resolve and factory nameable (§11.2, AD-17)
+            catalog.add_native(std::move(type), construction);
         }
     }
 } // namespace albor::manifest

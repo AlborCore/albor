@@ -1,0 +1,14 @@
+// the native component fixture, which proves a manifest component compiles from a ui element (§11.2, AD-17)
+
+native component WaveformView {
+    in property<Snapshot<WaveformData>> data;
+    in property<color> line_color: #00FF00;
+    inout property<float> zoom: 1.0;
+    signal selection_changed(float time_pos);
+}
+
+// the acronym fixture, which proves the glue and the CMake helper stem a capital run the same way (§11.3)
+
+native component XMLView {
+    in property<color> line_color: #00FF00;
+}

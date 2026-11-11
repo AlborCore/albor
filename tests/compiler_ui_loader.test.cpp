@@ -209,6 +209,28 @@ TEST(UiLoader, ReusesOneLoaderAcrossRootsWithoutLeakingDeclarations) {
     EXPECT_EQ(loader.dependencies().at(0).generic_string(), "second.ui");
 }
 
+TEST(UiLoader, AcceptsAnAcronymFileThatNamesItsComponent) {
+    // arrange an imported file whose name carries an acronym, because the stem lowers the same way (§11.1, §11.3)
+    std::map<std::string, std::string> files;
+    files["root.ui"] = "import \"XMLPanel.ui\"; component Root { XMLPanel {} }";
+    files["XMLPanel.ui"] = "component XMLPanel { Column {} }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act
+    const std::optional<CheckedFile> checked = loader.check("root.ui");
+    // assert the acronym file resolves, because its lowered stem names the header the importer includes (§11.1, §11.3)
+    EXPECT_EQ(diagnostics.count(), 0U);
+    ASSERT_TRUE(checked.has_value());
+    ASSERT_EQ(checked->imported_components.size(), 1U);
+    EXPECT_EQ(checked->imported_components.at(0).name, "XMLPanel");
+    EXPECT_EQ(checked->imported_components.at(0).header, "xml_panel.h");
+}
+
 TEST(UiLoader, ReportsAnImportWithNoPathOrModule) {
     // arrange an empty quoted import, which names nothing the loader can read (§11.1)
     std::map<std::string, std::string> files;

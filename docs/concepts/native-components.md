@@ -19,8 +19,8 @@ native component WaveformView {
 }
 ```
 
-- **properties** use the same direction, type and default syntax as `.ui` — including
-  `Snapshot<T>`, `vector<T>` and `command`
+- **properties** use the same direction, type and default syntax as `.ui`; the glue
+  translates the scalar types, `Snapshot<T>` and `vector<T>`
 - **signals** carry typed, named parameters, as in `.ui`
 - **`semantic role`** publishes the accessibility/automation role the component reports
 
@@ -62,6 +62,60 @@ record Task {
 - A collection default is the empty list, `[]`; a non-empty list default is refused with
   `E0310` because the generator does not quote element values yet.
 - Defaults are ordinary values; omitted fields are value-initialised.
+
+## Using a native component
+
+A native component is an element like any built-in widget. A `.ui` file names the manifest
+module and writes the declared class:
+
+```text
+// panel.ui
+import chart;
+
+component Panel {
+    WaveformView {
+        line_color: #00FF00;
+
+        on_selection_changed: {
+            // ...
+        }
+    }
+}
+```
+
+The generated facade header declares a free factory, which the application defines:
+
+```cpp
+// chart/waveform_view.h — generated
+[[nodiscard]] std::unique_ptr<WaveformView> create_WaveformView(BindingEngine* engine);
+
+// waveform_widget.cpp — application
+std::unique_ptr<WaveformView> create_WaveformView(BindingEngine* engine) {
+    return std::make_unique<WaveformWidget>(engine);
+}
+```
+
+Generated `.ui` code calls the factory in every construction path — root, child, conditional
+body and repeat row — so the generated body never names the concrete class. The facade stays
+opaque, no runtime name registry is added to Release, and a missing definition fails at link
+time. Property assignments reach the facade setters (`set_line_color`, `set_zoom`) and signal
+handlers install on the facade slots (`set_on_selection_changed`), exactly as they do for a
+built-in widget.
+
+The catalog needs the manifest that declares the component. `albor-codegen` takes one
+`--manifest` flag per module, and the CMake helpers pass it through:
+
+```cmake
+albor_build_native_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest" WaveformView)
+albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/panel.ui"
+    --manifest "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest")
+```
+
+The native component is declared first, because its generated header must exist before the
+`.ui` unit compiles. A `.ui` file that names a native component without passing its manifest
+does not resolve the element. A native element whose catalog entry carries no construction
+metadata is refused by codegen with `E0501`, because the generator cannot choose a
+construction path.
 
 ## Importing
 
@@ -107,9 +161,19 @@ directory, and join the target's sources and include path — the same pattern
 `albor_build_ui_component` uses for `.ui` files
 ([Getting started](../getting-started.md#a-component-from-a-ui-file)).
 
-On the C++ side the application implements the class the manifest declares and constructs it
-inside its tree. The `chart` example (`examples/chart/`) is the reference: `WaveformView`
-with a `Snapshot<WaveformData>` input and a `LineBatch`-backed draw.
+A `.ui` file that instantiates the component also passes the manifest to the compiler, so the
+element resolves and the factory is named:
+
+```cmake
+albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/panel.ui"
+    --manifest "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest")
+```
+
+On the C++ side the application implements the class the manifest declares, defines the
+`create_<Class>` factory, and may still construct the view directly as a root. The `chart`
+example (`examples/chart/`) is the reference: `WaveformView` with a
+`Snapshot<WaveformData>` input, a `LineBatch`-backed draw, and a `create_WaveformView`
+definition.
 
 ## The rules
 

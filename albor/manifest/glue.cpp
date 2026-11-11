@@ -11,30 +11,14 @@
 #include <utility>
 #include <vector>
 
+#include "albor/compiler/naming.h"
+
 namespace albor::manifest
 {
     namespace
     {
         // the comment that opens every generated unit, naming the manifest and the rule that produced it (§11.2, §14)
         std::string provenance(std::string_view module) { return "// generated from " + std::string(module) + ".ui-manifest, do not edit (§14, AD-17)"; }
-
-        // render a component name in snake case, which is how its generated units are named (§11.3)
-        std::string snake_case(std::string_view name) {
-            // the output starts empty, which the words fill (§11.3)
-            std::string out;
-            // each letter is walked, because an upper case letter starts a word (§11.3)
-            for (std::size_t i = 0; i < name.size(); ++i) {
-                // an upper letter after any letter starts a word here, because a manifest name is plain words (§11.3)
-                const bool boundary = i > 0 && name[i] >= 'A' && name[i] <= 'Z';
-                // a boundary word is marked with the separator, which the file name needs (§11.3)
-                if (boundary)
-                    out.push_back('_');
-                // the letter joins the name lowered, because the file base is lower case (§11.3)
-                out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(name[i]))));
-            }
-            // the assembled name is returned, which names the generated units (§11.3)
-            return out;
-        }
 
         // the c++ spelling of a manifest scalar type, which is absent when the glue cannot translate it (§11.2)
         std::optional<std::string> scalar_cpp(std::string_view type) {
@@ -268,9 +252,6 @@ namespace albor::manifest
             // whether a signal needs the function include, which the slots carry (§11.2)
             bool needs_functional = false;
 
-            // whether a snapshot needs the memory include, which the data type carries (§11.2)
-            bool needs_memory = false;
-
             // whether a colour needs the paint include, which the framework type lives in (§11.2)
             bool needs_paint = false;
 
@@ -374,9 +355,8 @@ namespace albor::manifest
             // the slot type needs the functional header, which a signal component reaches (§8.3)
             if (component.needs_functional)
                 emit_line(out, 0, "#include <functional>");
-            // the snapshot or image signature needs the memory header, which a data component reaches (§13.2, §6.4)
-            if (component.needs_memory || component.needs_image)
-                emit_line(out, 0, "#include <memory>");
+            // the factory returns an owned pointer, so the memory header is always needed (§11.2, AD-17)
+            emit_line(out, 0, "#include <memory>");
             // the string signatures need the string header, which every facade uses (§14.1)
             emit_line(out, 0, "#include <string>");
             // the role read needs the string view header, which a role component reaches (§10.1)
@@ -481,6 +461,9 @@ namespace albor::manifest
                 first_private = false;
             }
             emit_line(out, 1, "};");
+            emit_line(out, 0, "");
+            emit_line(out, 1, "// create the concrete view behind the facade, which a ui instance calls (§11.2, AD-17)");
+            emit_line(out, 1, "[[nodiscard]] std::unique_ptr<" + component.name + "> create_" + component.name + "(BindingEngine* engine);");
             emit_line(out, 0, "} // namespace albor");
             return out;
         }
@@ -702,7 +685,7 @@ namespace albor::manifest
             emit_line(out, 0, "#include <string>");
             emit_line(out, 0, "");
             // the facade header is included first, which is what this stub extends (§11.2)
-            emit_line(out, 0, "#include \"" + std::string(module) + "/" + snake_case(native.name) + ".h\"");
+            emit_line(out, 0, "#include \"" + std::string(module) + "/" + compiler::snake_case(native.name) + ".h\"");
             emit_line(out, 0, "");
             // the stub lives in the framework namespace, which is what the build expects (§14.1)
             emit_line(out, 0, "namespace albor");
@@ -745,7 +728,7 @@ namespace albor::manifest
             emit_line(out, 0, provenance(module));
             emit_line(out, 0, "");
             // the stub header is included first, which is what this unit implements (§11.2)
-            emit_line(out, 0, "#include \"" + std::string(module) + "/" + snake_case(native.name) + "_preview.h\"");
+            emit_line(out, 0, "#include \"" + std::string(module) + "/" + compiler::snake_case(native.name) + "_preview.h\"");
             emit_line(out, 0, "");
             // the move calls need the utility header, which the setters use (§14.1)
             emit_line(out, 0, "#include <utility>");
@@ -793,7 +776,7 @@ namespace albor::manifest
             // the struct name is the declared name, which is what a .ui file writes (§11.2, AD-17)
             record.name = declaration.name;
             // the unit name is the lowered name, which is what the file is called (§11.3)
-            record.stem = snake_case(declaration.name);
+            record.stem = compiler::snake_case(declaration.name);
             // each field is translated on its own, so one bad type reports without hiding the rest (§11.2)
             for (const RecordField& field : declaration.fields) {
                 // the c++ spelling decides, which only the known types have (§11.2)
@@ -840,7 +823,7 @@ namespace albor::manifest
             // the class name is the declared name, which is what the manifest holds (§11.2)
             component.name = native.name;
             // the unit name is the lowered name, which is what the files are called (§11.3)
-            component.stem = snake_case(native.name);
+            component.stem = compiler::snake_case(native.name);
             // the declared role is carried when the manifest published one, naming the widget for assistive tech (§10.1)
             if (native.semantic)
                 component.semantic_role = native.semantic->role;
@@ -874,9 +857,8 @@ namespace albor::manifest
                 // an image property at any depth pulls the handle header and the owning pointer (§6.4, AD-05)
                 if (type_carries(property.type, "image"))
                     component.needs_image = true;
-                // a shared handle at any depth pulls the memory header and a forward declaration (§13.2, AD-17)
-                if (collect_owned_types(*cpp, component.forward_types))
-                    component.needs_memory = true;
+                // a shared handle at any depth needs a forward declaration, which the unit declares ahead (§13.2, AD-17)
+                collect_owned_types(*cpp, component.forward_types);
             }
             // each signal is translated on its own, because one bad parameter must not hide the rest (§11.2)
             for (const NativeSignal& signal : native.signals) {
@@ -906,9 +888,8 @@ namespace albor::manifest
                     // an image parameter pulls the handle header and the owning pointer (§6.4)
                     if (type_carries(parameter.type, "image"))
                         component.needs_image = true;
-                    // a shared handle parameter pulls the memory header and its forward declaration (§13.2)
-                    if (collect_owned_types(*cpp, component.forward_types))
-                        component.needs_memory = true;
+                    // a shared handle parameter needs a forward declaration, which the unit declares ahead (§13.2)
+                    collect_owned_types(*cpp, component.forward_types);
                     // a later parameter takes the separator, which is how a signature reads (§11.2)
                     if (!glued.parameter_list.empty()) {
                         // the parameter list grows the comma, which joins the declarations (§11.2)

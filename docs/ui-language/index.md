@@ -48,8 +48,8 @@ Reading top to bottom:
 
 ## What the compiler produces
 
-The component's name becomes the generated class; the file's name becomes the generated
-unit. `greeting_panel.ui` containing `GreetingPanel` emits:
+The component's name becomes the generated class; the file's name, lowered to snake case,
+becomes the generated unit. `greeting_panel.ui` containing `GreetingPanel` emits:
 
 ```text
 build/generated/<target>/greeting_panel.h    // the concrete facade

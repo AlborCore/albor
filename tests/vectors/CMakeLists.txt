@@ -1,7 +1,7 @@
 # the collection and record fixtures, whose generated units prove that generated code compiles (§8.1, §11.2, §11.3)
 
 # the static library is declared first, because the generation rules add sources to it (§11.3)
-add_library(albor-vector-fixture STATIC vector_fixture.cpp)
+add_library(albor-vector-fixture STATIC vector_fixture.cpp waveform_fixture.cpp)
 
 # the facade units are generated through the shared rule, with the manifest that declares the records it repeats (§18.1, AD-13)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/task_list.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
@@ -14,6 +14,21 @@ target_compile_features(albor-vector-fixture PRIVATE cxx_std_23)
 
 # the record struct is generated from the manifest, which is the single source of truth for its shape (§11.2, AD-17)
 albor_build_native_record(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
+# the native component fixture is generated first, because the ui body includes the facade header it declares (§11.2, AD-17)
+albor_build_native_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/waveform.manifest" WaveformView)
+
+# the acronym fixture proves the CMake stem and the glue stem agree, because a mismatch leaves the declared unit missing (§11.3)
+albor_build_native_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/waveform.manifest" XMLView)
+
+# the acronym ui fixture proves the helper and the generator lower a capital run to the same unit and asset pair (§11.3)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/XMLPanel.ui")
+
+# the acronym importer proves the imported facade header names the unit the helper generated (§11.1, §11.3)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/XMLShell.ui" IMPORTS "XMLPanel.ui")
+
+# the native child facade is generated with both manifests, which proves a repeated manifest registers a component and a record (§11.2, AD-17)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/waveform_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/waveform.manifest" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
 
 # the facade units are generated through the shared rule, which wires them into the fixture (§11.3, §14.2)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/vector_panel.ui")

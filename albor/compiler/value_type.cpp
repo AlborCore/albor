@@ -622,14 +622,28 @@ namespace albor::compiler
         }
     }
 
-    void ElementCatalog::add_native(const ElementType& type) {
+    void ElementCatalog::add_native(ElementType type, std::optional<NativeConstruction> construction) {
         // a name the catalog already holds is not redefined, because a ui file would resolve two shapes (§11.2, AD-17)
         if (find(type.name) != nullptr)
             return;
+        // the construction path is recorded first, because the type name is what a generator resolves it by (§11.2, AD-17)
+        if (construction.has_value() && !construction->header.empty() && !construction->factory.empty())
+            m_native_construction.emplace_back(type.name, std::move(*construction));
         // a native type is appended, because the manifest is the single source of truth for it (§11.2, AD-17)
-        m_types.push_back(type);
+        m_types.push_back(std::move(type));
         // a native component arranges inside a parent like a builtin one, so it takes the common properties (§8.2, AD-17)
         add_common_properties();
+    }
+
+    const NativeConstruction* ElementCatalog::native_construction(std::string_view name) const {
+        // the constructions are scanned, because only a manifest contributes them (§11.2, AD-17)
+        for (const std::pair<std::string, NativeConstruction>& entry : m_native_construction) {
+            // the name decides, so a generator resolves exactly one factory (§11.2, AD-17)
+            if (entry.first == name)
+                return &entry.second;
+        }
+        // a type with no recorded construction is a builtin or an opaque native, which has no factory (§11.2, AD-17)
+        return nullptr;
     }
 
     void ElementCatalog::add_native_data(std::string name) {
@@ -662,12 +676,28 @@ namespace albor::compiler
         return nullptr;
     }
 
-    void ElementCatalog::add_record(const RecordType& record) {
+    void ElementCatalog::add_record(const RecordType& record) { add_record(record, {}); }
+
+    void ElementCatalog::add_record(const RecordType& record, std::string module) {
         // a record the catalog already holds is not redefined, because a ui file would resolve two shapes (§11.2, AD-17)
         if (find_record(record.name) != nullptr)
             return;
+        // the module is recorded first, because a generated unit includes the header it names (§11.2, AD-17)
+        if (!module.empty())
+            m_record_modules.emplace_back(record.name, std::move(module));
         // the record is appended, because the manifest is the single source of truth for it (§11.2, AD-17, AD-13)
         m_records.push_back(record);
+    }
+
+    std::string_view ElementCatalog::record_module(std::string_view name) const {
+        // the modules are scanned, because only a manifest record carries one (§11.2, AD-17)
+        for (const std::pair<std::string, std::string>& entry : m_record_modules) {
+            // the name decides, so a record resolves to exactly one declaring module (§11.2, AD-17)
+            if (entry.first == name)
+                return entry.second;
+        }
+        // a builtin or a ui record has no module, because its header is the builtin header or the unit itself (§11.2)
+        return {};
     }
 
     const RecordType* ElementCatalog::find_record(std::string_view name) const {

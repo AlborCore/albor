@@ -29,4 +29,9 @@ namespace albor
         node.set_name("waveform chart");
         return node;
     }
+
+    std::unique_ptr<WaveformView> create_WaveformView(BindingEngine* engine) {
+        // the application decides the concrete type, which is what keeps the facade opaque (§11.2, AD-17)
+        return std::make_unique<WaveformWidget>(engine);
+    }
 } // namespace albor
