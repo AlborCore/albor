@@ -52,7 +52,7 @@ namespace albor::blend2d
         m_state(std::make_unique<Blend2DSurfaceState>()) {
         // the metrics are recorded first, because the raster is allocated against them (§6.2)
         m_state->metrics = metrics;
-        // the raster is physical pixel sized and premultiplied, matching the skia reference (§6.3, AD-26)
+        // the raster is physical pixel sized and premultiplied, matching the software reference (§6.3, AD-26)
         m_state->raster.create(static_cast<int>(std::max(1.0f, metrics.pixel_size.width)), static_cast<int>(std::max(1.0f, metrics.pixel_size.height)), BL_FORMAT_PRGB32);
     }
 

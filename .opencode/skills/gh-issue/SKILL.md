@@ -143,7 +143,7 @@ bash build/snapshot.sh gh-<number>
   carries that platform's infix, and the module `CMakeLists.txt` and every `#include`
   are updated with it.
 - Keep generated code generated (`§14`, AD-17): fix the generator, never the output.
-- No platform or Skia type in a public header (`§3.5`, AD-05, AD-19).
+- No platform or renderer type in a public header (`§3.5`, AD-05, AD-19).
 - Dev/Test-only behavior is excluded at link time, never with `#ifdef` (AD-04).
 - Reference the spec in the code where the decision matters, as `§N` / `AD-NN`.
 - Comments: one line above the statement, no consecutive comment block

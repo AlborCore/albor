@@ -177,7 +177,7 @@ the value measured on this host plus margin; values are 8-bit channel levels.
 | text, system and embedded | 80 / 64 | 70 / 57 |
 | transformed text, rotated and sheared | 160 | 104–130 |
 
-The table was re-measured when the reference moved from Skia to Blend2D. `render-albor`
+The table was re-measured when the reference moved to Blend2D. `render-albor`
 snaps an axis-aligned clip to whole device pixels, and the reference applies the same snap,
 so a fractional scissor still compares exactly.
 

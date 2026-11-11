@@ -83,10 +83,8 @@ wires it as an overlay:
 ```
 
 The default install carries the recommended GPU runtime, and `albor[blend2d]` adds the
-portable CPU renderer; the transitional skia reference is not a package surface — it stays
-a source-tree backend for the conformance work and retires with issue 111. The detailed
-consumer map, advanced composition and troubleshooting are on [Consuming
-Albor](consuming.md).
+portable CPU renderer. The detailed consumer map, advanced composition and troubleshooting
+are on [Consuming Albor](consuming.md).
 
 The source route names the framework as a subtree: `FetchContent` — or `add_subdirectory` of
 a vendored copy — and every framework target publishes the include root the public headers
@@ -105,8 +103,8 @@ target_link_libraries(my_app PRIVATE albor)
 
 The default target carries the platform, text engine, widgets, layout, accessibility, i18n
 and the recommended GPU renderer. Link `albor-blend2d` instead for the portable CPU
-renderer; both backends are CMake options there (`ALBOR_RENDERER_SKIA`,
-`ALBOR_RENDERER_BLEND2D`), whose defaults keep a source build complete.
+renderer; the portable backend is a CMake option there (`ALBOR_RENDERER_BLEND2D`), whose
+default keeps a source build complete.
 
 With the source route, the dependencies come from vcpkg: a consumer in manifest mode lists
 the same packages in its own `vcpkg.json`, or points `VCPKG_MANIFEST_DIR` at the fetched

@@ -45,9 +45,8 @@ Rendering sits behind a stable interface; the backend is **selected by linking**
 - **`albor-blend2d`** carries the portable Blend2D CPU backend instead. It is the renderer
   choice for an application that does not want the GPU path.
 - **Advanced targets** are available for a deliberate composition:
-  `albor-render-albor-auto`, `albor-render-blend2d-auto`, `albor-render-skia-auto`, and
-  `albor-render-software-auto`. Skia is the transitional/reference backend; software is
-  built for the Test configuration and is the parity reference.
+  `albor-render-albor-auto`, `albor-render-blend2d-auto`, and `albor-render-software-auto`.
+  The software reference is built for the Test configuration and is the parity reference.
 
 A normal application links one of the two public targets and never adds a second platform,
 text or renderer target. The complete target map is on [Consuming Albor](../consuming.md).

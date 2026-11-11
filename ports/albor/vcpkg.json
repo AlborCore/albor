@@ -19,6 +19,7 @@
       "platform": "osx",
       "default-features": false,
       "features": [
+        "freetype",
         "icu",
         "coretext"
       ]
@@ -28,6 +29,7 @@
       "platform": "windows",
       "default-features": false,
       "features": [
+        "freetype",
         "icu",
         "directwrite",
         "gdi"
@@ -38,12 +40,9 @@
       "platform": "linux",
       "default-features": false,
       "features": [
+        "freetype",
         "icu"
       ]
-    },
-    {
-      "name": "freetype",
-      "default-features": false
     },
     {
       "name": "bzip2",

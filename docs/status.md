@@ -53,7 +53,6 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | `render-albor` GPU backend | Full | Direct3D 11; 82 tests, 41 parity tests, D3D/Metal parity, damage culled stage one and damage-bounded partial frames |
 | Blend2D windowed surface | Full | 3 windowed tests |
 | Software and headless renderer | Full | screenshot reference for GPU/software parity |
-| Skia backend | Not supported | macOS-only transitional backend; Windows uses Direct3D and Blend2D |
 
 ### UI, text, semantics and tooling
 

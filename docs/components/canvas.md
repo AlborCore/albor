@@ -59,7 +59,8 @@ logical pixels and shapes through the same text engine the widgets use.
 ## Curves through retained paths
 
 A custom render node can retain a `PathResource` whose verbs now include `QuadraticTo` and
-`CubicTo` beside `MoveTo`, `LineTo` and `Close`. The reference, Skia and Blend2D replay the
+`CubicTo` beside `MoveTo`, `LineTo` and `Close`. The software reference, Blend2D and
+`render-albor` replay the
 curves; `render-albor` flattens them deterministically before tessellation, so a circle or a
 spline does not need application-built line segments.
 

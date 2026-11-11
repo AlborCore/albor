@@ -26,7 +26,7 @@ The application source is identical in Release, where the automation targets do 
 - **MCP is an adapter only.** It reaches the application through `AutomationSession` / `AutomationRegistry`, never through `Application`, `CommandRegistry`, or `UiNode` directly (AD-20).
 - **Explicit identity is the action allow-list.** A node or command is addressable only when the author assigned an explicit `id:`; command enablement and visibility still apply (AD-11, §18.1).
 - **Layout invariance.** No runtime class layout or virtual interface changes between configurations. The new host behavior lives in separate, link-selected translation units (AD-02, §2.3).
-- **No platform or Skia types in public headers.** The host header is internal to `automation/`; the application never includes it (§3.5, AD-05).
+- **No platform or renderer types in public headers.** The host header is internal to `automation/`; the application never includes it (§3.5, AD-05).
 - **Follow the source-file convention.** Portable host sources are `.cpp` / `.h`; any file that reaches a platform API carries the platform infix.
 
 ## 3. Decisions Recorded

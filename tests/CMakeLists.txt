@@ -104,10 +104,6 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_FRAMEWORK_INCLUDE_DIR="${PR
 # link already. Naming it again would put the same archive on the link line twice, which the linker ignores (§3.2)
 target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d albor-render-albor GTest::gtest_main)
 
-# the suite that draws through the skia render context reaches that backend directly, which is the one module the
-# other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
-# suite is gathered and linked on apple platforms alone, and the raster canvas it draws into needs no window
-# server, so the binary still runs headless (§2.2)
 if(ALBOR_DEV)
     target_sources(albor-tests PRIVATE "./conditional/devrt.test.cpp")
     target_link_libraries(albor-tests PRIVATE albor-devrt)
@@ -116,11 +112,6 @@ if(ALBOR_DEV)
 endif()
 
 if(APPLE)
-    target_sources(albor-tests PRIVATE "./conditional/render_skia.test.cpp")
-    target_link_libraries(albor-tests PRIVATE albor-render-skia)
-    # the skia headers self include as "include/...", so the root above include/skia reaches the suite (§3.5)
-    target_include_directories(albor-tests SYSTEM PRIVATE "${ALBOR_SKIA_INCLUDE_ROOT}" "${ALBOR_SKIA_INCLUDE_ROOT}/skia")
-
     # the accessibility suite walks the application kit hierarchy the macos bridge publishes into, because the
     # role mapping is only reachable once the bridge hands its tree to that hierarchy (§10.2, AD-16). the suite is
     # an objective c++ source and links the framework itself, because the bridge keeps its platform link private (§3.2)
@@ -148,15 +139,6 @@ if(APPLE)
     target_sources(albor-tests PRIVATE "./conditional/file_dialog.test.macos.mm")
     set_source_files_properties("./conditional/file_dialog.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-tests PRIVATE "-framework UniformTypeIdentifiers")
-
-    # the backend lifecycle suite destroys a second gpu context in one process, which the metal driver traps on
-    # after ganesh has used it. the trap kills the process, so no release run could finish while the suite is in,
-    # and issue 29 tracks the driver defect rather than this repository. the suite is held out of the release
-    # configuration at link time, which is what AD-04 requires of a configuration specific suite, and the two
-    # tests come back the day the driver is fixed (§6.3, issue 29)
-    if(NOT ALBOR_CONFIGURATION STREQUAL "Release")
-        target_sources(albor-tests PRIVATE "./conditional/metal_teardown.test.cpp")
-    endif()
 endif()
 
 # the popup suite drives the win32 window adapter directly, because the popup shape is a native win32 surface
