@@ -117,6 +117,25 @@ namespace
         }
     };
 
+    // the leaf double that keeps the extent it was built with, which is what makes a column shrink-wrap (§8.2)
+    class IntrinsicNode final : public UiNode
+    {
+    public:
+        // the natural extent the leaf reports, which a test sets to model a row narrower than its page (§8.2)
+        Size intrinsic{0.0f, 0.0f};
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the leaf takes only what it asked for, because a row without a stretch declaration keeps its extent (§8.2)
+            out_size = constraints.constrain(intrinsic);
+            m_measured_size = out_size;
+        }
+
+        void arrange(const Rect& bounds) override {
+            m_bounds = bounds;
+            m_measured_size = Size{.width = bounds.width, .height = bounds.height};
+        }
+    };
+
     // the content double whose extent is arithmetic over the row height it was given (§8.2, AD-13)
     class HeightDrivenContent final : public UiNode, public ScrollableContent
     {
@@ -368,6 +387,233 @@ TEST(ScrollViewChecks, AnUndeclaredWidthFillsTheSpaceARowLeavesIt) {
     EXPECT_FLOAT_EQ(page_ptr->measured_size().width, 380.0f);
     EXPECT_FLOAT_EQ(page_ptr->bounds().x, 120.0f);
     EXPECT_FLOAT_EQ(page_ptr->bounds().width, 380.0f);
+}
+
+TEST(ScrollViewChecks, AColumnOfNarrowRowsFillsTheViewportWidth) {
+    // arrange a page whose rows are narrower than the viewport, which is what a column of cards reports (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto row = std::make_unique<IntrinsicNode>();
+    row->intrinsic = Size{120.0f, 900.0f};
+    IntrinsicNode* row_ptr = row.get();
+    column->add_child(std::move(row));
+    ColumnLayout* column_ptr = column.get();
+    view.add_child(std::move(column));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    // assert the page fills the cross axis, because the content of a vertical scroll defaults to stretch (§8.2)
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, view.content_viewport().width);
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, 500.0f);
+    // assert the row stretches with the page, because the column resolves the same cross axis default (§8.2)
+    EXPECT_FLOAT_EQ(row_ptr->bounds().width, 500.0f);
+    // assert the measure keeps the natural extent, because the stretch is a placement and not a new measurement (§8.2)
+    EXPECT_FLOAT_EQ(column_ptr->measured_size().width, 120.0f);
+    EXPECT_FLOAT_EQ(view.content_extent().width, 120.0f);
+}
+
+TEST(ScrollViewChecks, AStretchedContentFillsOnlyTheContentViewportBesideAGutter) {
+    // arrange a bar that reserves a gutter, because the content is taller than the viewport (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto row = std::make_unique<IntrinsicNode>();
+    row->intrinsic = Size{100.0f, 900.0f};
+    column->add_child(std::move(row));
+    ColumnLayout* column_ptr = column.get();
+    view.add_child(std::move(column));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::at_most(Size{200.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the stretch stops at the gutter, because a reserved bar is not content area (§8.2)
+    ASSERT_TRUE(view.scrollbar_visible());
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, 190.0f);
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, view.content_viewport().width);
+    EXPECT_FLOAT_EQ(column_ptr->bounds().x, 0.0f);
+}
+
+TEST(ScrollViewChecks, AStartAlignedContentKeepsItsMeasuredWidth) {
+    // arrange a page that asks to keep its measured width on the cross axis (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto row = std::make_unique<IntrinsicNode>();
+    row->intrinsic = Size{120.0f, 900.0f};
+    column->add_child(std::move(row));
+    column->set_horizontal_align(Align::Start);
+    ColumnLayout* column_ptr = column.get();
+    view.add_child(std::move(column));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    // assert an authored alignment outranks the cross axis default, so the width is the measured one (§8.2)
+    EXPECT_FLOAT_EQ(column_ptr->bounds().x, 0.0f);
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, 120.0f);
+}
+
+TEST(ScrollViewChecks, ACenterAlignedContentSitsInTheMiddleOfAGutterViewport) {
+    // arrange a page placed at an origin and narrowed by a gutter, whose centre is measured from both (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto row = std::make_unique<IntrinsicNode>();
+    row->intrinsic = Size{120.0f, 900.0f};
+    column->add_child(std::move(row));
+    column->set_horizontal_align(Align::Center);
+    ColumnLayout* column_ptr = column.get();
+    view.add_child(std::move(column));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::at_most(Size{200.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{40.0f, 20.0f}, Size{200.0f, 300.0f}));
+    // assert the leftover width is split inside the content viewport, which is the origin plus the gutter (§8.2)
+    EXPECT_FLOAT_EQ(view.content_viewport().x, 40.0f);
+    EXPECT_FLOAT_EQ(column_ptr->bounds().x, 75.0f);
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, 120.0f);
+}
+
+TEST(ScrollViewChecks, AEndAlignedContentMeetsTheTrailingEdgeOfAGutterViewport) {
+    // arrange a page placed at an origin and narrowed by a gutter, whose far edge is the sum of both (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto row = std::make_unique<IntrinsicNode>();
+    row->intrinsic = Size{120.0f, 900.0f};
+    column->add_child(std::move(row));
+    column->set_horizontal_align(Align::End);
+    ColumnLayout* column_ptr = column.get();
+    view.add_child(std::move(column));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::at_most(Size{200.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{40.0f, 20.0f}, Size{200.0f, 300.0f}));
+    // assert the content keeps its measured width and meets the trailing edge of the content viewport (§8.2)
+    EXPECT_FLOAT_EQ(column_ptr->bounds().x, 110.0f);
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, 120.0f);
+}
+
+TEST(ScrollViewChecks, AnExplicitStretchFillsTheViewportWidth) {
+    // arrange a page that authors the default, which must resolve to the same cross axis placement (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto row = std::make_unique<IntrinsicNode>();
+    row->intrinsic = Size{120.0f, 900.0f};
+    column->add_child(std::move(row));
+    column->set_horizontal_align(Align::Stretch);
+    ColumnLayout* column_ptr = column.get();
+    view.add_child(std::move(column));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    // assert the authored stretch takes the content viewport rather than the measured width (§8.2)
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, 500.0f);
+}
+
+TEST(ScrollViewChecks, AnAlignedContentKeepsTheScrollOffset) {
+    // arrange a centred page that is scrolled, because the cross axis must not disturb the offset (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto row = std::make_unique<IntrinsicNode>();
+    row->intrinsic = Size{120.0f, 900.0f};
+    column->add_child(std::move(row));
+    column->set_horizontal_align(Align::Center);
+    ColumnLayout* column_ptr = column.get();
+    view.add_child(std::move(column));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    Size measured{};
+    view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    // act
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    view.scroll_to(100.0f);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    // assert the alignment moved only x, because the offset owns the place on the scroll axis (§8.2)
+    EXPECT_FLOAT_EQ(column_ptr->bounds().x, 190.0f);
+    EXPECT_FLOAT_EQ(column_ptr->bounds().y, -100.0f);
+}
+
+TEST(ScrollViewChecks, AVirtualizedContentWithANarrowExtentFillsTheViewportWidth) {
+    // arrange a virtualized content whose reported extent is narrower than the viewport (§8.2, AD-13)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WindowedContent>();
+    content->total = Size{100.0f, 900.0f};
+    WindowedContent* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::at_most(Size{200.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the reported extent does not hold the content at its natural width, because the viewport places it (§8.2)
+    EXPECT_FLOAT_EQ(view.content_extent().width, 100.0f);
+    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 200.0f);
+}
+
+TEST(ScrollViewChecks, AnAlignmentChangeRearrangesACleanContent) {
+    // arrange a laid out and clean page whose alignment is about to change (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto row = std::make_unique<IntrinsicNode>();
+    row->intrinsic = Size{120.0f, 900.0f};
+    column->add_child(std::move(row));
+    ColumnLayout* column_ptr = column.get();
+    view.add_child(std::move(column));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    Size measured{};
+    view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    view.clear_dirty();
+    // act an authored alignment change must re-run both layout passes (§8.2)
+    column_ptr->set_horizontal_align(Align::End);
+    // assert the placement follows the new alignment, which an arrange only invalidation would miss (§8.2)
+    EXPECT_TRUE(view.layout_dirty());
+    view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    EXPECT_FLOAT_EQ(column_ptr->bounds().x, 380.0f);
+}
+
+TEST(ScrollViewChecks, APolicySwitchRearrangesTheCrossAxis) {
+    // arrange a forced bar over a narrow page, so the content viewport is narrowed (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto row = std::make_unique<IntrinsicNode>();
+    row->intrinsic = Size{120.0f, 900.0f};
+    column->add_child(std::move(row));
+    ColumnLayout* column_ptr = column.get();
+    view.add_child(std::move(column));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    Size measured{};
+    view.measure(SizeConstraints::at_most(Size{200.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, 190.0f);
+    // act a policy that leaves the whole width to the content (§8)
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOff);
+    view.measure(SizeConstraints::at_most(Size{200.0f, 400.0f}), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the stretch follows the wider content viewport, because the gutter it kept is gone (§8.2)
+    EXPECT_FLOAT_EQ(column_ptr->bounds().width, 200.0f);
 }
 
 TEST(ScrollViewChecks, AnUndeclaredHeightFillsTheSpaceAColumnLeavesIt) {
