@@ -74,19 +74,21 @@ that locks each preset's own native values.
 
 ### New palette roles
 
-Five per-state tables. All default to transparent, so nothing changes until a preset fills one.
+Six per-state tables. All default to transparent, so nothing changes until a preset fills one.
 
 | role | read by | default | macOS |
 | --- | --- | --- | --- |
 | `button_plate_default[5]` | `Button::plate_colors` | transparent | accent |
 | `button_label_default[5]` | `Button::label_colors` | transparent | white |
 | `button_border_default[5]` | `Button::border_colors` | transparent | transparent |
+| `tab_strip_background[5]` | `TabView` sidebar plate | transparent | near-white / lifted |
 | `tab_selection_plate[5]` | `TabView` row plate | transparent | accent |
 | `tab_selection_label[5]` | `TabView` row label | transparent | white |
 
-The plate is the gate: a button reads the three default tables only when
-`button_plate_default[Normal].alpha > 0`, and a strip paints a row only when
-`tab_selection_plate[Normal].alpha > 0`. This keeps a hand-built theme on the neutral tables and
+The plate is the gate: a button reads the three default tables only when the plate and its label
+are filled, and a strip paints a row only when `tab_selection_plate` and `tab_selection_label` are
+filled, so a half filled role falls back rather than drawing invisible text. This keeps a hand-built
+theme on the neutral tables and
 makes the pair a contract documented on the field. `button_border_default` may be transparent on
 purpose, which is why the gate is the plate and not the border.
 
@@ -119,19 +121,26 @@ for.
 
 ### New macOS surfaces
 
+The owner's follow-up comment on #201 inverted the light assignment relative to the issue: native
+macOS System Settings paints a white pane, a grey group plate inside it and a near-white sidebar.
+The rows below are the corrected values.
+
 | surface | light | dark |
 | --- | --- | --- |
-| panel plate | `rgb(1, 1, 1)` | `lighten(surface, 0.10)` |
+| pane (`surface`) | `rgb(1, 1, 1)` | `surface` (unchanged) |
+| panel plate | `darken(white, 0.05)` (`#F2F2F2`) | `lighten(surface, 0.10)` |
 | panel border width | `0` | `0` |
-| field plate | `rgb(1, 1, 1)` | `lighten(surface, 0.04)` |
+| sidebar plate | `darken(white, 0.03)` (`#F7F7F7`) | `lighten(surface, 0.06)` |
+| field plate | white (the pane) | `lighten(surface, 0.04)` |
 | field line | `button_border` hairline (unchanged) | hairline (unchanged) |
 | field focused line | accent (unchanged) | accent (unchanged) |
 | scrollbar thumb | `on_surface` at normal 0.30, hover 0.55, pressed 0.70, disabled 0.15 | normal 0.35, hover 0.60, pressed 0.75, disabled 0.20 |
 | scrollbar track | transparent (unchanged) | transparent (unchanged) |
 
-The button face, button line, canvas face, slider, typography and every other macOS metric stay
-exactly as they are: buttons stay grey, cards become white, and the two layers stop being the same
-colour. A card no longer reacts to hover or press, because a native content plate does not.
+A light button face is `darken(pane, 0.03)` and its hover and press darken further, because a
+control on a white pane steps down rather than lifting toward white; dark keeps the lift it had.
+The button line, slider, typography and every other macOS metric stay as they are. A card does not
+react to hover or press, because a native content plate does not.
 
 ## Phases
 

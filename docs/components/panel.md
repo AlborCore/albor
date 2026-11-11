@@ -50,9 +50,9 @@ component SettingsPage {
 
 - The panel paints its face, radius and border through the installed theme. An explicit property
   wins over the theme value when the author needs a one-off surface.
-- A native preset may stroke no border and paint a content plate instead of the control face: the
-  macOS card is white on the grey window rather than the neutral button fill, and `Theme::fluent`
-  keeps its one point line.
+- A native preset may stroke no border and paint a content plate instead of the control face: on
+  macOS the pane is white and a card is the grey group plate inside it, rather than the neutral
+  button fill, while `Theme::fluent` keeps its one point line.
 - `panel_background` is the shared floating surface a `Menu` and a `ComboBox` popup resolve, so a
   preset that paints a white card paints those light too. A `ToolBar` is chrome rather than a card,
   so it resolves the canvas plate.

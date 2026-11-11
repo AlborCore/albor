@@ -95,6 +95,9 @@ namespace albor
         // report whether a vertical strip paints its selection as a row, which the installed preset decides (§6.1)
         [[nodiscard]] bool paints_selection_row() const;
 
+        // hand out the plate a vertical strip is drawn on, which is what a source list sits on (§6.1)
+        [[nodiscard]] Color strip_plate_color() const;
+
         // hand out the plate a selection row carries, which is the accent a preset filled (§6.1)
         [[nodiscard]] Color selection_plate_color() const;
 

@@ -949,9 +949,9 @@ TEST(TextFieldChecks, AThemedFieldDrawsTheWellAndItsHairline) {
     // act
     const Color face = field.background();
     const Color line = field.border_color();
-    // assert the field reads the white well and the hairline rather than the window surface (§8.4)
+    // assert the field reads a white well on the white pane, which is what its hairline separates (§8.4)
     EXPECT_EQ(face, Color::rgb(1.0f, 1.0f, 1.0f));
-    EXPECT_NE(face, theme.surface());
+    EXPECT_EQ(face, theme.surface());
     EXPECT_GT(line.alpha, 0.0f);
 }
 

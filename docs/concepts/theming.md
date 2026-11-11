@@ -51,10 +51,11 @@ Beyond control metrics, a preset decides the surfaces a form is built from:
 
 | surface | token | macOS | Windows (fluent) | derived |
 | --- | --- | --- | --- | --- |
-| panel / card plate | `panel_background` + `panel_border_width` | white plate, no border | fluent face with its one point line | the palette plate, unchanged |
+| panel / card plate | `panel_background` + `panel_border_width` | grey group plate on a white pane, no border | fluent face with its one point line | the palette plate, unchanged |
 | field well | `text_field_plate` | white or lifted well, hairline | white or lifted well, hairline | white or lifted well, outline edge |
 | scrollbar | `scrollbar_overlay`, `scrollbar_hover_extent`, `scrollbar_overlay_inset` | 7px overlay, 11px hovered | 12px gutter | 10px gutter |
 | default control | `button_plate_default`, `button_label_default`, `button_border_default` | accent plate, white label | accent plate, white label | empty, so the accent button plate carries it |
+| vertical tab sidebar | `tab_strip_background` | near-white plate | — | — |
 | vertical tab selection | `tab_selection_plate`, `tab_selection_label`, `tab_row_inset`, `tab_row_radius` | accent row, white label | indicator | indicator |
 
 Every *new* role and metric is silent by default: a transparent role and a zero metric leave the

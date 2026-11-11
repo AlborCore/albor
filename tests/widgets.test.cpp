@@ -6303,18 +6303,21 @@ TEST(TabViewChecks, AVerticalStripPaintsTheSelectionAsARow) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
     // act
     tabs.render(recorder);
-    // assert the selection is one rounded row inset inside the first header, not a 2px marker (§6.1)
+    // assert the strip paints the source-list plate before anything else, which is what a sidebar sits on (§6.1)
     const std::shared_ptr<const FrameScene> scene = recorder.scene();
     const std::vector<DrawCommand>& commands = scene->commands();
-    ASSERT_EQ(commands.size(), 3u);
-    EXPECT_EQ(commands[0].kind(), DrawCommandKind::RoundedRect);
-    EXPECT_EQ(commands[0].rect_geometry().rect, (Rect::from_origin_size(Point{2.0f, 2.0f}, Size{68.0f, 28.0f})));
-    EXPECT_FLOAT_EQ(commands[0].rect_geometry().radius, 6.0f);
+    ASSERT_EQ(commands.size(), 4u);
+    EXPECT_EQ(commands[0].kind(), DrawCommandKind::Rect);
+    EXPECT_EQ(commands[0].rect_geometry().rect, (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{72.0f, 64.0f})));
+    EXPECT_EQ(commands[0].paint().fill, theme.palette().tab_strip_background[state_index(ControlState::Normal)]);
+    // assert the selection is one rounded row inset inside the first header, not a 2px marker (§6.1)
+    EXPECT_EQ(commands[1].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_EQ(commands[1].rect_geometry().rect, (Rect::from_origin_size(Point{2.0f, 2.0f}, Size{68.0f, 28.0f})));
+    EXPECT_FLOAT_EQ(commands[1].rect_geometry().radius, 6.0f);
     // assert the row carries the accent plate the preset filled (§8.4)
-    EXPECT_EQ(commands[0].paint().fill, theme.palette().tab_selection_plate[state_index(ControlState::Normal)]);
-    // assert no indicator rectangle is left, because the row is the whole selection signal (§6.1)
-    for (const DrawCommand& command : commands)
-        EXPECT_NE(command.kind(), DrawCommandKind::Rect);
+    EXPECT_EQ(commands[1].paint().fill, theme.palette().tab_selection_plate[state_index(ControlState::Normal)]);
+    // assert the strip plate and the row are the only rectangles, because no indicator is left (§6.1)
+    EXPECT_EQ(rect_commands(*scene).size(), 2u);
 }
 
 TEST(TabViewChecks, ASelectionRowCarriesTheRowLabelInk) {
@@ -6414,11 +6417,12 @@ TEST(TabViewChecks, ASelectionRowPaintsBehindAComposedTitle) {
     // assert the row draws before the title, because a composed title sits on the plate (§6.1)
     const std::shared_ptr<const FrameScene> scene = recorder.scene();
     const std::vector<DrawCommand>& commands = scene->commands();
-    ASSERT_EQ(commands.size(), 3u);
-    EXPECT_EQ(commands[1].kind(), DrawCommandKind::RoundedRect);
-    EXPECT_EQ(commands[2].kind(), DrawCommandKind::Rect);
+    ASSERT_EQ(commands.size(), 4u);
+    EXPECT_EQ(commands[0].kind(), DrawCommandKind::Rect);
+    EXPECT_EQ(commands[2].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_EQ(commands[3].kind(), DrawCommandKind::Rect);
     // assert the row is the second header's plate, which is the one the selection names (§8.2)
-    EXPECT_EQ(commands[1].rect_geometry().rect, (Rect::from_origin_size(Point{2.0f, 34.0f}, Size{68.0f, 28.0f})));
+    EXPECT_EQ(commands[2].rect_geometry().rect, (Rect::from_origin_size(Point{2.0f, 34.0f}, Size{68.0f, 28.0f})));
 }
 
 TEST(TabViewChecks, ASelectionRowFollowsTheHoverState) {
@@ -6439,8 +6443,9 @@ TEST(TabViewChecks, ASelectionRowFollowsTheHoverState) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
     tabs.render(recorder);
     // assert the row takes the hover plate, because the strip reports the state the pointer put it in (§6.1)
-    ASSERT_FALSE(recorder.scene()->commands().empty());
-    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, theme.palette().tab_selection_plate[state_index(ControlState::Hovered)]);
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_GT(scene->commands().size(), 1u);
+    EXPECT_EQ(scene->commands()[1].paint().fill, theme.palette().tab_selection_plate[state_index(ControlState::Hovered)]);
 }
 
 TEST(TabViewChecks, ANegativeRowInsetStaysInsideTheHeader) {
@@ -6489,8 +6494,10 @@ TEST(TabViewChecks, AnUnclaimedPressDoesNotPressTheStrip) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{300.0f, 100.0f}, 1.0f));
     tabs.render(recorder);
     // assert the row keeps its resting plate, because an unclaimed press never pressed the strip (§8.3)
-    ASSERT_FALSE(recorder.scene()->commands().empty());
-    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, theme.palette().tab_selection_plate[state_index(ControlState::Normal)]);
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_GT(scene->commands().size(), 1u);
+    EXPECT_EQ(scene->commands()[1].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_EQ(scene->commands()[1].paint().fill, theme.palette().tab_selection_plate[state_index(ControlState::Normal)]);
 }
 
 TEST(TabViewChecks, APlateOnlyRowRoleKeepsTheIndicator) {
@@ -7976,8 +7983,9 @@ TEST(PanelChecks, TheMacosPresetPaintsAContentPlateWithoutABorder) {
     panel.set_theme(&theme);
     // act
     const Color face = panel.background();
-    // assert the card is the content plate rather than the neutral control face, and it strokes nothing (§8.4)
-    EXPECT_EQ(face, Color::rgb(1.0f, 1.0f, 1.0f));
+    // assert the card is the grey group plate inside the white pane, and it strokes nothing (§8.4)
+    EXPECT_EQ(face, theme.palette().panel_background[state_index(ControlState::Normal)]);
+    EXPECT_NE(face, theme.surface());
     EXPECT_NE(face, theme.palette().button_plate[state_index(ControlState::Normal)]);
     EXPECT_FLOAT_EQ(panel.border_width(), 0.0f);
 }

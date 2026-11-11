@@ -276,6 +276,9 @@ namespace albor
         // the indicator under the selected tab, per state, which marks the page that is shown (§6.1)
         Color tab_indicator[5] = {Color{0.20f, 0.55f, 0.90f, 1.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.62f, 0.66f, 0.72f, 1.0f}, Color{0.22f, 0.57f, 0.92f, 1.0f}};
 
+        // the plate a vertical strip is drawn on, per state, which a preset leaves empty for a bare strip (§6.1)
+        Color tab_strip_background[5] = {Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)};
+
         // the row a vertical strip paints behind the selected tab, per state, which a preset may leave empty (§6.1)
         Color tab_selection_plate[5] = {Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)};
 
@@ -443,6 +446,12 @@ namespace albor
 
         // replace one state of the selected tab indicator (§6.1)
         void set_tab_indicator(ControlState state, Color value);
+
+        // replace the plate a vertical strip is drawn on, which is what a source list sits on (§6.1)
+        void set_tab_strip_background(Color value);
+
+        // replace one state of the strip plate, which is what a hover or a press moves (§6.1)
+        void set_tab_strip_background(ControlState state, Color value);
 
         // replace the row a vertical strip paints behind the selected tab, which is the selection style (§6.1)
         void set_tab_selection_plate(Color value);

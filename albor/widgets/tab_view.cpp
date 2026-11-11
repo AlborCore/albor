@@ -245,6 +245,14 @@ namespace albor
         // a strip with no area has nothing to draw (§6.2)
         if (strip_rect.empty())
             return;
+        // a vertical strip paints the plate a source list sits on, while a top strip leaves the pane alone (§6.1)
+        if (m_vertical) {
+            // the plate is read once, because a preset that leaves it empty draws no strip at all (§6.1)
+            const Color plate = strip_plate_color();
+            // an empty role keeps the strip bare, which is what a hand built theme expects (§8.4)
+            if (plate.alpha > 0.0f)
+                context.draw_rect(strip_rect, {.fill = plate});
+        }
         // the selected index is resolved once, because every tab compares against it (§8)
         const int selected = effective_selected();
         // the strip clips its labels, because a long row of tabs may exceed the view (§8.2)
@@ -542,6 +550,16 @@ namespace albor
             return false;
         // the ink is the second half, because a half filled row must keep the indicator and its readable label (§6.1)
         return palette.tab_selection_label[state_index(ControlState::Normal)].alpha > 0.0f;
+    }
+
+    Color TabView::strip_plate_color() const {
+        // the state selects the palette entry, which a hover or a press moves (§6.1)
+        const std::size_t index = static_cast<std::size_t>(state());
+        // an unthemed view paints no strip, because there is no surface role to read (§6.1)
+        if (theme() == nullptr)
+            return Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+        // the palette answers, because the theme owns the strip colour (§6.1)
+        return theme()->palette().tab_strip_background[index];
     }
 
     Color TabView::selection_plate_color() const {

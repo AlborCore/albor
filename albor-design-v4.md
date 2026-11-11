@@ -1097,13 +1097,16 @@ they had, and a preset opts in one token at a time:
 2. **An overlay bar is a metric.** `scrollbar_overlay` makes the bar paint over the content and
    reserve no gutter, `scrollbar_hover_extent` widens it while the pointer is on the view or the
    thumb is dragged, and `scrollbar_overlay_inset` keeps it off the window frame.
-3. **A sidebar selection is a row.** A vertical strip whose `tab_selection_plate` is filled paints
-   the selected header as an inset rounded row, carries `tab_selection_label` as its ink, and
-   suppresses the indicator; a top strip keeps the indicator. A composed `TabTitle` draws its own
-   children and therefore supplies its own ink.
+3. **A sidebar selection is a row.** A vertical strip whose `tab_strip_background` is filled paints
+   the plate a source list sits on, and one whose `tab_selection_plate` is filled paints the selected
+   header as an inset rounded row, carries `tab_selection_label` as its ink, and suppresses the
+   indicator; a top strip keeps the indicator. A composed `TabTitle` draws its own children and
+   therefore supplies its own ink.
 4. **A card and a well are plates.** `panel_background` and `text_field_plate` are the two surfaces
    a settings form reads, and `panel_border_width` decides whether a card strokes at all. A native
-   preset paints a card as a content plate rather than reusing the neutral control face.
+   preset paints a card as a content plate rather than reusing the neutral control face: on macOS
+   the light pane is white and the group is the grey plate inside it, while dark lifts the group
+   off the window.
 
 `Theme::macos` fills all five, `Theme::fluent` fills the well and the default control while keeping
 its gutter, `ThemeBuilder` gives the derived baseline a well and its outline edge but leaves the

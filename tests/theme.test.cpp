@@ -331,8 +331,9 @@ namespace albor
         // act the card plate is read by state, which is how a panel resolves its face (§6.1)
         const Color light_plate = light.palette().panel_background[state_index(ControlState::Normal)];
         const Color dark_plate = dark.palette().panel_background[state_index(ControlState::Normal)];
-        // assert a light card is white on the grey window, while a dark card lifts off the surface (§8.4)
-        EXPECT_EQ(light_plate, Color::rgb(1.0f, 1.0f, 1.0f));
+        // assert the light pane is white and the group is a grey plate inside it, which is the native direction (§8.4)
+        EXPECT_EQ(light.surface(), Color::rgb(1.0f, 1.0f, 1.0f));
+        EXPECT_EQ(light_plate, ThemeBuilder::darken(Color::rgb(1.0f, 1.0f, 1.0f), 0.05f));
         EXPECT_EQ(dark_plate, ThemeBuilder::lighten(accents.surface, 0.10f));
         // assert a card never reuses the neutral button face, because that is what made it read as a control (§8.4)
         EXPECT_NE(light_plate, light.palette().button_plate[state_index(ControlState::Normal)]);
@@ -355,9 +356,9 @@ namespace albor
         // act
         const Color light_plate = light.palette().text_field_plate[state_index(ControlState::Normal)];
         const Color dark_plate = dark.palette().text_field_plate[state_index(ControlState::Normal)];
-        // assert a light field is white rather than the surface, which is what an editable control reads as (§8.4)
+        // assert a light field is a white well on the white pane, which is what the hairline is for (§8.4)
         EXPECT_EQ(light_plate, Color::rgb(1.0f, 1.0f, 1.0f));
-        EXPECT_NE(light_plate, light.surface());
+        EXPECT_EQ(light_plate, light.surface());
         // assert a dark field lifts above the window, which is what keeps it off the grey card layer (§8.4)
         EXPECT_EQ(dark_plate, ThemeBuilder::lighten(accents.surface, 0.04f));
         EXPECT_NE(dark_plate, dark.surface());
@@ -398,6 +399,22 @@ namespace albor
         // assert the row is inset inside the strip, which is what leaves the card showing around it (§8.2)
         EXPECT_FLOAT_EQ(theme.metrics().tab_row_inset, 2.0f);
         EXPECT_FLOAT_EQ(theme.metrics().tab_row_radius, 6.0f);
+    }
+
+    TEST(ThemePresets, TheMacosPresetPaintsASourceListOnItsOwnPlate) {
+        // arrange a light and a dark macos theme, because a sidebar is a surface of its own in both schemes (§8.4)
+        const Accents accents;
+        const Theme light = Theme::macos(accents, ColorScheme::Light);
+        const Theme dark = Theme::macos(accents, ColorScheme::Dark);
+        // act
+        const Color light_strip = light.palette().tab_strip_background[state_index(ControlState::Normal)];
+        const Color dark_strip = dark.palette().tab_strip_background[state_index(ControlState::Normal)];
+        // assert a light sidebar is near white, lighter than a group and darker than the pane (§8.4)
+        EXPECT_EQ(light_strip, ThemeBuilder::darken(Color::rgb(1.0f, 1.0f, 1.0f), 0.03f));
+        EXPECT_GT(light_strip.red, light.palette().panel_background[state_index(ControlState::Normal)].red);
+        EXPECT_LT(light_strip.red, light.surface().red);
+        // assert a dark sidebar lifts off the surface, which is what keeps the rows readable (§8.4)
+        EXPECT_EQ(dark_strip, ThemeBuilder::lighten(accents.surface, 0.06f));
     }
 
     TEST(ThemePresets, TheFluentPresetKeepsItsGutterAndPaintsAPrimaryControl) {
