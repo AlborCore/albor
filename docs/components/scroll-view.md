@@ -72,6 +72,31 @@ Row {
 In a `Column`, the equivalent declaration is `vertical_align: Align.stretch`. A declared
 `viewport_width` or `viewport_height` still wins: `stretch` never grows a fixed viewport.
 
+## Filling the viewport's cross axis
+
+A `ScrollView` scrolls vertically, so the horizontal axis is the cross axis. The content
+fills the content viewport — the bounds less a reserved bar gutter — even when it measures
+narrower, which keeps a page of cards the same width instead of shrink-wrapping to its
+widest row. This is the same cross-axis rule `Row`, `Column`, `Panel` and `SizedBox` follow.
+
+An alignment authored on the content child opts out: `Align.start`, `Align.center` and
+`Align.end` keep the measured width, capped at the content viewport, and place it on the
+axis. An unset alignment, or an explicit `Align.stretch`, fills the viewport. The content is
+still measured against the full content viewport when it opts out, so its text wraps at the
+viewport width rather than at its own narrower width.
+
+```text
+ScrollView {
+    Column { /* page content — fills the viewport width */ }
+}
+
+ScrollView {
+    Column {
+        horizontal_align: Align.center;   // keeps the measured width and centres it
+    }
+}
+```
+
 ## Virtualized scrolling
 
 At scale a `Repeat` over a `ScrollView` virtualizes: it constructs rows for the visible

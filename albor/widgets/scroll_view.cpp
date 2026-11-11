@@ -76,11 +76,25 @@ namespace albor
         push_viewport();
         // the content viewport is the arranged extent less whatever gutter the policy reserves (§8.2)
         const Rect viewport = content_viewport();
-        // the content sits at the offset, and never wider than the content viewport (§8.2)
-        const Rect content = Rect::from_origin_size(Point{.x = viewport.x, .y = viewport.y - offset()}, Size{.width = std::min(m_content_extent.width, viewport.width), .height = m_content_extent.height});
-        // the single content child is placed at the offset, which is what moves the content (§8.2)
-        for (const auto& child : children())
+        // a vertical scroll crosses its content horizontally, so the alignment rule is what places it (§8.2)
+        for (const auto& child : children()) {
+            // an unset alignment resolves to stretch, which is what fills the viewport rather than the widest row (§8.2)
+            const Align horizontal = resolve_align(child->horizontal_align(), Align::Stretch);
+            // a stretch takes the whole content viewport, while an authored alignment keeps its measured width (§8.2)
+            const float width = horizontal == Align::Stretch ? viewport.width : std::min(m_content_extent.width, viewport.width);
+            // the leading edge is the default position, which is where start and stretch both put the content (§8.2)
+            float x = viewport.x;
+            // a centred content splits the leftover width across both edges (§8.2)
+            if (horizontal == Align::Center)
+                x += (viewport.width - width) * 0.5f;
+            // an end aligned content meets the trailing edge, which is the leftover it did not take (§8.2)
+            else if (horizontal == Align::End)
+                x += viewport.width - width;
+            // the content sits at the offset and the resolved position, which is what moves it (§8.2)
+            const Rect content = Rect::from_origin_size(Point{.x = x, .y = viewport.y - offset()}, Size{.width = width, .height = m_content_extent.height});
+            // the content child is placed at the offset, which is what the viewport scrolls (§8.2)
             arrange_if_changed(*child, content);
+        }
         // the bar follows the content, so its strip is damaged by the same arrange (§6.1)
         if (!m_bounds.empty() && scrollbar_visible())
             note_damage(scrollbar_track_rect());
