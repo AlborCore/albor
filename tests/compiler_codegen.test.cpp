@@ -1717,7 +1717,9 @@ TEST(Codegen, AProgressBarCatalogEntryExists) {
     EXPECT_TRUE(progress->find_property("disabled") != nullptr);
     EXPECT_TRUE(progress->find_property("track_color") != nullptr);
     EXPECT_TRUE(progress->find_property("fill_color") != nullptr);
-    EXPECT_TRUE(progress->signals.empty());
+    // assert the only signal is the context-menu request, which every builtin raises (§8.3)
+    ASSERT_EQ(progress->signals.size(), 1u);
+    EXPECT_EQ(progress->signals.front().name, "context_menu");
 }
 
 TEST(Codegen, AnImageIsConstructedAndWired) {
@@ -1782,7 +1784,9 @@ TEST(Codegen, AnImageCatalogEntryExists) {
     EXPECT_TRUE(image->find_property("description") != nullptr);
     EXPECT_TRUE(image->find_property("width") != nullptr);
     EXPECT_TRUE(image->find_property("height") != nullptr);
-    EXPECT_TRUE(image->signals.empty());
+    // assert the only signal is the context-menu request, which every builtin raises (§8.3)
+    ASSERT_EQ(image->signals.size(), 1u);
+    EXPECT_EQ(image->signals.front().name, "context_menu");
 }
 
 TEST(Codegen, ATabViewIsConstructedAndWired) {
@@ -1841,21 +1845,27 @@ TEST(Codegen, ATabViewCatalogEntryExists) {
     EXPECT_TRUE(tabs->accepts_children);
     EXPECT_TRUE(tabs->find_property("selected") != nullptr);
     EXPECT_TRUE(tabs->find_property("vertical") != nullptr);
-    ASSERT_EQ(tabs->signals.size(), 1u);
+    ASSERT_EQ(tabs->signals.size(), 2u);
     EXPECT_EQ(tabs->signals[0].name, "selection_changed");
     ASSERT_EQ(tabs->signals[0].parameter_names.size(), 1u);
     EXPECT_EQ(tabs->signals[0].parameter_names[0], "index");
+    // assert the request every builtin raises is the second signal, because the native one comes first (§8.3)
+    EXPECT_EQ(tabs->signals[1].name, "context_menu");
     // assert the page is a container with the label the strip draws (§8)
     ASSERT_NE(page, nullptr);
     EXPECT_TRUE(page->accepts_children);
     EXPECT_TRUE(page->find_property("label") != nullptr);
-    EXPECT_TRUE(page->signals.empty());
+    // assert the page raises only the context-menu request (§8.3)
+    ASSERT_EQ(page->signals.size(), 1u);
+    EXPECT_EQ(page->signals.front().name, "context_menu");
     // assert the title is a container with no property of its own, because its children are the content (§8)
     ASSERT_NE(title, nullptr);
     EXPECT_TRUE(title->accepts_children);
     EXPECT_EQ(title->find_property("label"), nullptr);
     EXPECT_NE(title->find_property("visible"), nullptr);
-    EXPECT_TRUE(title->signals.empty());
+    // assert the title raises only the context-menu request (§8.3)
+    ASSERT_EQ(title->signals.size(), 1u);
+    EXPECT_EQ(title->signals.front().name, "context_menu");
 }
 
 TEST(Codegen, ARadioGroupIsConstructedAndWired) {
@@ -1914,17 +1924,21 @@ TEST(Codegen, ARadioGroupCatalogEntryExists) {
     EXPECT_TRUE(group->find_property("selected") != nullptr);
     EXPECT_TRUE(group->find_property("vertical") != nullptr);
     EXPECT_TRUE(group->find_property("spacing") != nullptr);
-    ASSERT_EQ(group->signals.size(), 1u);
+    ASSERT_EQ(group->signals.size(), 2u);
     EXPECT_EQ(group->signals[0].name, "selection_changed");
     ASSERT_EQ(group->signals[0].parameter_names.size(), 1u);
     EXPECT_EQ(group->signals[0].parameter_names[0], "value");
+    // assert the request every builtin raises is the second signal, because the native one comes first (§8.3)
+    EXPECT_EQ(group->signals[1].name, "context_menu");
     // assert the choice is a leaf with a value, a label and a disabled state (§8)
     ASSERT_NE(choice, nullptr);
     EXPECT_FALSE(choice->accepts_children);
     EXPECT_TRUE(choice->find_property("value") != nullptr);
     EXPECT_TRUE(choice->find_property("label") != nullptr);
     EXPECT_TRUE(choice->find_property("disabled") != nullptr);
-    EXPECT_TRUE(choice->signals.empty());
+    // assert the choice raises only the context-menu request (§8.3)
+    ASSERT_EQ(choice->signals.size(), 1u);
+    EXPECT_EQ(choice->signals.front().name, "context_menu");
 }
 
 TEST(Codegen, ANumericStepperIsConstructedAndWired) {
@@ -2054,10 +2068,12 @@ TEST(Codegen, ANumericStepperCatalogEntryExists) {
     EXPECT_TRUE(stepper->find_property("max") != nullptr);
     EXPECT_TRUE(stepper->find_property("step") != nullptr);
     EXPECT_TRUE(stepper->find_property("disabled") != nullptr);
-    ASSERT_EQ(stepper->signals.size(), 1u);
+    ASSERT_EQ(stepper->signals.size(), 2u);
     EXPECT_EQ(stepper->signals[0].name, "changed");
     ASSERT_EQ(stepper->signals[0].parameter_names.size(), 1u);
     EXPECT_EQ(stepper->signals[0].parameter_names[0], "value");
+    // assert the request every builtin raises follows the native signal (§8.3)
+    EXPECT_EQ(stepper->signals[1].name, "context_menu");
 }
 
 TEST(Codegen, ASliderRangeBecomesOneSetterOverBothBounds) {
@@ -4223,4 +4239,37 @@ component LogPanel {
     // assert the binding runs through a sink and calls the widget setter on every change (§11.3, §13.3)
     EXPECT_TRUE(contains(unit.content, "m_sink_0_follow_end.bind_static"));
     EXPECT_TRUE(contains(unit.content, "set_follow_end(value);"));
+}
+
+TEST(Codegen, AContextMenuHandlerRunsWithThePointScalars) {
+    // arrange a component whose canvas opens its menu from the written handler (§8.3)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component Chart { inout property<float> menu_x; inout property<float> menu_y; signal menu_requested(float x, float y); Canvas { width: 640.0; height: 480.0; on_context_menu: { menu_x = x; menu_y = y; menu_requested(x, y); } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the signal resolves from the catalog every element carries (§8.3)
+    ASSERT_FALSE(diagnostics.has_errors());
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& cpp = file_named(files, "chart.cpp");
+    // assert the framework point is adapted into the two scalars the language carries (§8.3)
+    EXPECT_TRUE(contains(cpp.content, "set_on_context_menu([this](Point point) { handle_0_context_menu(this, point.x, point.y); });"));
+    // assert the written body keeps its two float parameters, which the handler body reads by name (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "handle_0_context_menu(void* raw, [[maybe_unused]] float x, [[maybe_unused]] float y)"));
+    // assert the body writes the two properties the host reads as the menu anchor (§8.3)
+    EXPECT_TRUE(contains(cpp.content, "self->m_menu_x.set(x);"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_menu_y.set(y);"));
+}
+
+TEST(Codegen, ADeclaredContextMenuSignalKeepsItsOwnScalarLambda) {
+    // arrange a component that declares its own context-menu signal, which is not the builtin request (§11.3)
+    DiagnosticList diagnostics;
+    const std::string_view source = "component Host { signal context_menu(float x, float y); Column { } } component Screen { Host { on_context_menu: { } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the declaration resolved through its own slot, not the framework setter (§11.3)
+    ASSERT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& screen = file_named(files, "screen.cpp");
+    // assert the scalar parameters stay scalars, because a declared signal is not the node's point (§8.3)
+    EXPECT_TRUE(contains(screen.content, "set_on_context_menu([this](float x, float y)"));
+    EXPECT_FALSE(contains(screen.content, "Point point"));
 }

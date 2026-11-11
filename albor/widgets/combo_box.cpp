@@ -574,6 +574,9 @@ namespace albor
         }
         // a press chooses an option, toggles the trigger or closes an outside popup (§8.3)
         if (event.kind == EventKind::PointerDown) {
+            // only the primary button opens or chooses, because the others are their own gesture (§8.3)
+            if (event.button != PointerButton::Left)
+                return;
             // an open popup wins the press before the trigger does, because it is the surface the user aimed at (§8.3)
             if (m_expanded) {
                 // a press on a row chooses it, which is the one pointer selection path (§8.3)

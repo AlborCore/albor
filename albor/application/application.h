@@ -118,6 +118,9 @@ namespace albor
         // route one normalized event into a window on the ui thread, which brackets the dispatch against teardown (§4.2)
         bool deliver_input(WindowHandle handle, Event& event);
 
+        // dismiss the visible popups a window owns, which an unclaimed escape asks for (§5.1, §8.3)
+        bool dismiss_owned_popups(WindowHandle owner);
+
         // create a main window whose tree the builder builds, wired for rendering (§6.1, §8.1)
         WindowHandle create_window(const WindowOptions& options, RootBuilder builder);
 

@@ -120,7 +120,7 @@ namespace albor
             return;
         }
         // a press is the only other event that selects a choice (§8.3)
-        if (event.kind != EventKind::PointerDown || disabled() || !hit_test(event.position))
+        if (event.kind != EventKind::PointerDown || event.button != PointerButton::Left || disabled() || !hit_test(event.position))
             return;
         // the event is claimed, so no ancestor reacts to the same press (§8.3)
         event.handled = true;

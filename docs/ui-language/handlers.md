@@ -69,6 +69,35 @@ Every element type's signals are listed with that component —
 [CheckBox](../components/checkbox.md#signals),
 [ScrollView](../components/scroll-view.md#signals).
 
+## The context-menu handler
+
+Every element raises `context_menu(x, y)`, so a component opens a menu without a host callback
+for the trigger:
+
+```text
+component Chart {
+    inout property<float> menu_x;
+    inout property<float> menu_y;
+    signal menu_requested(float x, float y);
+
+    Canvas {
+        width: 640.0;
+        height: 480.0;
+        on_context_menu: {
+            menu_x = x;
+            menu_y = y;
+            menu_requested(x, y);
+        }
+    }
+}
+```
+
+`x` and `y` are the press in the element's own coordinates — the space a `Canvas` draws in. The
+handler runs on a secondary press (a right click, or a Control click on macOS) and on the menu
+key or `Shift+F10`, where the point is the element's centre. The component forwards the point
+through its own signal, and the host opens the menu at `bounds + (x, y)` through
+`PopupHost::open_popup`. The body is a normal handler, so it may also write properties directly.
+
 ## The four statement forms
 
 A handler body is a **closed grammar**. Exactly four statement forms are allowed, and each

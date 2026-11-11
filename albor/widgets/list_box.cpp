@@ -82,6 +82,9 @@ namespace albor
             return;
         // a press on a row selects it, which is what pointing at a row means (§8.3, §18.3)
         if (event.kind == EventKind::PointerDown) {
+            // only the primary button selects a row, because the others are their own gesture (§8.3)
+            if (event.button != PointerButton::Left)
+                return;
             // a disabled list refuses the press, because it refuses every input (§8.3)
             if (disabled())
                 return;

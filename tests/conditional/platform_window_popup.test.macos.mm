@@ -709,3 +709,227 @@ TEST(MacosPopupWindow, DestroyingTheOwnerBeforeItsDialogIsQuiet) {
     // assert the late teardown completed without a stale release, which is the regression of #150 (§5.1)
     EXPECT_FALSE(weak_dialog.isVisible);
 }
+
+TEST(MacosPopupWindow, ARightPressArrivesAsASecondaryPointerDown) {
+    // arrange a normal window with a listener, which is what receives the press (§5.3, §8.3)
+    WindowOptions options;
+    options.title = "right-press";
+    options.size = albor::Size{200.0f, 200.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* window = nil;
+    for (NSWindow* candidate in [NSApplication sharedApplication].windows) {
+        if ([candidate.title isEqualToString:@"right-press"])
+            window = candidate;
+    }
+    ASSERT_NE(window, nil);
+    NSEvent* press = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown location:NSMakePoint(10.0, 10.0) modifierFlags:0 timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    // act
+    [[NSApplication sharedApplication] sendEvent:press];
+    // assert the secondary press reached the framework with its button and logical position (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerDown);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Right);
+    EXPECT_FLOAT_EQ(listener.last_event.position.x, 10.0f);
+    EXPECT_FLOAT_EQ(listener.last_event.position.y, static_cast<float>(window.contentView.bounds.size.height) - 10.0f);
+    // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}
+
+TEST(MacosPopupWindow, AControlClickArrivesAsASecondaryPointerDown) {
+    // arrange a normal window whose press carries the control modifier, which is the one button mouse path (§8.3)
+    WindowOptions options;
+    options.title = "control-click";
+    options.size = albor::Size{200.0f, 200.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* window = nil;
+    for (NSWindow* candidate in [NSApplication sharedApplication].windows) {
+        if ([candidate.title isEqualToString:@"control-click"])
+            window = candidate;
+    }
+    ASSERT_NE(window, nil);
+    NSEvent* press = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:NSMakePoint(10.0, 10.0) modifierFlags:NSEventModifierFlagControl timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    // act the view normalizes the press, which keeps appkit's menu tracking out of the test (§8.3)
+    [window.contentView mouseDown:press];
+    // assert a control press is the secondary click, which keeps a trackpad context menu working (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerDown);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Right);
+    // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}
+
+TEST(MacosPopupWindow, AnAdditionalButtonArrivesAsAnOtherPointerDown) {
+    // arrange a normal window that receives a button beyond the three named ones (§8.3)
+    WindowOptions options;
+    options.title = "middle-press";
+    options.size = albor::Size{200.0f, 200.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* window = nil;
+    for (NSWindow* candidate in [NSApplication sharedApplication].windows) {
+        if ([candidate.title isEqualToString:@"middle-press"])
+            window = candidate;
+    }
+    ASSERT_NE(window, nil);
+    NSEvent* press = [NSEvent mouseEventWithType:NSEventTypeOtherMouseDown location:NSMakePoint(10.0, 10.0) modifierFlags:0 timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    // act
+    [[NSApplication sharedApplication] sendEvent:press];
+    // assert the numbered button reached the framework as another button, which the application may bind (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerDown);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Other);
+    // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}
+
+TEST(MacosPopupWindow, ARightPressOutsideThePopupDismissesIt) {
+    // arrange a shown popup with a listener, which the dismissal reports the close to (§5.2)
+    WindowOptions options;
+    options.role = WindowRole::Popup;
+    options.title = "popup-right-dismiss";
+    options.size = albor::Size{200.0f, 300.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // arrange a second window outside the popup, which the secondary press targets (§5.1)
+    NSWindow* outside = [[NSWindow alloc] initWithContentRect:NSMakeRect(0.0, 0.0, 50.0, 50.0) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    NSEvent* click = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown location:NSMakePoint(1.0, 1.0) modifierFlags:0 timestamp:0.0 windowNumber:outside.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    // act
+    [[NSApplication sharedApplication] sendEvent:click];
+    // assert the secondary press is the same outside dismissal a primary one is (§5.1, §8.3)
+    EXPECT_EQ(listener.closed, 1);
+    EXPECT_FALSE(platform->visible());
+}
+
+TEST(MacosPopupWindow, AMiddlePressArrivesAsAMiddlePointerDown) {
+    // arrange a normal window whose content view receives a real middle button event (§8.3)
+    WindowOptions options;
+    options.title = "middle-button";
+    options.size = albor::Size{200.0f, 200.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* window = nil;
+    for (NSWindow* candidate in [NSApplication sharedApplication].windows) {
+        if ([candidate.title isEqualToString:@"middle-button"])
+            window = candidate;
+    }
+    ASSERT_NE(window, nil);
+    // the core graphics event carries the centre button number, which is what a real mouse reports (§8.3)
+    CGEventRef native = CGEventCreateMouseEvent(nullptr, kCGEventOtherMouseDown, CGPointMake(10.0, 10.0), kCGMouseButtonCenter);
+    ASSERT_NE(native, nullptr);
+    NSEvent* press = [NSEvent eventWithCGEvent:native];
+    CFRelease(native);
+    ASSERT_NE(press, nil);
+    // act the view is the responder that normalizes the button, so the event is handed to it directly (§8.3)
+    [window.contentView otherMouseDown:press];
+    // assert the middle button reached the framework as the middle one, which a control may claim (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerDown);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Middle);
+    // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}
+
+TEST(MacosPopupWindow, AControlReleaseEndsThePrimaryPressItStarted) {
+    // arrange a window whose press starts without control and whose release carries it (§8.3)
+    WindowOptions options;
+    options.title = "control-release";
+    options.size = albor::Size{200.0f, 200.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* window = nil;
+    for (NSWindow* candidate in [NSApplication sharedApplication].windows) {
+        if ([candidate.title isEqualToString:@"control-release"])
+            window = candidate;
+    }
+    ASSERT_NE(window, nil);
+    NSEvent* down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:NSMakePoint(10.0, 10.0) modifierFlags:0 timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    // act the press starts a primary drag, and control arrives before the release (§8.3)
+    [window.contentView mouseDown:down];
+    EXPECT_EQ(listener.last_event.button, PointerButton::Left);
+    NSEvent* up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:NSMakePoint(10.0, 10.0) modifierFlags:NSEventModifierFlagControl timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    [window.contentView mouseUp:up];
+    // assert the release kept the button the press carried, so the capture and the pressed visual end (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerUp);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Left);
+    // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}
+
+TEST(MacosPopupWindow, TheMenuKeyArrivesAsTheMenuKey) {
+    // arrange a window whose content view receives the menu key a full keyboard carries (§8.3)
+    WindowOptions options;
+    options.title = "menu-key";
+    options.size = albor::Size{200.0f, 200.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* window = nil;
+    for (NSWindow* candidate in [NSApplication sharedApplication].windows) {
+        if ([candidate.title isEqualToString:@"menu-key"])
+            window = candidate;
+    }
+    ASSERT_NE(window, nil);
+    NSEvent* press = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSMakePoint(0.0, 0.0) modifierFlags:0 timestamp:0.0 windowNumber:window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:110];
+    // act the view normalizes the key, which keeps interpretKeyEvents away from the test (§8.3)
+    [window.contentView keyDown:press];
+    // assert the menu key is portable, which is the keyboard route to the context menu (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::KeyDown);
+    EXPECT_EQ(listener.last_event.key, Key::Menu);
+    // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}
+
+TEST(MacosPopupWindow, AChordedButtonLeavesThePrimaryGestureIntact) {
+    // arrange a window whose primary press is followed by a secondary press before either is released (§8.3)
+    WindowOptions options;
+    options.title = "chorded-buttons";
+    options.size = albor::Size{200.0f, 200.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* window = nil;
+    for (NSWindow* candidate in [NSApplication sharedApplication].windows) {
+        if ([candidate.title isEqualToString:@"chorded-buttons"])
+            window = candidate;
+    }
+    ASSERT_NE(window, nil);
+    NSEvent* left_down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:NSMakePoint(10.0, 10.0) modifierFlags:0 timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    NSEvent* right_down = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown location:NSMakePoint(10.0, 10.0) modifierFlags:0 timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:1.0];
+    NSEvent* right_up = [NSEvent mouseEventWithType:NSEventTypeRightMouseUp location:NSMakePoint(10.0, 10.0) modifierFlags:0 timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:3 clickCount:1 pressure:1.0];
+    NSEvent* left_drag = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged location:NSMakePoint(12.0, 12.0) modifierFlags:0 timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:4 clickCount:1 pressure:1.0];
+    NSEvent* left_up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:NSMakePoint(12.0, 12.0) modifierFlags:0 timestamp:0.0 windowNumber:window.windowNumber context:nil eventNumber:5 clickCount:1 pressure:1.0];
+    // act the secondary press and release interleave with the live primary gesture (§8.3)
+    [window.contentView mouseDown:left_down];
+    [window.contentView rightMouseDown:right_down];
+    [window.contentView rightMouseUp:right_up];
+    [window.contentView mouseDragged:left_drag];
+    // assert the primary drag kept its own button, so the capture it armed still ends (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerMove);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Left);
+    [window.contentView mouseUp:left_up];
+    // assert the primary release names the primary button, which drops the capture and the pressed visual (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerUp);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Left);
+    // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}

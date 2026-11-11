@@ -12,7 +12,7 @@ namespace albor
     {
     public:
         // offer the event to the deepest node under it, stopping at the first handler that claims it (§8.3)
-        static void dispatch(UiNode& root, Event& event);
+        static UiNode* dispatch(UiNode& root, Event& event);
 
         // offer the event to the focused node and then to its ancestors, which is the keyboard path of §8.3
         static void dispatch_to_focused(UiNode& root, Event& event, UiNode* focused);
@@ -28,7 +28,7 @@ namespace albor
 
     private:
         // offer the event to every child of the node and then to the node, which is the pointer path of §8.3
-        static void route_down(UiNode& node, Event& event);
+        static UiNode* route_down(UiNode& node, Event& event);
 
         // offer the event to the node and then to its ancestors, which is the keyboard path of §8.3
         static void route_up(UiNode& node, Event& event);

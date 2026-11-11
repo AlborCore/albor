@@ -112,39 +112,62 @@ namespace albor
     }
 
     void InputController::deliver_pointer(Event& event) {
+        // a request that already reached the controller carries its own gesture, so no hover is diffed for it (§8.3)
+        if (event.kind == EventKind::ContextMenu) {
+            deliver_context_menu(event);
+            return;
+        }
         // every positioned event refreshes the hover chain, so a press also knows what it landed on (§8.3)
         update_hover(event.position);
         // a synthesized transition is the whole event, because it was already routed to the chain (§8.3)
         if (event.kind == EventKind::PointerEnter || event.kind == EventKind::PointerLeave)
             return;
+        // a secondary press asks for a context menu, which is a gesture and not a press the tree sees (§8.3)
+        if (event.kind == EventKind::PointerDown && event.button == PointerButton::Right) {
+            // the request keeps the press position, because the menu opens where the pointer landed (§8.3)
+            Event request{.kind = EventKind::ContextMenu, .position = event.position, .button = event.button};
+            deliver_context_menu(request);
+            event.handled = request.handled;
+            return;
+        }
         // a press with no drag yet routes by position and may start a capture (§8.3)
         if (event.kind == EventKind::PointerDown) {
-            // a second press while a drag is alive interrupts nothing, so it is dropped (§8.3)
-            if (m_capture != nullptr)
+            // a press while a drag is alive belongs to the captured node, which honors the capture (§8.3)
+            if (m_capture != nullptr) {
+                InputDispatcher::dispatch_to_focused(*m_root, event, m_capture);
                 return;
+            }
             // the sequence is read before dispatch, because a press may close the surface it lands on (§8.3)
             const std::uint64_t generation = m_capture_generation;
-            InputDispatcher::dispatch(*m_root, event);
-            // only a claimed press moves the caret, because an unclaimed one is empty space (§8.3)
+            UiNode* claimed = InputDispatcher::dispatch(*m_root, event);
+            // only a claimed press moves the caret or arms a drag, because an unclaimed one is empty space (§8.3)
             if (!event.handled)
                 return;
             // a hide during dispatch already ended the drag, so it must not be armed again (§8.3)
             if (generation != m_capture_generation)
                 return;
-            // the deepest focusable node under the press takes the caret (§8.3)
-            UiNode* target = focusable_under(*m_root, event.position);
-            if (target != nullptr)
-                m_focus.request_focus(target);
-            // the target captures the drag, so the moves keep reaching it outside its bounds (§8.3)
-            m_capture = target;
+            // the primary button is the one that moves the caret, while a middle press leaves the focus alone (§8.3)
+            if (event.button == PointerButton::Left) {
+                // the deepest focusable node under the press takes the caret (§8.3)
+                UiNode* target = focusable_under(*m_root, event.position);
+                if (target != nullptr)
+                    m_focus.request_focus(target);
+            }
+            // the node that claimed the press carries the drag, so moves keep reaching it outside its bounds (§8.3)
+            if (claimed != nullptr && !claimed->disabled() && claimed->hit_test(event.position)) {
+                // the drag remembers which button armed it, because only that release ends it (§8.3)
+                m_capture = claimed;
+                m_capture_button = event.button;
+            }
             return;
         }
         // a release that ends a drag reaches the captured node before the capture drops (§8.3)
         if (event.kind == EventKind::PointerUp && m_capture != nullptr) {
             // the release bubbles from the captured node, which is the last event of the drag (§8.3)
             InputDispatcher::dispatch_to_focused(*m_root, event, m_capture);
-            // the capture is dropped after the release, so the next press starts a new drag (§8.3)
-            m_capture = nullptr;
+            // only the button that armed the drag ends it, so another release leaves the capture armed (§8.3)
+            if (event.button == m_capture_button)
+                m_capture = nullptr;
             return;
         }
         // a move or a wheel while a drag is alive reaches the captured node, so the control keeps the pointer (§8.3)
@@ -153,6 +176,16 @@ namespace albor
             return;
         }
         // everything else routes by position, which follows the pointer like a hover (§8.3)
+        InputDispatcher::dispatch(*m_root, event);
+    }
+
+    void InputController::deliver_context_menu(Event& event) {
+        // a live drag owns the pointer, so the request asks the captured node before the tree (§8.3)
+        if (m_capture != nullptr) {
+            InputDispatcher::dispatch_to_focused(*m_root, event, m_capture);
+            return;
+        }
+        // a request with no drag follows the pointer, which is the secondary press path of §8.3
         InputDispatcher::dispatch(*m_root, event);
     }
 
@@ -177,6 +210,24 @@ namespace albor
                 InputDispatcher::dispatch_to_focused(*m_root, event, focused);
             // an escape the control declined is left unhandled, so a dialog can dismiss on it (§8.3)
             return;
+        }
+        // the menu key and shift f10 ask for the context menu of what holds the focus (§8.3)
+        if (event.kind == EventKind::KeyDown && (event.key == Key::Menu || (event.key == Key::F10 && event.modifiers.shift))) {
+            // the caret names the node, because a keyboard request carries no pointer position (§8.3)
+            UiNode* anchor = m_focus.focused() != nullptr ? m_focus.focused() : hovered();
+            // a tree with no caret and no hover has nothing to anchor a menu at (§8.3)
+            if (anchor != nullptr) {
+                // the centre of the node is where a keyboard menu opens, because a key carries no position (§8.3)
+                const Rect& area = anchor->bounds();
+                Event request{.kind = EventKind::ContextMenu, .position = Point{area.x + area.width * 0.5f, area.y + area.height * 0.5f}, .button = PointerButton::Right};
+                InputDispatcher::dispatch_to_focused(*m_root, request, anchor);
+                // a request a node took is the whole key, so nothing else runs (§8.3)
+                if (request.handled) {
+                    event.handled = true;
+                    return;
+                }
+            }
+            // an unhandled request leaves the key to the accelerators, which may bind it (§18.5)
         }
         // a key up carries no traversal and no activation, so it is left alone (§8.3)
         if (event.kind != EventKind::KeyDown)
@@ -239,6 +290,8 @@ namespace albor
         m_capture_generation++;
         // a window that lost the interaction owns no drag, so the stale node is cleared with it (§8.3)
         m_capture = nullptr;
+        // the drag forgets its button with the node, because a stale button must not end a later drag (§8.3)
+        m_capture_button = PointerButton::Left;
     }
 
     void InputController::set_command_registry(CommandRegistry* registry) {

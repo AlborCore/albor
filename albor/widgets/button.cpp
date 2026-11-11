@@ -151,6 +151,9 @@ namespace albor
             // any other event belongs to a parent, so the button does not claim it (§8.3)
             return;
         }
+        // only the primary button activates the plate, because a secondary or middle press is its own gesture (§8.3)
+        if (event.button != PointerButton::Left)
+            return;
         // a disabled button does not claim a press, because it refuses input (§8.3)
         if (disabled())
             return;

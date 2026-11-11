@@ -620,3 +620,106 @@ TEST(Win32PopupWindow, DestroyingTheOwnerBeforeItsDialogIsQuiet) {
     EXPECT_EQ(dialog_listener.closed, 1);
     dialog.reset();
 }
+
+TEST(Win32PopupWindow, ARightPressArrivesAsASecondaryPointerDown) {
+    // arrange a normal window with a listener, which is what receives the press (§5.3, §8.3)
+    WindowOptions options;
+    options.title = "right-press";
+    options.size = Size{200.0f, 200.0f};
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    HWND window = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(window, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // act
+    (void)SendMessageW(window, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(10, 10));
+    // assert the secondary press reached the framework with its button and logical position (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerDown);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Right);
+    const float scale = static_cast<float>(GetDpiForWindow(window)) / 96.0f;
+    EXPECT_FLOAT_EQ(listener.last_event.position.x, 10.0f / scale);
+    EXPECT_FLOAT_EQ(listener.last_event.position.y, 10.0f / scale);
+}
+
+TEST(Win32PopupWindow, AMiddlePressArrivesAsAMiddlePointerDown) {
+    // arrange a normal window that receives the third button, which a full mouse carries (§8.3)
+    WindowOptions options;
+    options.title = "middle-press";
+    options.size = Size{200.0f, 200.0f};
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    HWND window = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(window, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // act
+    (void)SendMessageW(window, WM_MBUTTONDOWN, MK_MBUTTON, MAKELPARAM(10, 10));
+    // assert the third button reached the framework as the middle one, which a control may claim (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerDown);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Middle);
+}
+
+TEST(Win32PopupWindow, ARightPressOutsideThePopupDismissesIt) {
+    // arrange a shown popup with a listener, which the dismissal reports the close to (§5.2)
+    WindowOptions options;
+    options.role = WindowRole::Popup;
+    options.title = "popup-right-dismiss";
+    options.size = Size{200.0f, 300.0f};
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    HWND popup = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(popup, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // act the press lands outside the popup, which is the dismissal monitor the role installs (§5.1)
+    (void)SendMessageW(popup, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(-10, -10));
+    // assert the secondary press is the same outside dismissal a primary one is (§5.1, §8.3)
+    EXPECT_EQ(listener.closed, 1);
+    EXPECT_FALSE(platform->visible());
+}
+
+TEST(Win32PopupWindow, AnExtraButtonArrivesAsAnOtherPointerDown) {
+    // arrange a normal window that receives a button beyond the three named ones (§8.3)
+    WindowOptions options;
+    options.title = "extra-button";
+    options.size = Size{200.0f, 200.0f};
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    HWND window = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(window, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // act the first extra button presses at a known client point
+    (void)SendMessageW(window, WM_XBUTTONDOWN, MAKEWPARAM(MK_XBUTTON1, XBUTTON1), MAKELPARAM(10, 10));
+    // assert the extra button reached the framework as another button, which the application may bind (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::PointerDown);
+    EXPECT_EQ(listener.last_event.button, PointerButton::Other);
+    // cleanup the window hides, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}
+
+TEST(Win32PopupWindow, TheMenuKeyArrivesAsTheMenuKey) {
+    // arrange a normal window that receives the menu key a full keyboard carries (§8.3)
+    WindowOptions options;
+    options.title = "menu-key";
+    options.size = Size{200.0f, 200.0f};
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    HWND window = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(window, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // act
+    (void)SendMessageW(window, WM_KEYDOWN, VK_APPS, 0);
+    // assert the menu key is portable, which is the keyboard route to the context menu (§8.3)
+    EXPECT_EQ(listener.last_event.kind, EventKind::KeyDown);
+    EXPECT_EQ(listener.last_event.key, Key::Menu);
+    // cleanup the window hides, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}

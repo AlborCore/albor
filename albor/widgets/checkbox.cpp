@@ -148,6 +148,9 @@ namespace albor
             // any other event belongs to a parent, so the box does not claim it (§8.3)
             return;
         }
+        // only the primary button toggles the box, because a secondary or middle press is its own gesture (§8.3)
+        if (event.button != PointerButton::Left)
+            return;
         // a disabled box does not claim a press, because it refuses input (§8.3)
         if (disabled())
             return;

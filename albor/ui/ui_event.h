@@ -40,7 +40,26 @@ namespace albor
         Composing,
 
         // committed text arrived from the input method
-        TextInput
+        TextInput,
+
+        // a secondary press asked for a context menu, which the controller synthesizes from the button (§8.3)
+        ContextMenu
+    };
+
+    // the pointer button a press, release or move carries, which tells a primary press from a menu request (§8.3)
+    enum class PointerButton
+    {
+        // the primary button, which activates a control and starts a drag (§8.3)
+        Left,
+
+        // the secondary button, which asks for a context menu instead of activating (§8.3)
+        Right,
+
+        // the middle button, which a control may claim for a gesture of its own (§8.3)
+        Middle,
+
+        // any button beyond the three named ones, which only an application binds (§8.3)
+        Other
     };
 
     // one portable key name, which a platform adapter normalizes a key event onto (§8.3)
@@ -57,6 +76,9 @@ namespace albor
 
         // the escape key, which cancels a pending action
         Escape,
+
+        // the menu key, which opens the context menu of what holds the focus (§8.3)
+        Menu,
 
         // the left arrow key, which reaches a drag target on its left
         ArrowLeft,
@@ -276,6 +298,9 @@ namespace albor
 
         // the logical position a pointer event carries, which is the origin for every other kind
         Point position{};
+
+        // the pointer button the event belongs to, which the primary one defaults to (§8.3)
+        PointerButton button = PointerButton::Left;
 
         // the logical position the pointer event started from, which a drag measures against
         Point origin{};

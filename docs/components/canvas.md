@@ -63,6 +63,28 @@ A custom render node can retain a `PathResource` whose verbs now include `Quadra
 curves; `render-albor` flattens them deterministically before tessellation, so a circle or a
 spline does not need application-built line segments.
 
+## Signals
+
+A canvas raises `context_menu(x, y)` like every element, which is how a chart context menu is
+authored in the `.ui` file rather than in host C++:
+
+```text
+Canvas {
+    width: 640.0;
+    height: 480.0;
+    on_context_menu: {
+        menu_x = x;
+        menu_y = y;
+        menu_requested(x, y);
+    }
+}
+```
+
+The point is in the canvas's own coordinates — the same space `canvas_width`, `canvas_height`
+and the draw block use — so a chart maps it to a time and a value without converting. The
+handler runs on a secondary press and on the menu key or `Shift+F10`; see
+[Signals and handlers](../ui-language/handlers.md#the-context-menu-handler).
+
 ## When this is not enough
 
 The vocabulary is still a closed drawing set, not a universal drawing API. A domain view — a

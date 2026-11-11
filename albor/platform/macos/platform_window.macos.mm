@@ -46,6 +46,12 @@
 // the framework listener the events are forwarded to, which is null once the framework window is gone (§4.2)
 @property(nonatomic, assign) albor::PlatformWindowListener* listener;
 
+// the button the current primary gesture started with, which its drag and release keep (§8.3)
+@property(nonatomic, assign) albor::PointerButton primaryButton;
+
+// the button the current numbered gesture started with, which its drag and release keep (§8.3)
+@property(nonatomic, assign) albor::PointerButton numberedButton;
+
 @end
 
 namespace
@@ -146,6 +152,9 @@ namespace
         // the twelfth function key
         case 111:
             return albor::Key::F12;
+        // the menu key, which a full keyboard carries beside the right command key (§8.3)
+        case 110:
+            return albor::Key::Menu;
         // every other key carries no portable name
         default:
             return albor::Key::None;
@@ -237,36 +246,72 @@ namespace
     return albor::Point{static_cast<float>(in_view.x), static_cast<float>(height - in_view.y)};
 }
 
-- (void)mouseDown:(NSEvent*)event {
+// hand one native pointer event to the framework with the button it belongs to, which is the normalized route (§8.3)
+- (void)forwardPointer:(NSEvent*)event kind:(albor::EventKind)kind button:(albor::PointerButton)button {
     // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     albor::Event message;
-    message.kind = albor::EventKind::PointerDown;
+    message.kind = kind;
     message.position = [self logicalPointOf:event];
+    message.button = button;
     // the platform counts multiple clicks, which a double or triple click selection reads (§8.3)
     message.click_count = static_cast<int>(event.clickCount);
     self.listener->on_platform_event(message);
 }
 
+- (void)mouseDown:(NSEvent*)event {
+    // a control press is the secondary click a one button mouse offers, which appkit delivers as a plain press (§8.3)
+    const albor::PointerButton button = (event.modifierFlags & NSEventModifierFlagControl) != 0 ? albor::PointerButton::Right : albor::PointerButton::Left;
+    // the primary gesture remembers its button, so the release cannot turn it into a secondary one (§8.3)
+    self.primaryButton = button;
+    [self forwardPointer:event kind:albor::EventKind::PointerDown button:button];
+}
+
 - (void)mouseDragged:(NSEvent*)event {
-    // a gone listener drops the event, because the window died (§4.2)
-    if (self.listener == nullptr)
-        return;
-    albor::Event message;
-    message.kind = albor::EventKind::PointerMove;
-    message.position = [self logicalPointOf:event];
-    self.listener->on_platform_event(message);
+    // the primary drag keeps its own button, whatever another button is doing beside it (§8.3)
+    [self forwardPointer:event kind:albor::EventKind::PointerMove button:self.primaryButton];
 }
 
 - (void)mouseUp:(NSEvent*)event {
-    // a gone listener drops the event, because the window died (§4.2)
-    if (self.listener == nullptr)
-        return;
-    albor::Event message;
-    message.kind = albor::EventKind::PointerUp;
-    message.position = [self logicalPointOf:event];
-    self.listener->on_platform_event(message);
+    // the release pairs with the button the press carried, which keeps a ctrl click a secondary one (§8.3)
+    const albor::PointerButton button = self.primaryButton;
+    // the primary gesture is over, so the next press starts from the primary button (§8.3)
+    self.primaryButton = albor::PointerButton::Left;
+    [self forwardPointer:event kind:albor::EventKind::PointerUp button:button];
+}
+
+- (void)rightMouseDown:(NSEvent*)event {
+    [self forwardPointer:event kind:albor::EventKind::PointerDown button:albor::PointerButton::Right];
+}
+
+- (void)rightMouseDragged:(NSEvent*)event {
+    [self forwardPointer:event kind:albor::EventKind::PointerMove button:albor::PointerButton::Right];
+}
+
+- (void)rightMouseUp:(NSEvent*)event {
+    [self forwardPointer:event kind:albor::EventKind::PointerUp button:albor::PointerButton::Right];
+}
+
+- (void)otherMouseDown:(NSEvent*)event {
+    // the third button is the middle one, while every higher number is left to the application (§8.3)
+    const albor::PointerButton button = event.buttonNumber == 2 ? albor::PointerButton::Middle : albor::PointerButton::Other;
+    // the numbered gesture remembers its button, so a chording primary press cannot steal it (§8.3)
+    self.numberedButton = button;
+    [self forwardPointer:event kind:albor::EventKind::PointerDown button:button];
+}
+
+- (void)otherMouseDragged:(NSEvent*)event {
+    // the numbered drag keeps its own button, which the platform numbered on its press (§8.3)
+    [self forwardPointer:event kind:albor::EventKind::PointerMove button:self.numberedButton];
+}
+
+- (void)otherMouseUp:(NSEvent*)event {
+    // the release pairs with the numbered button, which ends the gesture it started (§8.3)
+    const albor::PointerButton button = self.numberedButton;
+    // the numbered gesture is over, so a later one starts from the default (§8.3)
+    self.numberedButton = albor::PointerButton::Middle;
+    [self forwardPointer:event kind:albor::EventKind::PointerUp button:button];
 }
 
 - (void)scrollWheel:(NSEvent*)event {

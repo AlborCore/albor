@@ -137,7 +137,7 @@ namespace albor
             return;
         }
         // a pointer press inside the row activates it (§8.3)
-        if (event.kind != EventKind::PointerDown || disabled() || !hit_test(event.position))
+        if (event.kind != EventKind::PointerDown || event.button != PointerButton::Left || disabled() || !hit_test(event.position))
             return;
         // the press is claimed, so no ancestor reacts to it (§8.3)
         event.handled = true;

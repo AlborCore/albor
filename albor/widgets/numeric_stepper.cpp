@@ -99,6 +99,9 @@ namespace albor
         handle_hover_transitions(event);
         // a press on a zone steps once, which is the pointer path of a spinner (§8.3)
         if (event.kind == EventKind::PointerDown) {
+            // only the primary button steps or places the caret, because the others are their own gesture (§8.3)
+            if (event.button != PointerButton::Left)
+                return;
             // a disabled stepper or a press outside the plate refuses the step (§8.3)
             if (disabled() || !hit_test(event.position))
                 return;

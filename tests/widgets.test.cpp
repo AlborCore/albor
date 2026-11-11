@@ -9168,3 +9168,136 @@ TEST(ScrollViewChecks, AScrollDamagesTheContentViewportAndItsBar) {
     ASSERT_TRUE(view.damage_region().has_value());
     EXPECT_EQ(*view.damage_region(), bounds);
 }
+
+TEST(ContextMenuChecks, AMiddlePressNeverActivatesAControl) {
+    // arrange three controls that activate on a primary press (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Click");
+    CheckBox box(&engine);
+    Slider slider(&engine);
+    const Rect plate = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f});
+    button.arrange(plate);
+    box.arrange(plate);
+    slider.arrange(plate);
+    int clicks = 0;
+    int toggles = 0;
+    int changes = 0;
+    button.set_on_click([&clicks] { clicks++; });
+    box.set_on_toggle([&toggles](bool) { toggles++; });
+    slider.set_on_change([&changes](float) { changes++; });
+    // act a middle press lands on each of them
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}, .button = PointerButton::Middle};
+    button.dispatch_event(press);
+    box.dispatch_event(press);
+    slider.dispatch_event(press);
+    // assert none activated and none painted itself pressed (§8.3)
+    EXPECT_EQ(clicks, 0);
+    EXPECT_EQ(toggles, 0);
+    EXPECT_EQ(changes, 0);
+    EXPECT_EQ(button.state(), ControlState::Normal);
+    EXPECT_EQ(box.state(), ControlState::Normal);
+    EXPECT_EQ(slider.state(), ControlState::Normal);
+    EXPECT_FALSE(press.handled);
+}
+
+TEST(ContextMenuChecks, ASecondaryPressRaisesTheMenuWithoutActivatingTheButton) {
+    // arrange a button that carries both handlers, so a wrong route would show (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Chart");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    int clicks = 0;
+    int requests = 0;
+    Point requested{};
+    button.set_on_click([&clicks] { clicks++; });
+    button.set_on_context_menu([&requested, &requests](Point point) {
+        requested = point;
+        requests++;
+    });
+    InputController controller;
+    controller.attach(button);
+    Event press{.kind = EventKind::PointerDown, .position = Point{15.0f, 10.0f}, .button = PointerButton::Right};
+    // act
+    controller.deliver(press);
+    // assert the menu opened instead of the action, which keeps a right click out of activation (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(clicks, 0);
+    EXPECT_EQ(requests, 1);
+    EXPECT_FLOAT_EQ(requested.x, 15.0f);
+    EXPECT_FLOAT_EQ(requested.y, 10.0f);
+    // the pointer may hover the plate, but the press it carries never paints a press (§8.3)
+    EXPECT_FALSE(button.pressed());
+}
+
+TEST(ContextMenuChecks, ACanvasReportsTheChartLocalPoint) {
+    // arrange a canvas placed away from the origin, which is the chart case (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Canvas chart(&engine, &text_engine);
+    chart.arrange(Rect::from_origin_size(Point{100.0f, 50.0f}, Size{200.0f, 150.0f}));
+    int requests = 0;
+    Point requested{};
+    chart.set_on_context_menu([&requested, &requests](Point point) {
+        requested = point;
+        requests++;
+    });
+    InputController controller;
+    controller.attach(chart);
+    Event press{.kind = EventKind::PointerDown, .position = Point{130.0f, 90.0f}, .button = PointerButton::Right};
+    // act
+    controller.deliver(press);
+    // assert the canvas reads the point against its own corner, which its draw block also uses (§6.4, §8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(requests, 1);
+    EXPECT_FLOAT_EQ(requested.x, 30.0f);
+    EXPECT_FLOAT_EQ(requested.y, 40.0f);
+}
+
+TEST(ContextMenuChecks, AHostOpenedMenuRunsTheChosenItem) {
+    // arrange a chart that raises the request and a host that opens the menu where it landed (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Canvas chart(&engine, &text_engine);
+    chart.arrange(Rect::from_origin_size(Point{20.0f, 30.0f}, Size{200.0f, 120.0f}));
+    Point requested{};
+    chart.set_on_context_menu([&requested](Point point) { requested = point; });
+    InputController controller;
+    controller.attach(chart);
+    Event press{.kind = EventKind::PointerDown, .position = Point{70.0f, 80.0f}, .button = PointerButton::Right};
+    controller.deliver(press);
+    ASSERT_TRUE(press.handled);
+    CommandRegistry registry;
+    std::unique_ptr<Command> command = registry.declare("chart.zoom_fit", "Zoom to Fit");
+    bool invoked = false;
+    command->set_action([&invoked](const CommandInvocation&) { invoked = true; });
+    RecordingPopupHost host;
+    // act the host anchors a zero-size rect at the point the chart reported (§8.3)
+    const WindowHandle popup = host.open_popup(
+        chart, Rect::from_origin_size(Point{chart.bounds().x + requested.x, chart.bounds().y + requested.y}, Size{}), Size{120.0f, 60.0f},
+        [&command](BindingEngine& row_engine, TextEngine& row_text) -> std::unique_ptr<UiNode> {
+            auto menu = std::make_unique<Menu>(&row_engine, &row_text);
+            menu->add_item(*command);
+            return menu;
+        },
+        Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), [] {});
+    // assert the anchor names the press point in the window, which is the popup placement convention (§5.1, §8.3)
+    ASSERT_TRUE(popup.valid());
+    EXPECT_FLOAT_EQ(host.anchor_rect.x, 70.0f);
+    EXPECT_FLOAT_EQ(host.anchor_rect.y, 80.0f);
+    EXPECT_TRUE(host.anchor_rect.empty());
+    // act the surface is built and a press lands on its row
+    std::unique_ptr<UiNode> surface = host.builder(engine, text_engine);
+    ASSERT_NE(surface, nullptr);
+    Size measured{};
+    surface->measure(SizeConstraints::unconstrained(), measured);
+    surface->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, measured));
+    UiNode* row = surface->child_at(0);
+    ASSERT_NE(row, nullptr);
+    const Rect& row_bounds = row->bounds();
+    Event row_press{.kind = EventKind::PointerDown, .position = Point{row_bounds.x + 2.0f, row_bounds.y + 2.0f}};
+    InputDispatcher::dispatch(*surface, row_press);
+    // assert the chosen row ran the command the menu presented (§18.1, §8.3)
+    EXPECT_TRUE(row_press.handled);
+    EXPECT_TRUE(invoked);
+}

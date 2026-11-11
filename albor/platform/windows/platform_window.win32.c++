@@ -193,6 +193,9 @@ namespace albor
                 return Key::F11;
             case VK_F12:
                 return Key::F12;
+            // the menu key opens the context menu of what holds the focus (§8.3)
+            case VK_APPS:
+                return Key::Menu;
             // every other key carries no portable name
             default:
                 return Key::None;
@@ -510,11 +513,15 @@ namespace albor
                 Event message;
                 message.kind = EventKind::PointerDown;
                 message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // the primary button is the one that activates, which every control reads (§8.3)
+                message.button = PointerButton::Left;
                 // the native sequence counts multiple clicks, which a text selection reads (§8.3)
                 message.click_count = click_count_for(*state, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
                 state->listener->on_platform_event(message);
                 return 0;
             }
+            case WM_MBUTTONDBLCLK:
+            case WM_RBUTTONDBLCLK:
             case WM_MBUTTONDOWN:
             case WM_RBUTTONDOWN: {
                 // the other buttons dismiss through the same monitor, which is the outside click of §5.1
@@ -528,8 +535,22 @@ namespace albor
                     forward_press(screen, code, wparam, lparam);
                     return 0;
                 }
-                // the press is answered with the default, because the framework maps a context menu elsewhere (§8.3)
-                return DefWindowProcW(window, code, wparam, lparam);
+                // a middle press drags like the primary one, while a secondary press only asks for the menu (§8.3)
+                if (code == WM_MBUTTONDOWN || code == WM_MBUTTONDBLCLK) {
+                    // the capture keeps a middle drag alive outside the window (§8.3)
+                    SetCapture(window);
+                    // the shared flag tells the popup handoff that a press is still held (§5.1)
+                    state->mouse_down = true;
+                }
+                Event message;
+                message.kind = EventKind::PointerDown;
+                message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // the message names the button, which the controller turns into a press or a menu request (§8.3)
+                message.button = (code == WM_MBUTTONDOWN || code == WM_MBUTTONDBLCLK) ? PointerButton::Middle : PointerButton::Right;
+                // the native sequence counts multiple clicks, which every button reports the same way (§8.3)
+                message.click_count = click_count_for(*state, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                state->listener->on_platform_event(message);
+                return 0;
             }
             case WM_LBUTTONUP: {
                 // the press is over before the event runs, so a popup opened during it may take the capture next (§5.1)
@@ -540,16 +561,77 @@ namespace albor
                 Event message;
                 message.kind = EventKind::PointerUp;
                 message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // the primary button is the release every control reads as its own (§8.3)
+                message.button = PointerButton::Left;
                 state->listener->on_platform_event(message);
                 // an owner that opened a popup on this press hands the capture to it after the release is delivered (§5.1)
                 if (!state->popup)
                     arm_owned_popup_capture(window);
                 return 0;
             }
+            case WM_MBUTTONUP: {
+                // the press is over before the event runs, which the shared flag reports (§5.1)
+                state->mouse_down = false;
+                // the capture belongs to the middle drag, so the release that ends it drops the capture (§8.3)
+                if (GetCapture() == window)
+                    ReleaseCapture();
+                Event message;
+                message.kind = EventKind::PointerUp;
+                message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // the middle button ends the drag it started, which keeps a primary drag untouched (§8.3)
+                message.button = PointerButton::Middle;
+                state->listener->on_platform_event(message);
+                return 0;
+            }
+            case WM_RBUTTONUP: {
+                Event message;
+                message.kind = EventKind::PointerUp;
+                message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // the secondary release pairs with the press that asked for the menu (§8.3)
+                message.button = PointerButton::Right;
+                state->listener->on_platform_event(message);
+                return 0;
+            }
+            case WM_XBUTTONDBLCLK:
+            case WM_XBUTTONDOWN: {
+                // the extra buttons dismiss through the same monitor, which is the outside click of §5.1
+                if (state->popup && state->visible && point_is_outside(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam))) {
+                    // the screen point is opened before the dismissal, which may tear the window down (§5.1)
+                    POINT screen{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+                    ClientToScreen(window, &screen);
+                    // the popups the click missed are dismissed, which is what every monitor of the reference takes (§5.1)
+                    dismiss_registered_popups();
+                    // the press is forwarded, because the click still reaches whatever the user actually clicked (§5.1)
+                    forward_press(screen, code, wparam, lparam);
+                    return 0;
+                }
+                Event message;
+                message.kind = EventKind::PointerDown;
+                message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // a button beyond the three named ones reaches the framework as another button (§8.3)
+                message.button = PointerButton::Other;
+                // the native sequence counts multiple clicks, which an extra button reports the same way (§8.3)
+                message.click_count = click_count_for(*state, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                state->listener->on_platform_event(message);
+                // the extra button is consumed, because the system would otherwise answer it with an app command (§8.3)
+                return TRUE;
+            }
+            case WM_XBUTTONUP: {
+                Event message;
+                message.kind = EventKind::PointerUp;
+                message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // the extra button release pairs with its press, which leaves every named button alone (§8.3)
+                message.button = PointerButton::Other;
+                state->listener->on_platform_event(message);
+                // the release is consumed as well, so no app command follows the press (§8.3)
+                return TRUE;
+            }
             case WM_MOUSEMOVE: {
                 Event message;
                 message.kind = EventKind::PointerMove;
                 message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // the held buttons travel with the move, which lets a drag name the gesture it belongs to (§8.3)
+                message.button = (wparam & MK_MBUTTON) != 0 ? PointerButton::Middle : ((wparam & MK_RBUTTON) != 0 ? PointerButton::Right : PointerButton::Left);
                 state->listener->on_platform_event(message);
                 return 0;
             }

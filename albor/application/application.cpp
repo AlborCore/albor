@@ -242,6 +242,29 @@ namespace albor
         window->show();
     }
 
+    bool Application::dismiss_owned_popups(WindowHandle owner) {
+        // the popups are collected first, because closing one changes the state the walk reads (§5.1)
+        std::vector<WindowHandle> popups;
+        for (const std::pair<const std::uint64_t, WindowHandle>& entry : m_owned_windows) {
+            // a child of another window is not this window's popup (§5.1)
+            if (entry.second != owner)
+                continue;
+            // the entry names the child, which the registry resolves to the live surface (§5.2)
+            const WindowHandle handle = WindowHandle::from_id(entry.first);
+            const Window* window = m_windows.find(handle);
+            // only a shown transient surface is dismissed, because a hidden one already is (§5.1)
+            if (window == nullptr || window->options().role != WindowRole::Popup || !window->visible())
+                continue;
+            // the popup joins the collection, which the dismissal walks after the scan (§5.1)
+            popups.push_back(handle);
+        }
+        // every collected popup hides through the one dismissal path, which keeps its tree alive (§5.1)
+        for (const WindowHandle popup : popups)
+            close_popup(popup);
+        // a window with no shown popup owns nothing the key could dismiss (§5.1)
+        return !popups.empty();
+    }
+
     void Application::close_popup(WindowHandle popup) {
         // only a transient surface has a dismissal, so an ordinary window is left alone (§5.1)
         Window* window = m_windows.find(popup);
@@ -681,7 +704,7 @@ namespace albor
             m_resize_handler(handle);
         });
 
-        // the pacing tick of a window reaches the application frame handler, which is where drawing belongs (§4.3, §6.1)
+        // the pacing tick reaches the application frame handler, which is where drawing belongs (§4.3, §6.1)
         window.set_frame_handler([this, handle] {
             // a main window answers its own tick, which builds and submits its two stage frame (§6.1, AD-18)
             const std::map<std::uint64_t, std::unique_ptr<WindowStage>>::const_iterator stage = m_stages.find(handle.id());
@@ -704,7 +727,11 @@ namespace albor
             // a main window routes into its own tree, which is where the widgets answer (§8.3)
             Event routed = event;
             // a window with a stage routes through the bracketed delivery, which defers a handler's teardown (§4.2)
-            if (deliver_input(handle, routed)) {
+            const bool delivered = deliver_input(handle, routed);
+            // an unclaimed escape dismisses the popups the window owns, which is the keyboard dismissal (§5.1, §8.3)
+            if (routed.kind == EventKind::KeyDown && routed.key == Key::Escape && !routed.handled && dismiss_owned_popups(handle))
+                return;
+            if (delivered) {
                 // a main window is observed too, because a host reacts to what its tree answered (§8.3, AD-24)
                 if (m_input_handler)
                     m_input_handler(handle, routed);

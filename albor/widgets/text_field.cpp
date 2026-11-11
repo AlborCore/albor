@@ -655,6 +655,9 @@ namespace albor
         }
         // a press inside the plate puts the caret on the byte it lands over (§8.3, §9.1)
         if (event.kind == EventKind::PointerDown) {
+            // only the primary button places the caret, because the others are their own gesture (§8.3)
+            if (event.button != PointerButton::Left)
+                return;
             // a press outside the plate belongs to whatever is behind it (§8.3)
             if (!hit_test(event.position))
                 return;

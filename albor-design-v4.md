@@ -982,6 +982,24 @@ the node is already gone and cannot be told anything. This is why the notificati
 tree rather than in the caller, and it is the general shape to follow for any module that borrows
 node pointers across a mutation.
 
+**A Secondary Press Is a Context-Menu Request, and Every Button Reaches the Tree (settled during implementation):**
+
+A normalized pointer event carries its button. The primary button is the one the tree sees as
+`PointerDown` and `PointerUp`, because a control that activates on a press must never activate on
+a menu request. The secondary button is normalized by the input controller into
+`EventKind::ContextMenu` at the same position, and the middle and remaining buttons arrive as
+`PointerDown`/`PointerUp` that name themselves, so a control may claim a gesture of its own. A
+capture remembers the button that armed it, and only that button's release ends the drag; any
+pointer event while a drag is alive still reaches the captured node.
+
+The request is delivered to the deepest node carrying `set_on_context_menu`, then bubbles, and
+the handler receives the point in the node's own coordinates — the space a `Canvas` draws in — so
+a chart maps it to data without a second conversion. The menu key and `Shift+F10` synthesize the
+same request at the focused node's centre, and on macOS a Control press is the secondary click.
+The menu surface itself is the `PopupHost` of §5.1 under `WindowRole::Popup`, so outside-press,
+deactivation and teardown dismissal are the popup role's, not a second mechanism; an unclaimed
+`Escape` in the owner window closes the popups that window owns.
+
 ---
 
 ### 8.4 Style and Theming (settled during implementation)

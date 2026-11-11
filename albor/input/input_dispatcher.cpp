@@ -4,21 +4,21 @@
 
 namespace albor
 {
-    void InputDispatcher::dispatch(UiNode& root, Event& event) {
+    UiNode* InputDispatcher::dispatch(UiNode& root, Event& event) {
         // a claimed event is not offered again, because the walk stops at the handler that took it (§8.3)
         if (event.handled)
-            return;
+            return nullptr;
         // the walk starts at the children, because the deepest handler should win and the node is offered last (§8.3)
-        route_down(root, event);
+        return route_down(root, event);
     }
 
-    void InputDispatcher::route_down(UiNode& node, Event& event) {
+    UiNode* InputDispatcher::route_down(UiNode& node, Event& event) {
         // an overlay is offered before every ordinary child, because it draws above them (§8.3)
         const auto& overlays = node.overlays();
         for (auto position = overlays.size(); position > 0; position--) {
             // a claimed event stops the walk, so a popup press does not also reach a sibling (§8.3)
             if (event.handled)
-                return;
+                return nullptr;
             // a hidden overlay is out of reach, which keeps a dismissed popup inert (§8.3)
             UiNode* overlay = overlays[position - 1].get();
             if (overlay == nullptr || !overlay->visible())
@@ -27,13 +27,14 @@ namespace albor
             if (EventFilter::positioned(event) && !overlay->hit_test(event.position))
                 continue;
             // the overlay owns the event path while it is open (§8.3)
-            route_down(*overlay, event);
+            if (UiNode* claimed = route_down(*overlay, event); claimed != nullptr)
+                return claimed;
         }
         // every caller arrives with an unclaimed event, and the loop re-checks before each child (§8.3)
         for (auto position = node.child_count(); position > 0; position--) {
             // a claimed event stops the walk, so no sibling reacts to the same event (§8.3)
             if (event.handled)
-                return;
+                return nullptr;
             // a hidden child is out of reach, which keeps a hidden page from receiving an event (§8.3)
             UiNode* child = node.child_at(position - 1);
             if (child == nullptr || !child->visible())
@@ -42,11 +43,21 @@ namespace albor
             if (EventFilter::positioned(event) && !child->hit_test(event.position))
                 continue;
             // the deepest child that claims the event ends the walk, which is what makes the topmost control win (§8.3)
-            route_down(*child, event);
+            if (UiNode* claimed = route_down(*child, event); claimed != nullptr)
+                return claimed;
+        }
+        // a context-menu request belongs to the node under the pointer before it is offered as an event (§8.3)
+        if (!event.handled && event.kind == EventKind::ContextMenu && node.request_context_menu(event.position)) {
+            // the node that carries the handler owns the request, which is what stops the bubble here (§8.3)
+            event.handled = true;
+            return &node;
         }
         // no descendant claimed the event, so the node itself gets it as the next candidate (§8.3)
-        if (!event.handled)
-            node.dispatch_event(event);
+        if (event.handled)
+            return nullptr;
+        node.dispatch_event(event);
+        // the node is the claimer when its own handler took the event, which is what a press captures (§8.3)
+        return event.handled ? &node : nullptr;
     }
 
     void InputDispatcher::dispatch_to_focused(UiNode& root, Event& event, UiNode* focused) {
@@ -65,6 +76,12 @@ namespace albor
     }
 
     void InputDispatcher::route_up(UiNode& node, Event& event) {
+        // a context-menu request belongs to the focused node before it is offered as an event (§8.3)
+        if (!event.handled && event.kind == EventKind::ContextMenu && node.request_context_menu(event.position)) {
+            // the node that carries the handler owns the request, which is what stops the bubble here (§8.3)
+            event.handled = true;
+            return;
+        }
         // the node itself sees the event before its parent, because the innermost handler should win (§8.3)
         node.dispatch_event(event);
         // a claimed event ends the bubble, so no ancestor acts on the same key press (§8.3)

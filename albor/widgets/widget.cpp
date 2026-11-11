@@ -353,6 +353,9 @@ namespace albor
         }
         // a press sets the pressed flag, which the state reads (§8.3)
         if (event.kind == EventKind::PointerDown) {
+            // only the primary button presses a control, because a secondary or middle press is another gesture (§8.3)
+            if (event.button != PointerButton::Left)
+                return;
             // a second press while one is held changes nothing, so the widget is not repainted (§8.3)
             if (m_pressed)
                 return;
@@ -362,6 +365,9 @@ namespace albor
         }
         // a release clears the press, while a pointer capture keeps the moves coming (§8.3)
         if (event.kind == EventKind::PointerUp) {
+            // a release of another button leaves the primary press held, which keeps the visual honest (§8.3)
+            if (event.button != PointerButton::Left)
+                return;
             // a widget that held no press changes nothing, so it is not repainted (§6.1)
             if (!m_pressed)
                 return;

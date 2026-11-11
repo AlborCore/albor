@@ -41,6 +41,10 @@ namespace
         // whether this node reports itself as disabled, because a disabled node takes no focus (§8.3)
         bool blocked = false;
 
+        // the last event kind and button the node was offered, which the button tests read (§8.3)
+        EventKind last_kind = EventKind::PointerDown;
+        PointerButton last_button = PointerButton::Left;
+
         [[nodiscard]] bool disabled() const override {
             // the flag is the reported state, which the focus ring reads (§8.3)
             return blocked;
@@ -72,6 +76,9 @@ namespace
             }
             // the delivery is counted before the claim, so a refusing node is still observable (§8.3)
             deliveries++;
+            // the kind and the button are kept, because the routing tests assert what arrived (§8.3)
+            last_kind = event.kind;
+            last_button = event.button;
             // a claiming node marks the event handled, which stops the walk (§8.3)
             if (claims)
                 event.handled = true;
@@ -1195,7 +1202,7 @@ TEST(InputControllerChecks, AComposingEventIsClaimedSeparatelyFromACommit) {
     EXPECT_TRUE(committed.handled);
 }
 
-TEST(InputControllerChecks, ASecondPressWhileCapturingIsDropped) {
+TEST(InputControllerChecks, ASecondPressWhileCapturingReachesTheCapturedNode) {
     // arrange
     InputController controller;
     RecordingNode root;
@@ -1207,9 +1214,9 @@ TEST(InputControllerChecks, ASecondPressWhileCapturingIsDropped) {
     // act
     Event second{.kind = EventKind::PointerDown, .position = Point{20.0f, 20.0f}};
     controller.deliver(second);
-    // assert the capture was left alone, so the drag keeps flowing (§8.3)
-    EXPECT_FALSE(second.handled);
-    EXPECT_EQ(root.deliveries, 1u);
+    // assert the capture owned the press, so the drag keeps flowing (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_EQ(root.deliveries, 2u);
     EXPECT_TRUE(controller.capturing());
 }
 
@@ -1772,4 +1779,256 @@ TEST(ShortcutRoutingChecks, TwoAcceleratorsIntoOneCommandContributeTwoHistoryEnt
     controller.deliver(second);
     // assert each route records through the one shared object, so the history sits behind the command (§18.4)
     EXPECT_EQ(commands.undo_stack().depth(), std::size_t{2});
+}
+
+TEST(InputControllerChecks, ASecondaryPressRaisesAContextMenuRequestAtTheNodeLocalPoint) {
+    // arrange a node away from the origin, which is what makes the local point visible (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{40.0f, 30.0f}, Size{100.0f, 80.0f}));
+    Point requested{};
+    int requests = 0;
+    root.set_on_context_menu([&requested, &requests](Point point) {
+        requested = point;
+        requests++;
+    });
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{70.0f, 50.0f}, .button = PointerButton::Right};
+    // act
+    controller.deliver(press);
+    // assert the node reads the point against its own corner, which is the chart-local position (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(requests, 1);
+    EXPECT_FLOAT_EQ(requested.x, 30.0f);
+    EXPECT_FLOAT_EQ(requested.y, 20.0f);
+}
+
+TEST(InputControllerChecks, AContextMenuRequestBubblesToTheNearestHandler) {
+    // arrange a child without a handler inside a parent that carries one (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    auto child = std::make_unique<RecordingNode>();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{40.0f, 40.0f}));
+    RecordingNode* inner = child.get();
+    root.add_child(std::move(child));
+    Point requested{};
+    int requests = 0;
+    root.set_on_context_menu([&requested, &requests](Point point) {
+        requested = point;
+        requests++;
+    });
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{20.0f, 20.0f}, .button = PointerButton::Right};
+    // act
+    controller.deliver(press);
+    // assert the nearest handler took the request, and the child carried none of its own (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(requests, 1);
+    EXPECT_FALSE(inner->has_on_context_menu());
+    EXPECT_FLOAT_EQ(requested.x, 20.0f);
+    EXPECT_FLOAT_EQ(requested.y, 20.0f);
+}
+
+TEST(InputControllerChecks, AnUnhandledContextMenuRequestLeavesTheEventOpen) {
+    // arrange a tree with no context-menu handler anywhere, which claims no event of its own (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}, .button = PointerButton::Right};
+    // act
+    controller.deliver(press);
+    // assert the request is left for the application, because no node wanted it (§8.3)
+    EXPECT_FALSE(press.handled);
+}
+
+TEST(InputControllerChecks, AMiddlePressReachesTheTreeWithItsButton) {
+    // arrange a node that claims every press it is offered (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}, .button = PointerButton::Middle};
+    // act
+    controller.deliver(press);
+    // assert the middle button arrives as a press that names itself, which a control may claim (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(root.last_kind, EventKind::PointerDown);
+    EXPECT_EQ(root.last_button, PointerButton::Middle);
+    EXPECT_TRUE(controller.capturing());
+}
+
+TEST(InputControllerChecks, AMiddleReleaseEndsTheDragTheMiddlePressStarted) {
+    // arrange a captured middle press (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}, .button = PointerButton::Middle};
+    controller.deliver(press);
+    // act
+    Event release{.kind = EventKind::PointerUp, .position = Point{12.0f, 12.0f}, .button = PointerButton::Middle};
+    controller.deliver(release);
+    // assert the matching release drops the capture, so the next press starts a new gesture (§8.3)
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, ASecondaryReleaseDoesNotEndAPrimaryDrag) {
+    // arrange a captured primary press (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    ASSERT_TRUE(controller.capturing());
+    // act a secondary release arrives while the primary drag is live (§8.3)
+    Event release{.kind = EventKind::PointerUp, .position = Point{20.0f, 20.0f}, .button = PointerButton::Right};
+    controller.deliver(release);
+    // assert the drag is still captured, because only its own button ends it (§8.3)
+    EXPECT_TRUE(controller.capturing());
+    // act the primary release ends it
+    Event primary{.kind = EventKind::PointerUp, .position = Point{20.0f, 20.0f}};
+    controller.deliver(primary);
+    // assert the primary release is the one that drops the capture (§8.3)
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, ASecondaryPressDuringACaptureReachesTheCapturedNode) {
+    // arrange a captured primary press on a node without a menu handler (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    ASSERT_TRUE(controller.capturing());
+    // act a secondary press lands outside the captured node (§8.3)
+    Event secondary{.kind = EventKind::PointerDown, .position = Point{200.0f, 200.0f}, .button = PointerButton::Right};
+    controller.deliver(secondary);
+    // assert the capture owned the request, so the drag keeps flowing (§8.3)
+    EXPECT_EQ(root.deliveries, 2u);
+    EXPECT_TRUE(controller.capturing());
+}
+
+TEST(InputControllerChecks, ShiftF10RaisesAContextMenuRequestAtTheFocusedNode) {
+    // arrange a focusable node with a context-menu handler (§8.3)
+    InputController controller;
+    UiNode root;
+    auto node = std::make_unique<FocusRecordingNode>();
+    node->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{40.0f, 20.0f}));
+    FocusRecordingNode* target = node.get();
+    root.add_child(std::move(node));
+    Point requested{};
+    int requests = 0;
+    target->set_on_context_menu([&requested, &requests](Point point) {
+        requested = point;
+        requests++;
+    });
+    controller.attach(root);
+    controller.focus().request_focus(target);
+    ASSERT_TRUE(target->focused);
+    Event key{.kind = EventKind::KeyDown, .key = Key::F10};
+    key.modifiers.shift = true;
+    // act
+    controller.deliver(key);
+    // assert the request opens at the centre of the focused node, read against its own corner (§8.3)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(requests, 1);
+    EXPECT_FLOAT_EQ(requested.x, 20.0f);
+    EXPECT_FLOAT_EQ(requested.y, 10.0f);
+}
+
+TEST(InputControllerChecks, TheMenuKeyRaisesAContextMenuRequest) {
+    // arrange a focusable node with a context-menu handler (§8.3)
+    InputController controller;
+    UiNode root;
+    auto node = std::make_unique<FocusRecordingNode>();
+    node->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    FocusRecordingNode* target = node.get();
+    root.add_child(std::move(node));
+    int requests = 0;
+    target->set_on_context_menu([&requests](Point) { requests++; });
+    controller.attach(root);
+    controller.focus().request_focus(target);
+    Event key{.kind = EventKind::KeyDown, .key = Key::Menu};
+    // act
+    controller.deliver(key);
+    // assert the menu key is the keyboard route to the same request (§8.3)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(requests, 1);
+}
+
+TEST(InputControllerChecks, AHoverOrAPrimaryPressRaisesNoContextMenuRequest) {
+    // arrange a node that carries a handler, so a wrong route would be visible (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    int requests = 0;
+    root.set_on_context_menu([&requests](Point) { requests++; });
+    controller.attach(root);
+    // act a hover and a primary press cross the node (§8.3)
+    Event move{.kind = EventKind::PointerMove, .position = Point{10.0f, 10.0f}};
+    controller.deliver(move);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    // assert neither gesture is a menu request, which keeps the menu out of the activation path (§8.3)
+    EXPECT_EQ(requests, 0);
+}
+
+TEST(InputControllerChecks, AMiddlePressDoesNotMoveTheFocus) {
+    // arrange a claiming container holding two focusable nodes, with the caret on the first (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    auto first = std::make_unique<FocusRecordingNode>();
+    first->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}));
+    FocusRecordingNode* first_node = first.get();
+    auto second = std::make_unique<FocusRecordingNode>();
+    second->arrange(Rect::from_origin_size(Point{60.0f, 0.0f}, Size{40.0f, 40.0f}));
+    FocusRecordingNode* second_node = second.get();
+    root.add_child(std::move(first));
+    root.add_child(std::move(second));
+    controller.attach(root);
+    controller.focus().request_focus(first_node);
+    ASSERT_TRUE(first_node->focused);
+    // act a middle press lands on the other node and the container claims it (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{70.0f, 10.0f}, .button = PointerButton::Middle};
+    controller.deliver(press);
+    // assert the press was claimed, so the focus rule was actually reached (§8.3)
+    ASSERT_TRUE(press.handled);
+    // assert the caret stayed where it was, because only the primary button moves it (§8.3)
+    EXPECT_EQ(controller.focus().focused(), first_node);
+    EXPECT_FALSE(second_node->focused);
+}
+
+TEST(InputControllerChecks, ADisabledChildLeavesTheContextMenuToItsParent) {
+    // arrange a disabled child with a handler under a parent that carries one too (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    auto child = std::make_unique<RecordingNode>();
+    child->blocked = true;
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{40.0f, 40.0f}));
+    RecordingNode* inner = child.get();
+    root.add_child(std::move(child));
+    int parent_requests = 0;
+    int child_requests = 0;
+    root.set_on_context_menu([&parent_requests](Point) { parent_requests++; });
+    inner->set_on_context_menu([&child_requests](Point) { child_requests++; });
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{20.0f, 20.0f}, .button = PointerButton::Right};
+    // act
+    controller.deliver(press);
+    // assert the parent answered, because a disabled node refuses the request like every other input (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(parent_requests, 1);
+    EXPECT_EQ(child_requests, 0);
 }
