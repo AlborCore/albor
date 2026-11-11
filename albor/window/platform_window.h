@@ -37,6 +37,11 @@ namespace albor
         // report that the native window lost key status, which ends a drag no release can finish (§5.3, §8.3)
         virtual void on_platform_focus_lost() = 0;
 
+        // report that the native window gained key status, which restores the focus cue (§5.3, §8.3)
+        virtual void on_platform_focus_gained() {
+            // a backend that carries no cue restores nothing, which is the quiet default of §8.3
+        }
+
         // report that the appearance the system renders with changed while the window is alive (§5.3, §8.4)
         virtual void on_platform_appearance_changed(const SystemAppearance& appearance) = 0;
     };

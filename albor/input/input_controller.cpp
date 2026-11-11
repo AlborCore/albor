@@ -168,10 +168,16 @@ namespace albor
                 return;
             // the primary button is the one that moves the caret, while a middle press leaves the focus alone (§8.3)
             if (event.button == PointerButton::Left) {
-                // the deepest focusable node under the press takes the caret (§8.3)
+                // the deepest focusable node under the press names what the pointer landed on (§8.3)
                 UiNode* target = focusable_under(*m_root, event.position);
-                if (target != nullptr)
-                    m_focus.request_focus(target);
+                // only a control under the press changes the cue, because empty space keeps the last focus (§8.3)
+                if (target != nullptr) {
+                    // the pointer lowers the cue, which is the modality that must not paint a keyboard ring (§8.3)
+                    m_focus.hide_focus_cue();
+                    // a control that takes pointer focus moves the caret, while preserve and none keep it (§8.3)
+                    if (target->pointer_focus_policy() == PointerFocusPolicy::Take)
+                        m_focus.request_focus(target, FocusReason::Pointer);
+                }
             }
             // the node that claimed the press carries the drag, so moves keep reaching it outside its bounds (§8.3)
             if (claimed != nullptr && !claimed->disabled() && claimed->hit_test(event.position)) {
@@ -210,6 +216,9 @@ namespace albor
     }
 
     void InputController::deliver_key(Event& event) {
+        // a key press is the keyboard modality, which raises the cue a pointer lowered (§8.3)
+        if (event.kind == EventKind::KeyDown)
+            m_focus.reveal_focus();
         // the escape key cancels a drag before anything else, which is the abort path of §8.3
         if (event.kind == EventKind::KeyDown && event.key == Key::Escape) {
             // a live drag is the first escape target, because it owns the pointer until it aborts (§8.3)

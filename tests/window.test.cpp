@@ -999,6 +999,17 @@ TEST(Window, APlatformFocusLossReachesTheFocusLostHandler) {
     EXPECT_TRUE(called);
 }
 
+TEST(Window, APlatformFocusGainReachesTheFocusGainedHandler) {
+    // arrange a window that restores its cue when key status returns (§8.3)
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    bool called = false;
+    window.set_focus_gained_handler([&called] { called = true; });
+    // act
+    window.on_platform_focus_gained();
+    // assert the platform report reached the handler, because the cue it hid belongs to it (§8.3)
+    EXPECT_TRUE(called);
+}
+
 TEST(Window, AHideReachesTheHiddenHandlerBeforeTheNativeWindow) {
     // arrange a window whose handler cancels the drag while the tree is still alive (§8.3)
     auto native = std::make_unique<TestPlatformWindow>();

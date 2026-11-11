@@ -15,6 +15,7 @@
 #include "albor/text/text_engine.h"
 #include "albor/widgets/button.h"
 #include "albor/widgets/text_field.h"
+#include "albor/widgets/tool_bar.h"
 #include "albor/window/platform_window_factory.h"
 
 namespace
@@ -1906,4 +1907,335 @@ TEST(MainWindow, AClaimedEscapeLeavesThePopupOpen) {
     EXPECT_TRUE(popup_window->visible());
     // cleanup
     EXPECT_TRUE(application.destroy_window(owner));
+}
+
+TEST(MainWindow, AToolBarButtonPressKeepsTheEditorFocus) {
+    // arrange a parent whose strip holds an editor and an action button (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::TextField* editor = nullptr;
+    albor::Button* action = nullptr;
+    albor::RootBuilder toolbar_form = [&editor, &action](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column stacks the strip under nothing, which is the shell shape the bug reported (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the strip hosts the editor and the action, which is where the pointer lands (§8.2)
+        auto bar = std::make_unique<albor::ToolBar>(&engine);
+        // the editor is the control whose caret the press must keep (§8.3)
+        auto field = std::make_unique<albor::TextField>(&engine, &text, "text");
+        // the identity is how the test finds the editor after the frame (§18.1)
+        field->set_explicit_id("editor");
+        // the pointer is kept for the bounds the test presses (§8.2)
+        editor = field.get();
+        // the field joins the strip, which places it first (§8.2)
+        bar->add_child(std::move(field));
+        // the action is the control that must not steal the caret (§8.3)
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Open");
+        // the identity is how the test finds the action after the frame (§18.1)
+        button->set_explicit_id("open");
+        // the pointer is kept for the bounds the test presses (§8.2)
+        action = button.get();
+        // the button joins the strip, which gives it the preserve policy (§8.3)
+        bar->add_child(std::move(button));
+        // the strip joins the column, which is the window tree (§8.1)
+        column->add_child(std::move(bar));
+        return column;
+    };
+    albor::WindowOptions options;
+    options.size = albor::Size{600.0f, 400.0f};
+    const albor::WindowHandle handle = application.create_window(options, toolbar_form);
+    ASSERT_TRUE(handle.valid());
+    // the frame arranges the tree, which is what gives both controls bounds (§8.2)
+    application.pump();
+    ASSERT_NE(editor, nullptr);
+    ASSERT_NE(action, nullptr);
+    albor::WindowStage* stage = application.stage(handle);
+    ASSERT_NE(stage, nullptr);
+    const albor::Rect button = action->bounds();
+    // act the editor takes the caret from the keyboard, which is the editing state the bug was reported in (§8.3)
+    stage->focus().request_focus(editor, albor::FocusReason::Keyboard);
+    ASSERT_EQ(stage->focus().focused(), editor);
+    ASSERT_TRUE(editor->focus_visible());
+    // act the pointer clicks the toolbar action
+    albor::Event action_press{.kind = albor::EventKind::PointerDown, .position = albor::Point{button.x + button.width * 0.5f, button.y + button.height * 0.5f}};
+    stage->deliver(action_press);
+    // assert the action claimed the press, while the editor kept the keys and lost only the cue (§8.3)
+    EXPECT_TRUE(action_press.handled);
+    EXPECT_EQ(stage->focus().focused(), editor);
+    EXPECT_FALSE(editor->focus_visible());
+    // act the release ends the action's drag
+    albor::Event action_release{.kind = albor::EventKind::PointerUp, .position = action_press.position};
+    stage->deliver(action_release);
+    // assert the editor still owns the caret after the whole press and release (§8.3)
+    EXPECT_EQ(stage->focus().focused(), editor);
+    // cleanup the window, which owns the tree the controls live in (§8.1)
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(MainWindow, AToolBarActionDialogRestoresTheEditor) {
+    // arrange a parent whose toolbar action opens a window modal dialog (§5.1, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle parent;
+    albor::WindowHandle dialog;
+    albor::TextField* editor = nullptr;
+    albor::Button* action = nullptr;
+    int accepted = 0;
+    int dismissed = 0;
+    albor::RootBuilder toolbar_form = [&application, &parent, &dialog, &editor, &action, &accepted, &dismissed](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column stacks the strip, which is the shell the action sits in (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the strip hosts the editor and the action (§8.2)
+        auto bar = std::make_unique<albor::ToolBar>(&engine);
+        // the editor is the invoking focus the dialog must remember (§8.3)
+        auto field = std::make_unique<albor::TextField>(&engine, &text, "text");
+        // the identity is how the close finds the editor again (§18.1)
+        field->set_explicit_id("editor");
+        // the pointer is kept for the bounds the test presses (§8.2)
+        editor = field.get();
+        // the field joins the strip, which places it first (§8.2)
+        bar->add_child(std::move(field));
+        // the action opens the dialog from inside its own press (§5.1)
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Open");
+        // the identity names the action the test presses (§18.1)
+        button->set_explicit_id("open");
+        // the pointer is kept for the bounds the test presses (§8.2)
+        action = button.get();
+        // the press runs the dialog open, which is the transient surface under test (§5.1)
+        button->set_on_click([&application, &parent, &dialog, &accepted, &dismissed] {
+            // the dialog is window modal, which is the shape an Open action opens (§5.1)
+            albor::WindowOptions dialog_options;
+            dialog_options.role = albor::WindowRole::Dialog;
+            dialog_options.modality = albor::Modality::WindowModal;
+            dialog_options.title = "Dialog";
+            dialog_options.parent = parent;
+            // the dialog form carries a field, a default and a cancel key (§8.3)
+            dialog = application.create_window(dialog_options, dialog_form(accepted, dismissed));
+        });
+        // the button joins the strip, which gives it the preserve policy (§8.3)
+        bar->add_child(std::move(button));
+        // the strip joins the column, which is the window tree (§8.1)
+        column->add_child(std::move(bar));
+        return column;
+    };
+    albor::WindowOptions parent_options;
+    parent_options.size = albor::Size{600.0f, 400.0f};
+    parent = application.create_window(parent_options, toolbar_form);
+    ASSERT_TRUE(parent.valid());
+    // the frame arranges the tree, which is what gives both controls bounds (§8.2)
+    application.pump();
+    albor::WindowStage* parent_stage = application.stage(parent);
+    ASSERT_NE(parent_stage, nullptr);
+    // act the pointer focuses the editor, which is the control the dialog must return to (§8.3)
+    const albor::Rect field = editor->bounds();
+    albor::Event focus_press{.kind = albor::EventKind::PointerDown, .position = albor::Point{field.x + field.width * 0.5f, field.y + field.height * 0.5f}};
+    parent_stage->deliver(focus_press);
+    albor::Event focus_release{.kind = albor::EventKind::PointerUp, .position = focus_press.position};
+    parent_stage->deliver(focus_release);
+    ASSERT_EQ(parent_stage->focus().focused(), editor);
+    // act the pointer runs the toolbar action, which opens the dialog
+    const albor::Rect button = action->bounds();
+    albor::Event action_press{.kind = albor::EventKind::PointerDown, .position = albor::Point{button.x + button.width * 0.5f, button.y + button.height * 0.5f}};
+    parent_stage->deliver(action_press);
+    // assert the toolbar action never owned the parent focus, which is what makes the restore correct (§8.3)
+    EXPECT_TRUE(action_press.handled);
+    EXPECT_EQ(parent_stage->focus().focused(), editor);
+    ASSERT_TRUE(dialog.valid());
+    // act the dialog's first frame places its own initial focus (§8.3)
+    application.pump();
+    albor::UiNode* dialog_focus = application.stage(dialog)->focus().focused();
+    ASSERT_NE(dialog_focus, nullptr);
+    // assert the dialog owns the interaction while it is open (§5.1, §8.3)
+    EXPECT_EQ(dialog_focus->identity().explicit_id, "name");
+    // act the dialog closes, which returns the focus to the control that opened it (§8.3)
+    EXPECT_TRUE(application.destroy_window(dialog));
+    // assert the editor is the owner again, because the toolbar button never took it (§8.3)
+    EXPECT_EQ(parent_stage->focus().focused(), editor);
+    // cleanup the parent, which owns the tree the editor lives in (§8.1)
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, AToolBarFilePanelKeepsTheEditorFocus) {
+    // arrange a parent whose toolbar action opens the synchronous native file panel (§5.3, §8.3)
+    InstalledScope scope;
+    albor::headless::reset_file_dialogs();
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle parent;
+    albor::TextField* editor = nullptr;
+    albor::Button* action = nullptr;
+    int activations = 0;
+    albor::RootBuilder toolbar_form = [&application, &parent, &editor, &action, &activations](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column stacks the strip, which is the shell the action sits in (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the strip hosts the editor and the action (§8.2)
+        auto bar = std::make_unique<albor::ToolBar>(&engine);
+        // the editor is the control the panel must not take the keys from (§8.3)
+        auto field = std::make_unique<albor::TextField>(&engine, &text, "text");
+        // the identity is how the test finds the editor after the frame (§18.1)
+        field->set_explicit_id("editor");
+        // the pointer is kept for the bounds the test presses (§8.2)
+        editor = field.get();
+        // the field joins the strip, which places it first (§8.2)
+        bar->add_child(std::move(field));
+        // the action opens the panel from inside its own press (§5.3)
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Open");
+        // the identity names the action the test presses (§18.1)
+        button->set_explicit_id("open");
+        // the pointer is kept for the bounds the test presses (§8.2)
+        action = button.get();
+        // the press runs the panel synchronously, which is the native transient under test (§5.3)
+        button->set_on_click([&application, &parent, &activations] {
+            // the run is counted, which is how the test sees the panel path (§8.3)
+            activations++;
+            // the file options name the window the panel is parented to (§5.3)
+            albor::OpenFileOptions options;
+            options.parent = parent;
+            options.title = "Open";
+            // the panel returns before the press dispatch unwinds (§5.3)
+            (void)application.open_file(options);
+        });
+        // the button joins the strip, which gives it the preserve policy (§8.3)
+        bar->add_child(std::move(button));
+        // the strip joins the column, which is the window tree (§8.1)
+        column->add_child(std::move(bar));
+        return column;
+    };
+    albor::WindowOptions parent_options;
+    parent_options.size = albor::Size{600.0f, 400.0f};
+    parent = application.create_window(parent_options, toolbar_form);
+    ASSERT_TRUE(parent.valid());
+    // the frame arranges the tree, which is what gives both controls bounds (§8.2)
+    application.pump();
+    albor::WindowStage* stage = application.stage(parent);
+    ASSERT_NE(stage, nullptr);
+    // act the pointer focuses the editor, which is the control the panel must leave alone (§8.3)
+    const albor::Rect field = editor->bounds();
+    albor::Event focus_press{.kind = albor::EventKind::PointerDown, .position = albor::Point{field.x + field.width * 0.5f, field.y + field.height * 0.5f}};
+    stage->deliver(focus_press);
+    albor::Event focus_release{.kind = albor::EventKind::PointerUp, .position = focus_press.position};
+    stage->deliver(focus_release);
+    ASSERT_EQ(stage->focus().focused(), editor);
+    // act the pointer runs the toolbar action, which opens and closes the panel inside the dispatch
+    const albor::Rect button = action->bounds();
+    albor::Event action_press{.kind = albor::EventKind::PointerDown, .position = albor::Point{button.x + button.width * 0.5f, button.y + button.height * 0.5f}};
+    stage->deliver(action_press);
+    // assert the panel ran and the editor kept the keys, because the action never took them (§8.3)
+    EXPECT_TRUE(action_press.handled);
+    EXPECT_EQ(activations, 1);
+    EXPECT_EQ(albor::headless::file_dialog_count(), 1U);
+    EXPECT_EQ(stage->focus().focused(), editor);
+    // cleanup the parent, which owns nothing after the panel returns (§5.1)
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, AnOpenPopupKeepsTheOwnerEditorFocus) {
+    // arrange an owner whose editor holds the caret, with a popup that hosts its own row (§5.1, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::TextField* editor = nullptr;
+    albor::Button* row = nullptr;
+    albor::RootBuilder owner_form = [&editor](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns the editor, which is the focus the popup must not take (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the editor is the owner control the popup floats over (§8.3)
+        auto field = std::make_unique<albor::TextField>(&engine, &text, "text");
+        // the identity is how the test finds the editor after the frame (§18.1)
+        field->set_explicit_id("editor");
+        // the pointer is kept for the bounds the test presses (§8.2)
+        editor = field.get();
+        // the field joins the column, which is the window tree (§8.1)
+        column->add_child(std::move(field));
+        return column;
+    };
+    albor::WindowOptions owner_options;
+    owner_options.size = albor::Size{600.0f, 400.0f};
+    const albor::WindowHandle owner = application.create_window(owner_options, owner_form);
+    ASSERT_TRUE(owner.valid());
+    // the frame arranges the tree, which gives the editor bounds to take the caret (§8.2)
+    application.pump();
+    albor::WindowStage* owner_stage = application.stage(owner);
+    ASSERT_NE(owner_stage, nullptr);
+    const albor::Rect field = editor->bounds();
+    // act the pointer focuses the editor, which is the owner focus the popup must leave alone (§8.3)
+    albor::Event focus_press{.kind = albor::EventKind::PointerDown, .position = albor::Point{field.x + field.width * 0.5f, field.y + field.height * 0.5f}};
+    owner_stage->deliver(focus_press);
+    albor::Event focus_release{.kind = albor::EventKind::PointerUp, .position = focus_press.position};
+    owner_stage->deliver(focus_release);
+    ASSERT_EQ(owner_stage->focus().focused(), editor);
+    // act the popup opens with its own row, which has a stage and a focus manager of its own (§5.1)
+    albor::RootBuilder popup_form = [&row](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column stacks the row, which is the transient content (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the row is a button the pointer presses inside the popup (§8.3)
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Row");
+        // the identity is how the test finds the row after the frame (§18.1)
+        button->set_explicit_id("row");
+        // the pointer is kept for the bounds the test presses (§8.2)
+        row = button.get();
+        // the row joins the column, which is the popup tree (§8.1)
+        column->add_child(std::move(button));
+        return column;
+    };
+    const albor::WindowHandle popup = application.open_popup(*editor, albor::Rect::from_origin_size(albor::Point{10.0f, 10.0f}, albor::Size{120.0f, 40.0f}), albor::Size{240.0f, 120.0f}, popup_form, albor::Color::rgba(0.1f, 0.1f, 0.1f, 1.0f), [] {});
+    ASSERT_TRUE(popup.valid());
+    application.pump();
+    ASSERT_NE(row, nullptr);
+    albor::WindowStage* popup_stage = application.stage(popup);
+    ASSERT_NE(popup_stage, nullptr);
+    // act the pointer presses the popup row, which is a normal take control inside the transient
+    const albor::Rect row_bounds = row->bounds();
+    albor::Event row_press{.kind = albor::EventKind::PointerDown, .position = albor::Point{row_bounds.x + row_bounds.width * 0.5f, row_bounds.y + row_bounds.height * 0.5f}};
+    popup_stage->deliver(row_press);
+    // assert the row owns the transient focus while the owner editor keeps its own (§5.1, §8.3)
+    EXPECT_EQ(popup_stage->focus().focused(), row);
+    EXPECT_EQ(owner_stage->focus().focused(), editor);
+    // act the popup closes, which leaves the owner where it was
+    application.destroy_popup(popup);
+    // assert the owner editor never lost the caret to the transient surface (§8.3)
+    EXPECT_EQ(owner_stage->focus().focused(), editor);
+    // cleanup the owner window (§5.1)
+    EXPECT_TRUE(application.destroy_window(owner));
+}
+
+TEST(MainWindow, AKeyStatusLossHidesTheCueWithoutDroppingTheFocus) {
+    // arrange a window whose button is focused by the keyboard (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::Button* button = nullptr;
+    albor::RootBuilder form = [&button](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns one identifiable button, which is the focus owner under test (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the button is the control whose cue the key status changes (§8.3)
+        auto control = std::make_unique<albor::Button>(&engine, &text, "Press");
+        // the identity is how the test finds the button after the frame (§18.1)
+        control->set_explicit_id("press");
+        // the pointer is kept for the assertions the test makes (§8.3)
+        button = control.get();
+        // the button joins the column, which is the window tree (§8.1)
+        column->add_child(std::move(control));
+        return column;
+    };
+    albor::WindowOptions options;
+    options.size = albor::Size{600.0f, 400.0f};
+    const albor::WindowHandle handle = application.create_window(options, form);
+    ASSERT_TRUE(handle.valid());
+    // the frame arranges the tree, which gives the button bounds to accept the caret (§8.2)
+    application.pump();
+    ASSERT_NE(button, nullptr);
+    albor::WindowStage* stage = application.stage(handle);
+    ASSERT_NE(stage, nullptr);
+    stage->focus().request_focus(button, albor::FocusReason::Keyboard);
+    ASSERT_TRUE(button->focus_visible());
+    // act the platform reports the window lost key status
+    application.window(handle)->on_platform_focus_lost();
+    // assert the owner survived while the cue went away, which is the inactive window rule (§8.3)
+    EXPECT_EQ(stage->focus().focused(), button);
+    EXPECT_TRUE(button->focused());
+    EXPECT_FALSE(button->focus_visible());
+    // act the platform reports the window regained key status
+    application.window(handle)->on_platform_focus_gained();
+    // assert the cue returned without a new focus change (§8.3)
+    EXPECT_EQ(stage->focus().focused(), button);
+    EXPECT_TRUE(button->focus_visible());
+    // cleanup the window, which owns the tree the button lives in (§8.1)
+    EXPECT_TRUE(application.destroy_window(handle));
 }

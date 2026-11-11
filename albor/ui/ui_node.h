@@ -17,6 +17,15 @@ namespace albor
 {
     // the animation core a widget drives itself with, declared ahead so this header stays light (§7.3)
     class AnimationEngine;
+
+    // how a pointer press treats the focus, which a control declares apart from its tab stop (§8.3)
+    enum class PointerFocusPolicy
+    {
+        Take,
+        Preserve,
+        None
+    };
+
     // the node of the UI tree, which owns its children and the two pass layout contract (§8.1, §8.2)
     class UiNode
     {
@@ -81,6 +90,12 @@ namespace albor
 
         // report whether the focus walk enters this node's children, which a decorative subtree declines (§8.3)
         [[nodiscard]] virtual bool focusable_children() const;
+
+        // report how a pointer press treats the focus, which is independent of the tab stop (§8.3)
+        [[nodiscard]] virtual PointerFocusPolicy pointer_focus_policy() const;
+
+        // set the pointer focus policy, because a control and the strip that contains it may differ (§8.3)
+        void set_pointer_focus_policy(PointerFocusPolicy policy);
 
         // offer the event to this node only, because the dispatcher walks the tree so each node is offered once (§8.3)
         virtual void dispatch_event(Event& event);
@@ -238,6 +253,9 @@ namespace albor
         // mark the node and its descendants for arrangement, which a subtree returning to the frame needs (§8.2)
         void invalidate_arrange_subtree();
 
+        // report whether the author wrote the pointer policy, because an explicit value wins over a context (§8.3)
+        [[nodiscard]] bool pointer_focus_policy_authored() const;
+
         // narrow the damage a child reports to what this node actually paints, which a clipping container overrides (§6.1)
         [[nodiscard]] virtual Rect clip_child_damage(const Rect& damage) const;
 
@@ -321,5 +339,11 @@ namespace albor
 
         // how the node sits on the vertical axis, which a parent reads when it arranges (§8.2)
         Align m_vertical_align = Align::Inherit;
+
+        // how a pointer press treats the focus, where take is the default of a focusable control (§8.3)
+        PointerFocusPolicy m_pointer_focus_policy = PointerFocusPolicy::Take;
+
+        // whether the author wrote the policy, because an explicit value wins over the containing context (§8.3)
+        bool m_pointer_focus_policy_set = false;
     };
 } // namespace albor

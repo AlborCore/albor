@@ -96,6 +96,9 @@ namespace albor
         // install the callback a native focus loss reaches, which cancels the drag the window held (§5.1, §8.3)
         void set_focus_lost_handler(std::function<void()> handler);
 
+        // install the callback a native focus gain reaches, which restores the focus cue the window hid (§5.1, §8.3)
+        void set_focus_gained_handler(std::function<void()> handler);
+
         // install the callback a hide reaches, which cancels the drag before the surface leaves (§5.1, §8.3)
         void set_hidden_handler(std::function<void()> handler);
 
@@ -125,6 +128,9 @@ namespace albor
 
         // override: report a native focus loss to the focus lost handler (§5.3, §8.3)
         void on_platform_focus_lost() override;
+
+        // override: report a native focus gain to the focus gained handler (§5.3, §8.3)
+        void on_platform_focus_gained() override;
 
         // override: report a system appearance change to the appearance handler (§5.3, §8.4)
         void on_platform_appearance_changed(const SystemAppearance& appearance) override;
@@ -156,6 +162,9 @@ namespace albor
 
         // the callback a native focus loss reaches, which cancels the drag no release will finish (§8.3)
         std::function<void()> m_focus_lost_handler;
+
+        // the callback a native focus gain reaches, which restores the cue the window hid (§8.3)
+        std::function<void()> m_focus_gained_handler;
 
         // the callback a hide reaches, which cancels the drag before the surface leaves (§8.3)
         std::function<void()> m_hidden_handler;

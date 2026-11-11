@@ -140,7 +140,7 @@ namespace albor
             // the event is claimed, so no ancestor reacts to the same key (§8.3)
             event.handled = true;
             // the toggle runs once, which is what a key press means (§8.3)
-            toggle();
+            toggle(InvocationSource::Keyboard);
             return;
         }
         // a press is the only other event that toggles a box (§8.3)
@@ -160,7 +160,7 @@ namespace albor
         // the event is claimed, so no ancestor reacts to the same press (§8.3)
         event.handled = true;
         // the toggle runs once, which is what a press means (§8.3)
-        toggle();
+        toggle(InvocationSource::Pointer);
     }
 
     SemanticNode CheckBox::semantic_node() const {
@@ -180,8 +180,8 @@ namespace albor
         node.set_check(m_indeterminate ? CheckState::Indeterminate : m_checked ? CheckState::Checked : CheckState::Unchecked);
         // the toggle action runs the press path with no disabled guard, invoke refuses actions on a disabled node (§10.1)
         (void)node.add_action("toggle", [control = mutable_owner(this)] {
-            // the toggle runs through the shared command when one is bound, as a press does (§18.7)
-            control->toggle();
+            // the toggle runs through the shared command when one is bound, as a semantic activation (§18.7)
+            control->toggle(InvocationSource::Accessibility);
         });
         return node;
     }
@@ -249,7 +249,7 @@ namespace albor
         invalidate();
     }
 
-    void CheckBox::toggle() {
+    void CheckBox::toggle(InvocationSource source) {
         // a mixed box resolves to checked on the next press, which is what a tri state control does (§10.1)
         if (m_indeterminate) {
             m_indeterminate = false;
@@ -263,7 +263,7 @@ namespace albor
         invalidate();
         // a bound command is invoked with the new truth, which is what an action that carries a value receives (§18.3)
         if (command() != nullptr) {
-            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = m_checked, .selection = {}, .source = InvocationSource::Pointer});
+            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = m_checked, .selection = {}, .source = source});
             return;
         }
         // a box with no handler still toggles, because the state is the control (§8.3)

@@ -669,6 +669,12 @@ namespace albor
                 state->listener->on_platform_event(message);
                 return 0;
             }
+            case WM_SETFOCUS: {
+                // gaining keyboard focus restores the cue the window hid while it was inactive (§5.1, §8.3)
+                state->listener->on_platform_focus_gained();
+                // the activation flow needs no other answer, which the default procedure carries (§5.3)
+                return DefWindowProcW(window, code, wparam, lparam);
+            }
             case WM_ACTIVATE: {
                 // losing activation ends a drag whose release the window will never receive (§5.1, §8.3)
                 if (LOWORD(wparam) == WA_INACTIVE)

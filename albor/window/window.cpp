@@ -163,6 +163,11 @@ namespace albor
         m_focus_lost_handler = std::move(handler);
     }
 
+    void Window::set_focus_gained_handler(std::function<void()> handler) {
+        // the handler restores the cue a returning key status gives back (§8.3)
+        m_focus_gained_handler = std::move(handler);
+    }
+
     void Window::set_hidden_handler(std::function<void()> handler) {
         // the handler cancels the drag before the native surface leaves the screen (§8.3)
         m_hidden_handler = std::move(handler);
@@ -246,6 +251,13 @@ namespace albor
         if (!m_focus_lost_handler)
             return;
         m_focus_lost_handler();
+    }
+
+    void Window::on_platform_focus_gained() {
+        // a window without a handler has no cue to restore, which is the quiet default of §8.3
+        if (!m_focus_gained_handler)
+            return;
+        m_focus_gained_handler();
     }
 
     void Window::on_platform_appearance_changed(const SystemAppearance& appearance) {

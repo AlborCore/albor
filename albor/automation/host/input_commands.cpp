@@ -119,7 +119,7 @@ namespace albor::automation
             if (stage == nullptr)
                 return AutomationResult::refused("the node belongs to no window: " + *id);
             // the caret moves to the node, which is what typing means for a client (§8.3)
-            stage->focus().request_focus(node);
+            stage->focus().request_focus(node, FocusReason::Accessibility);
             // one event per code point is what a keyboard reports, and it keeps the field's real edit path (§8.3)
             for (std::size_t index = 0; index < text->size();) {
                 // a continuation byte cannot start a sequence, so its length is one (§9.1)

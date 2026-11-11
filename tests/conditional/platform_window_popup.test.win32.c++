@@ -44,6 +44,8 @@ namespace
 
         void on_platform_focus_lost() override { focus_lost++; }
 
+        void on_platform_focus_gained() override { focus_gained++; }
+
         void on_platform_appearance_changed(const SystemAppearance&) override { appearance_changed++; }
 
         // the metrics the window last reported, which the resize message pushes (§9.1)
@@ -63,6 +65,9 @@ namespace
 
         // how many focus losses the window raised, which an activation change drives (§8.3)
         int focus_lost = 0;
+
+        // how many focus gains the window raised, which a key status return drives (§8.3)
+        int focus_gained = 0;
 
         // how many appearance changes the window raised, which a theme flip drives (§8.4)
         int appearance_changed = 0;
@@ -683,6 +688,26 @@ TEST(Win32PopupWindow, ALostActivationReportsTheFocusLoss) {
     (void)SendMessageW(window, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, 0), 0);
     // assert the framework was told the drag can no longer finish (§8.3)
     EXPECT_EQ(listener.focus_lost, 1);
+}
+
+TEST(Win32PopupWindow, AFocusedWindowReportsTheFocusGain) {
+    // arrange a shown normal window with a listener, which restores the cue when focus returns (§8.3)
+    WindowOptions options;
+    options.title = "focus-gained";
+    options.size = Size{200.0f, 200.0f};
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    HWND window = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(window, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // the show may already have focused the window, so the report is measured from that baseline (§5.1)
+    const int before = listener.focus_gained;
+    // act the window gains keyboard focus, which is what a focus return sends (§5.1)
+    (void)SendMessageW(window, WM_SETFOCUS, 0, 0);
+    // assert the framework was told the cue can return (§8.3)
+    EXPECT_EQ(listener.focus_gained, before + 1);
 }
 
 TEST(Win32PopupWindow, ARightPressOutsideThePopupDismissesIt) {

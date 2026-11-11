@@ -281,6 +281,18 @@ namespace albor
         return true;
     }
 
+    PointerFocusPolicy UiNode::pointer_focus_policy() const {
+        // the stored policy answers, because it is what the author wrote or the default take (§8.3)
+        return m_pointer_focus_policy;
+    }
+
+    void UiNode::set_pointer_focus_policy(PointerFocusPolicy policy) {
+        // the policy is stored first, so the next press decides with it (§8.3)
+        m_pointer_focus_policy = policy;
+        // the write is recorded, because an explicit policy outranks the context default (§8.3)
+        m_pointer_focus_policy_set = true;
+    }
+
     void UiNode::dispatch_event(Event&) {
         // the offer is the node, the dispatcher already walked the children and a second walk delivers twice (§8.3)
     }
@@ -465,6 +477,11 @@ namespace albor
         // an overlay is placed by the same pass, so it carries the same stale placement (§8.3)
         for (const auto& overlay : m_overlays)
             overlay->invalidate_arrange_subtree();
+    }
+
+    bool UiNode::pointer_focus_policy_authored() const {
+        // only a written policy outranks the context, because a default is not a decision (§8.3)
+        return m_pointer_focus_policy_set;
     }
 
     void UiNode::arrange_if_changed(UiNode& child, const Rect& bounds) {

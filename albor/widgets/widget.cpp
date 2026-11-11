@@ -124,7 +124,7 @@ namespace albor
         if (bounds().empty())
             return;
         // the ring marks the keyboard focus alone, because a hover says nothing about taking keys (§6.1)
-        if (!m_focused)
+        if (!m_focused || !m_focus_visible)
             return;
         // the ring resolves by state, so a hover and a press change it with the plate it surrounds (§6.1)
         const Color ring = resolve(m_theme->palette().focus_ring, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
@@ -216,7 +216,7 @@ namespace albor
         if (m_hovered)
             return ControlState::Hovered;
         // the keyboard focus outranks the resting paint, because a ring is what says the control takes keys (§8.3)
-        if (m_focused)
+        if (m_focused && m_focus_visible)
             return ControlState::Focused;
         // nothing is happening to the control, which is the resting paint (§8.3)
         return ControlState::Normal;
@@ -237,13 +237,30 @@ namespace albor
         return m_focused;
     }
 
+    bool Widget::focus_visible() const {
+        // the cue is what the focus reason and the window status decide, and the ring paints it (§8.3)
+        return m_focus_visible;
+    }
+
     void Widget::set_focused(bool focused) {
         // an unchanged focus changes nothing, because the ring is already in that state (§8.3)
         if (m_focused == focused)
             return;
         // the state is stored first, because the ring resolves through it (§8.3)
         m_focused = focused;
+        // a direct focus request is programmatic, so it carries the cue until a pointer lowers it (§8.3)
+        m_focus_visible = focused;
         // the ring appears and disappears with the focus, so the frame must be redrawn (§6.1)
+        invalidate();
+    }
+
+    void Widget::set_focus_visible(bool visible) {
+        // an unchanged cue changes nothing, because the ring is already in that state (§8.3)
+        if (m_focus_visible == visible)
+            return;
+        // the cue is stored first, because the ring paints through it (§8.3)
+        m_focus_visible = visible;
+        // the ring appears and disappears with the cue, so the frame must be redrawn (§6.1)
         invalidate();
     }
 

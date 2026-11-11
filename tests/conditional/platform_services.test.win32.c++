@@ -47,10 +47,15 @@ namespace
 
         void on_platform_focus_lost() override { focus_lost++; }
 
+        void on_platform_focus_gained() override { focus_gained++; }
+
         void on_platform_appearance_changed(const SystemAppearance&) override { appearance_changed++; }
 
         // how many focus losses the window raised, which an activation change drives (§8.3)
         int focus_lost = 0;
+
+        // how many focus gains the window raised, which a key status return drives (§8.3)
+        int focus_gained = 0;
 
         // how many resize reports the window raised, which the dpi change drives (§5.3, AD-27)
         int resizes = 0;

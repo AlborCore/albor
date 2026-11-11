@@ -58,6 +58,9 @@ namespace albor
         // drop the pointer capture when the window loses the interaction, which tells the captured node why (§8.3)
         void cancel_pointer_capture(PointerCancelReason reason = PointerCancelReason::CaptureLost);
 
+        // hide or restore the focus cue when the window loses or regains key status (§5.3, §8.3)
+        void set_window_active(bool active);
+
         // hand out the root of the driven tree, which is what an application installs a theme over (§6.1, §8.4)
         [[nodiscard]] UiNode& root() const;
 

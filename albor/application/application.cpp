@@ -730,8 +730,20 @@ namespace albor
             m_frame_handler();
         });
 
-        // a window that loses key status cannot release its drag, so the drag is cancelled (§5.1, §8.3)
-        window.set_focus_lost_handler([this, handle] { cancel_stage_capture(handle, PointerCancelReason::CaptureLost); });
+        // a window that loses key status cannot release its drag, so the drag ends and the cue hides (§5.1, §8.3)
+        window.set_focus_lost_handler([this, handle] {
+            // the capture drops first, because the window will never receive its release (§8.3)
+            cancel_stage_capture(handle, PointerCancelReason::CaptureLost);
+            // the stage hides the cue while the window is inactive, which keeps the focus owner (§8.3)
+            if (WindowStage* owner_stage = stage(handle); owner_stage != nullptr)
+                owner_stage->set_window_active(false);
+        });
+        // a window that regains key status restores the cue its focus owner carried (§5.1, §8.3)
+        window.set_focus_gained_handler([this, handle] {
+            // the stage restores the cue without moving the owner, which is the pair the loss opened (§8.3)
+            if (WindowStage* owner_stage = stage(handle); owner_stage != nullptr)
+                owner_stage->set_window_active(true);
+        });
         // a window that leaves the screen cancels the drag before it hides (§5.1, §8.3)
         window.set_hidden_handler([this, handle] { cancel_stage_capture(handle, PointerCancelReason::WindowHidden); });
         // a normalized input event reaches the application input handler, where routing belongs (§8.3)

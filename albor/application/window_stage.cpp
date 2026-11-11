@@ -146,6 +146,14 @@ namespace albor
         m_input->cancel_pointer_capture(reason);
     }
 
+    void WindowStage::set_window_active(bool active) {
+        // an unwired stage has no focus manager to hide, which the window betrayed at creation time (§8.3)
+        if (!m_input)
+            return;
+        // the manager hides the cue and keeps the owner while the window is inactive (§8.3)
+        m_input->focus().set_window_active(active);
+    }
+
     void WindowStage::set_close_request(std::function<void()> handler) {
         // the callback is borrowed from the application, which owns the window lifetime (§5.2, §8.3)
         m_close_request = std::move(handler);

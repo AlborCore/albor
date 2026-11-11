@@ -4400,6 +4400,28 @@ TEST(ButtonCommand, APressInvokesTheCommandThroughThePointerRoute) {
     EXPECT_TRUE(press.handled);
 }
 
+TEST(ButtonCommand, AKeyboardActivationInvokesWithTheKeyboardRoute) {
+    // arrange a button bound to a command, focused by the keyboard (§8.3)
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    std::size_t runs = 0;
+    InvocationSource route = InvocationSource::Pointer;
+    command.set_action([&runs, &route](const CommandInvocation& invocation) {
+        runs++;
+        route = invocation.source;
+    });
+    Button button(&engine, nullptr, "Save", "save");
+    button.set_command(&command);
+    button.arrange(Rect{.x = 0.0f, .y = 0.0f, .width = 80.0f, .height = 24.0f});
+    Event key{.kind = EventKind::KeyDown, .key = Key::Return};
+    // act
+    button.dispatch_event(key);
+    // assert the key route reports itself, so a handler can branch on the modality (§18.3)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(runs, std::size_t{1});
+    EXPECT_EQ(route, InvocationSource::Keyboard);
+}
+
 TEST(ButtonCommand, ADisabledCommandRefusesThePressBeforeTheControlSeesIt) {
     // arrange
     BindingEngine engine;
@@ -4489,6 +4511,23 @@ TEST(CheckBoxCommand, AToggleInvokesTheCommandWithTheNewTruth) {
     EXPECT_TRUE(box.checked());
 }
 
+TEST(CheckBoxCommand, ASpaceActivationInvokesWithTheKeyboardRoute) {
+    // arrange a box bound to a command, which the keyboard toggles (§8.3)
+    BindingEngine engine;
+    Command command{"view.armed", "Armed"};
+    InvocationSource route = InvocationSource::Pointer;
+    command.set_action([&route](const CommandInvocation& invocation) { route = invocation.source; });
+    CheckBox box(&engine, "armed");
+    box.set_command(&command);
+    box.arrange(Rect{.x = 0.0f, .y = 0.0f, .width = 24.0f, .height = 24.0f});
+    Event key{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    box.dispatch_event(key);
+    // assert the key route reports itself, because a handler branches on the modality (§18.3)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(route, InvocationSource::Keyboard);
+}
+
 TEST(CheckBoxCommand, ACheckBoxFollowsTheApplicabilityOfTheSharedObject) {
     // arrange
     BindingEngine engine;
@@ -4513,6 +4552,23 @@ TEST(SliderCommand, AStepInvokesTheCommandWithTheNewValue) {
     slider.step(0.25f);
     // assert an action that carries a value receives it through the invocation (§18.3)
     EXPECT_DOUBLE_EQ(observed, 0.25);
+}
+
+TEST(SliderCommand, AnArrowActivationInvokesWithTheKeyboardRoute) {
+    // arrange a slider bound to a command, which an arrow steers (§8.3)
+    BindingEngine engine;
+    Command command{"level.set", "Level"};
+    InvocationSource route = InvocationSource::Pointer;
+    command.set_action([&route](const CommandInvocation& invocation) { route = invocation.source; });
+    Slider slider(&engine, "level");
+    slider.set_command(&command);
+    slider.arrange(Rect{.x = 0.0f, .y = 0.0f, .width = 120.0f, .height = 16.0f});
+    Event key{.kind = EventKind::KeyDown, .key = Key::ArrowRight};
+    // act
+    slider.dispatch_event(key);
+    // assert the key route reports itself, because a handler branches on the modality (§18.3)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(route, InvocationSource::Keyboard);
 }
 
 TEST(SliderCommand, ADisabledCommandRefusesTheStep) {
@@ -4590,6 +4646,152 @@ TEST(FocusStateChecks, AHoverOutranksAFocus) {
     EXPECT_EQ(button.state(), ControlState::Hovered);
 }
 
+TEST(FocusStateChecks, APointerFocusedControlRestsInNormal) {
+    // arrange a themed button that takes the focus from a pointer (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    FocusManager manager;
+    // act
+    manager.request_focus(&button, FocusReason::Pointer);
+    // assert the control owns the keys without the focused paint, which is the pointer origin (§8.3)
+    EXPECT_TRUE(button.focused());
+    EXPECT_FALSE(button.focus_visible());
+    EXPECT_EQ(button.state(), ControlState::Normal);
+}
+
+TEST(FocusStateChecks, AKeyboardFocusedControlReportsFocused) {
+    // arrange a button whose focus arrives from the keyboard (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    FocusManager manager;
+    // act
+    manager.request_focus(&button, FocusReason::Keyboard);
+    // assert the cue and the state follow the keyboard origin (§8.3)
+    EXPECT_TRUE(button.focused());
+    EXPECT_TRUE(button.focus_visible());
+    EXPECT_EQ(button.state(), ControlState::Focused);
+}
+
+TEST(FocusStateChecks, ASemanticNodeReportsTheOwnerWithoutTheCue) {
+    // arrange a pointer focused button, which owns the keys but paints no ring (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press", "press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    FocusManager manager;
+    manager.request_focus(&button, FocusReason::Pointer);
+    ASSERT_TRUE(button.focused());
+    ASSERT_FALSE(button.focus_visible());
+    // act the announced state is built
+    const SemanticNode node = button.semantic_node();
+    // assert assistive technology hears the owner, because the cue is a paint decision (§10.1)
+    EXPECT_TRUE(node.focused());
+}
+
+TEST(FocusStateChecks, AnUnchangedCueChangesNothing) {
+    // arrange a focused button whose cue is already visible (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_focused(true);
+    button.clear_dirty();
+    // act
+    button.set_focus_visible(true);
+    // assert nothing asked for a frame, because the cue did not move (§6.1)
+    EXPECT_FALSE(button.render_dirty());
+}
+
+TEST(FocusStateChecks, HidingTheCueRedrawsTheRing) {
+    // arrange a focused button whose cue is visible (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_focused(true);
+    button.clear_dirty();
+    // act
+    button.set_focus_visible(false);
+    // assert the ring leaving asks for a frame, because it is a visual change (§6.1)
+    EXPECT_TRUE(button.render_dirty());
+    EXPECT_TRUE(button.focused());
+    EXPECT_FALSE(button.focus_visible());
+}
+
+TEST(PointerFocusPolicyChecks, AStandaloneButtonTakesPointerFocus) {
+    // arrange a button outside every strip, which is a normal form and dialog control (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "OK");
+    // act assert
+    EXPECT_EQ(button.pointer_focus_policy(), PointerFocusPolicy::Take);
+}
+
+TEST(PointerFocusPolicyChecks, AToolBarButtonPreservesPointerFocus) {
+    // arrange an action button inside a strip, which must not take the editor's keys (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ToolBar bar(&engine);
+    auto button = std::make_unique<Button>(&engine, &text_engine, "Open");
+    Button* adopted = button.get();
+    bar.add_child(std::move(button));
+    // act assert
+    EXPECT_EQ(adopted->pointer_focus_policy(), PointerFocusPolicy::Preserve);
+}
+
+TEST(PointerFocusPolicyChecks, AnAuthoredPolicyWinsOverTheToolBarContext) {
+    // arrange a strip action whose author asked for pointer focus (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ToolBar bar(&engine);
+    auto button = std::make_unique<Button>(&engine, &text_engine, "Open");
+    Button* adopted = button.get();
+    bar.add_child(std::move(button));
+    // act
+    adopted->set_pointer_focus_policy(PointerFocusPolicy::Take);
+    // assert the explicit policy outranks the context, because a control may opt out (§8.3)
+    EXPECT_EQ(adopted->pointer_focus_policy(), PointerFocusPolicy::Take);
+}
+
+TEST(PointerFocusPolicyChecks, AToolBarButtonNestedInAContainerPreserves) {
+    // arrange an action button inside a container inside a strip, which is a common toolbar grouping (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ToolBar bar(&engine);
+    auto group = std::make_unique<ColumnLayout>();
+    auto button = std::make_unique<Button>(&engine, &text_engine, "Open");
+    Button* adopted = button.get();
+    group->add_child(std::move(button));
+    bar.add_child(std::move(group));
+    // act assert the context climbs past the grouping container, which gives the action preserve (§8.3)
+    EXPECT_EQ(adopted->pointer_focus_policy(), PointerFocusPolicy::Preserve);
+}
+
+TEST(PointerFocusPolicyChecks, AnExplicitPreserveOutsideAToolBarWins) {
+    // arrange an action outside every strip whose author asked it to preserve the editor (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Run");
+    // act
+    button.set_pointer_focus_policy(PointerFocusPolicy::Preserve);
+    // assert the explicit policy is what the pointer decision reads (§8.3)
+    EXPECT_EQ(button.pointer_focus_policy(), PointerFocusPolicy::Preserve);
+}
+
+TEST(PointerFocusPolicyChecks, AFieldInsideAToolBarStillTakesPointerFocus) {
+    // arrange a field that a strip hosts, which must keep its caret on a press (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ToolBar bar(&engine);
+    auto field = std::make_unique<TextField>(&engine, &text_engine, "text");
+    TextField* adopted = field.get();
+    bar.add_child(std::move(field));
+    // act assert the toolbar context does not flatten the field's own policy (§8.3)
+    EXPECT_EQ(adopted->pointer_focus_policy(), PointerFocusPolicy::Take);
+}
+
 TEST(FocusStateChecks, TheFocusManagerReachesAWidget) {
     // arrange a focused widget inside a root, which is the path a tab press takes (§8.3)
     BindingEngine engine;
@@ -4631,6 +4833,40 @@ TEST(FocusRingChecks, AnUnfocusedThemedControlDrawsNoRing) {
     button.render(recorder);
     // assert only the plate and its label are recorded, because the normal state carries no ring (§6.1)
     EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(FocusRingChecks, APointerFocusedControlDrawsNoRing) {
+    // arrange a themed control focused by a pointer, which owns the keys without the cue (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    FocusManager manager;
+    manager.request_focus(&button, FocusReason::Pointer);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert only the plate is recorded, because a pointer origin must not paint a keyboard ring (§8.3)
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(FocusRingChecks, AKeyboardFocusedControlDrawsTheRing) {
+    // arrange a themed control focused by the keyboard, which is the ring's whole audience (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    FocusManager manager;
+    manager.request_focus(&button, FocusReason::Keyboard);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the plate and the ring are recorded, because a key origin marks the control (§8.3)
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 2u);
 }
 
 TEST(FocusRingChecks, AFocusedControlStrokesARingOutsideItsPlate) {

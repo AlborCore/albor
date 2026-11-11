@@ -10,5 +10,11 @@ namespace albor
 
         // take or drop the focus, which the focus manager calls on the node it moved to or from (§8.3)
         virtual void set_focused(bool focused) = 0;
+
+        // show or hide the keyboard focus cue, which a pointer origin hides and a key origin reveals (§8.3)
+        virtual void set_focus_visible(bool visible) {
+            // a target that paints no cue has nothing to change, which keeps an older target compiling (§8.3)
+            (void)visible;
+        }
     };
 } // namespace albor

@@ -1014,6 +1014,40 @@ is already gone when the handler runs, so a handler that asks the controller see
 second cancel is a no-op. `PointerCancel` never becomes `PointerUp`: a normal release is the only
 event that commits a gesture, and the release path of §8.3 is unchanged.
 
+**Focus Ownership, Focus Visibility and Pointer Capture Are Three Facts (settled during implementation, issue 185):**
+
+A widget used to carry one focus boolean, so a pointer press and a Tab press produced the same
+state: the control owned the keyboard and painted the keyboard ring. A toolbar action then stole a
+text field's focus and left a ring on an icon-only button. The model therefore splits into three
+independent facts:
+
+1. **The owner** is the node that receives keyboard events. `FocusManager::focused()` and the
+   semantic `focused` state report it, and only it.
+2. **The cue** says whether that ownership is drawn as the keyboard focus ring. It is not the same
+   question: a pointer-originated focus owns the keys without marking the control, which is the
+   `:focus-visible` idea. `FocusManager::request_focus` carries a `FocusReason`; `Pointer` hides the
+   cue and `Keyboard`, `Programmatic` and `Accessibility` show it. Any key interaction reveals it
+   again, and a pointer press on a focusable control lowers it.
+3. **The capture** is the node that claimed the press. It is armed from the claiming node, whether
+   or not focus moved, so a non-focusable `Canvas`, `ScrollView` or custom node can own a drag
+   without taking the caret. An unclaimed press, or one on empty space, keeps the previous owner
+   and its cue.
+
+The pointer decision is a policy on the node, not a rule about a class. `PointerFocusPolicy::Take`
+moves the focus (`TextField`, `ListBox`, `ComboBox`, `Slider`, form `CheckBox`/`RadioButton`),
+`Preserve` performs the action and leaves the owner (a toolbar action `Button`), and `None` is never
+a pointer target. A control stays a Tab stop while preserving pointer focus, because the two
+questions are separate. `Button` defaults to `Preserve` inside a `ToolBar` and `Take` elsewhere,
+and an explicit `set_pointer_focus_policy` overrides the context. A keyboard activation of a push
+control reports `InvocationSource::Keyboard`, so a handler can branch on the modality.
+
+The cue also reads window key status. Losing key status hides the cue without dropping the owner;
+regaining it restores the cue the owner carried. macOS reports the pair through
+`NSWindowDidBecomeKeyNotification` and `NSWindowDidResignKeyNotification`, Win32 through
+`WM_SETFOCUS` and `WM_ACTIVATE`; `Application` routes both to the stage. The focus-visibility flag is
+a plain widget bool, not a configuration-dependent field, so the Release, Dev and Test layouts stay
+identical (AD-02).
+
 ---
 
 ### 8.4 Style and Theming (settled during implementation)

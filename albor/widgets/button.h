@@ -38,6 +38,9 @@ namespace albor
         // override: run the click handler on a pointer press inside the bounds, which is what activates the button (§8.3)
         void dispatch_event(Event& event) override;
 
+        // override: a strip action preserves the caret, while a dialog or form button takes it (§8.3)
+        [[nodiscard]] PointerFocusPolicy pointer_focus_policy() const override;
+
         // override: announce the button with its label and an activate action (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;
 
@@ -114,6 +117,9 @@ namespace albor
     private:
         // perform the action, which runs the bound command when there is one and the handler otherwise (§8.3, §18.7)
         void activate(InvocationSource source);
+
+        // report whether a strip ancestor gives this button the action context of a toolbar (§8.3)
+        [[nodiscard]] bool inside_tool_bar() const;
 
         // the text engine that measures the label, which the application owns (§9.1, AD-14)
         TextEngine* m_text_engine = nullptr;
