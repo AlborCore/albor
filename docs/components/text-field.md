@@ -11,6 +11,7 @@ Single-line by default; set `multiline` for a wrapping, scrolling editor.
 | `placeholder` | `string` | the hint shown while empty |
 | `read_only` | `bool` | displays but refuses editing |
 | `multiline` | `bool` | accepts line breaks, wraps, and scrolls its own viewport |
+| `follow_end` | `bool` | multi-line only: keeps the last line visible as content grows while the view is at the end |
 | `content_align` | `align` | where the value sits vertically inside the plate: `start`, `center`, `end` or `stretch` |
 | `scrollbar` | `scrollbar` | when a bar is drawn on a multi-line field: `Scrollbar.as_needed`, `Scrollbar.off` or `Scrollbar.on` |
 | `disabled` | `bool` | refuses all interaction |
@@ -126,8 +127,49 @@ field->scroll_offset();          // how far the content is scrolled from its lea
 field->maximum_scroll_offset();  // zero while the text fits
 field->scroll_to(0.0f);          // clamped into [0, maximum_scroll_offset()]
 field->scroll_by(40.0f);         // a relative move, which reports whether it moved
+field->scroll_to_byte(120);      // reveals the row a byte sits on without moving the caret
+field->set_follow_end(true);      // keeps the last line visible as content grows
+field->follow_end();             // the policy this field carries
 field->owns_vertical_scroll();   // true for a multi-line field, which a container respects
 ```
+
+### Following the end
+
+`follow_end: true` turns a multi-line field into a tail-following view, which is what a live
+log needs. A fixed-height `SizedBox` is still the right container, because the field only
+scrolls once something caps its height:
+
+```text
+SizedBox {
+    height: 152px;
+
+    TextField {
+        id: output_log;
+        multiline: true;
+        read_only: true;
+        follow_end: true;
+        value: output_text;
+    }
+}
+```
+
+The field starts on the last line when it is mounted with overflowing content. As long as the
+view is at the end, new content and a viewport resize keep the last line visible. Scrolling away
+from the end pauses the follow, and scrolling back to the end resumes it; there is no separate
+paused flag to manage.
+
+A programmatic `value:` replacement does not chase the caret while `follow_end` is enabled. That
+is what stops a read-only log whose caret sits at byte zero from jumping back to the top on every
+flush. Caret moves and typing still reveal the caret and may resume or pause the policy according
+to where they land.
+
+Turning the policy on moves an already arranged field to the end. A field that has not been
+arranged yet follows on its first layout, because it has no viewport to scroll within before then.
+
+`scroll_to_byte` is the text-addressable seek: it reveals the row containing the byte without
+moving the caret, anchor, selection or column goal. It shares the row geometry with the caret
+follow. A single-line field ignores both `follow_end` and `scroll_to_byte`, because it has no
+scroll range.
 
 ## Content alignment
 

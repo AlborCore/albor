@@ -225,6 +225,15 @@ namespace albor
         // move the offset by a signed amount, where positive moves toward the end, and report whether it moved (§8.3)
         bool scroll_by(float amount);
 
+        // set the policy that keeps the end visible as content grows, where scrolling away pauses it (§8.2)
+        void set_follow_end(bool follow_end);
+
+        // report whether the field follows its end as content grows (§8.2)
+        [[nodiscard]] bool follow_end() const;
+
+        // reveal the row a byte sits on without moving the caret, which is what a text location seek is (§8.3)
+        void scroll_to_byte(std::size_t byte);
+
         // set when the field draws its bar, which is a per instance decision the author owns (§8)
         void set_scrollbar_visibility(ScrollbarVisibility visibility);
 
@@ -330,6 +339,15 @@ namespace albor
 
         // hand out the scroll offset clamped into the range, which is the single clamp every writer uses (§8.2)
         [[nodiscard]] float clamped_scroll_offset(float offset) const;
+
+        // report whether the view sits at the end of its scroll range, which the follow policy reads (§8.2)
+        [[nodiscard]] bool at_scroll_end() const;
+
+        // keep the end visible after a content or viewport change when the policy is on and the view was at the end (§8.2)
+        void apply_follow(bool was_at_end);
+
+        // scroll so the row a byte sits on is inside the viewport, which the caret follow and the byte seek share (§8.3)
+        void reveal_byte(std::size_t byte);
 
         // scroll so the caret's line is inside the viewport, which is what keeps the caret on screen (§8.3)
         void ensure_caret_visible();
@@ -475,8 +493,11 @@ namespace albor
         // the vertical alignment the run takes inside the plate, which follows the mode while it is inherited (§8.2)
         Align m_content_align = Align::Inherit;
 
-        // how far the content is scrolled from its leading edge, which the caret drives and never the value (§8.2)
+        // how far the content is scrolled from its leading edge, which the caret and the follow policy drive (§8.2)
         float m_scroll_offset = 0.0f;
+
+        // whether the field keeps its end visible as content grows, which a live log turns on (§8.2)
+        bool m_follow_end = false;
 
         // when the bar is drawn, which is a per instance policy (§8)
         ScrollbarVisibility m_visibility = ScrollbarVisibility::AsNeeded;

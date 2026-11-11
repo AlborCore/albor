@@ -18,6 +18,9 @@ namespace albor
         // a run this short is cheaper to paint whole than to split into a visible subset (§6.2)
         constexpr std::size_t TEXT_CULL_THRESHOLD = 64;
 
+        // how close to the end still counts as following it, which absorbs float rounding (§8.2)
+        constexpr float FOLLOW_END_EPSILON = 0.5f;
+
         // report whether a byte is whitespace, the fallback word boundary of §8.3
         bool is_space_byte(char value) { return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\v' || value == '\f'; }
     } // namespace
@@ -29,6 +32,8 @@ namespace albor
     }
 
     void TextField::measure(const SizeConstraints& constraints, Size& out_size) {
+        // the follow policy reads the position before the new run changes the range (§8.2)
+        const bool was_at_end = at_scroll_end();
         // the metrics are asked for once, because every dimension reads them (§8.2)
         const ControlMetrics& m = metrics();
         // the gutter is reserved whenever the policy asks for one, so a bar never rewraps the run it appeared over (§8.2)
@@ -60,13 +65,17 @@ namespace albor
         // the preferred size follows the measured one, so a parent can query it without a second measure (§8.2)
         m_preferred_size = m_measured_size;
         out_size = m_measured_size;
+        // the new run may have grown the range, so a view that followed the end stays there (§8.2)
+        apply_follow(was_at_end);
     }
 
     void TextField::arrange(const Rect& bounds) {
+        // the follow policy reads the old viewport before the new bounds replace it (§8.2)
+        const bool was_at_end = at_scroll_end();
         // the component arranges its own bounds and its children, because a widget is a component (§8.2)
         Component::arrange(bounds);
-        // the offset is clamped into the new range, and not re-followed, so a programmatic scroll survives (§8.2)
-        m_scroll_offset = clamped_scroll_offset(m_scroll_offset);
+        // the new viewport may have changed the range, so a view that followed the end stays there (§8.2)
+        apply_follow(was_at_end);
     }
 
     void TextField::paint_content(RenderContext& context) {
@@ -821,8 +830,9 @@ namespace albor
             m_caret = std::min(m_caret, m_value.size());
             // the selection collapses with the value, because a stale span is no selection at all (§8.3)
             m_anchor = m_caret;
-            // the viewport follows the caret the write held, so a tall value does not hide it (§8.3)
-            ensure_caret_visible();
+            // a policy that follows the end owns the viewport, so a programmatic write does not chase the caret (§8.2)
+            if (!m_follow_end)
+                ensure_caret_visible();
             return;
         }
         // the value is stored first, so the invalidation walks a field that already shows the new value (§6.1)
@@ -833,8 +843,9 @@ namespace albor
         m_anchor = m_caret;
         // a new value has a new run, so the layout passes must run again (§8.2, §9.1)
         remeasure();
-        // the viewport follows the caret the write held, so a tall value does not hide it (§8.3)
-        ensure_caret_visible();
+        // a policy that follows the end owns the viewport, so a programmatic write does not chase the caret (§8.2)
+        if (!m_follow_end)
+            ensure_caret_visible();
     }
 
     const std::string& TextField::value() const {
@@ -901,6 +912,9 @@ namespace albor
         m_multiline = multiline;
         // a new run shape remeasures, because the plate may grow past its single line (§8.2, §9.1)
         remeasure();
+        // a field that follows its end starts on the last line as soon as the mode opens a range (§8.2)
+        if (multiline && m_follow_end)
+            (void)move_offset(maximum_scroll_offset());
     }
 
     bool TextField::multiline() const {
@@ -1209,41 +1223,74 @@ namespace albor
         return std::clamp(offset, 0.0f, maximum_scroll_offset());
     }
 
-    void TextField::ensure_caret_visible() {
+    bool TextField::at_scroll_end() const {
+        // a single line field has no end to follow, because it never scrolls (§8.2)
+        if (!m_multiline)
+            return false;
+        // content that fits sits at its end, which is what lets the first arrange pin the plate (§8.2)
+        return m_scroll_offset >= maximum_scroll_offset() - FOLLOW_END_EPSILON;
+    }
+
+    void TextField::apply_follow(bool was_at_end) {
+        // the policy only moves a view that was at the end, so a reader who scrolled away keeps the place (§8.2)
+        const float target = m_follow_end && was_at_end ? maximum_scroll_offset() : m_scroll_offset;
+        // the destination is written through the one clamp, because a shrink still bounds it (§8.2)
+        const float clamped = clamped_scroll_offset(target);
+        // an unchanged offset changes no pixels, so the frame stays as it is (§6.1)
+        if (clamped == m_scroll_offset)
+            return;
+        // the content moved under the viewport, so the frame changes (§6.1)
+        m_scroll_offset = clamped;
+        // the scroll moved every line, which is a full repaint (§6.1, §8.2)
+        invalidate();
+    }
+
+    void TextField::reveal_byte(std::size_t byte) {
         // a single line field never scrolls, because its run is the one row it shows (§8.2)
         if (!m_multiline)
             return;
-        // a run the engine did not shape has no line to follow, so nothing scrolls (§9.1)
+        // a run the engine did not shape has no line to reveal, so nothing scrolls (§9.1)
         if (m_layout.run == nullptr || m_layout.run->lines().empty())
             return;
         // an unarranged field has no viewport to scroll within (§6.2)
         if (bounds().empty())
             return;
-        // the line the caret stands on is the one that must be on screen (§8.3)
-        const std::size_t clamped = std::min(m_caret, m_value.size());
+        // the byte clamps into the value, because a stale offset names no character (§8.3)
+        const std::size_t clamped = std::min(byte, m_value.size());
+        // the line the byte sits on is the one that must be on screen (§8.3)
         const std::size_t index = m_layout.run->line_at_byte(clamped);
+        // the line is read once, because its box is what the viewport test measures (§9.1)
         const ShapedRun::Line& line = m_layout.run->lines()[index];
-        // the line box sits in content space, which is where the caret is before the scroll carries it (§9.1)
+        // the line box sits in content space, which is where the byte is before the scroll carries it (§9.1)
         const float content_origin = content_top();
+        // the top edge is the baseline less the ascent, which is where the line begins (§9.1)
         const float line_top = content_origin + line.origin.y - line.ascent;
+        // the bottom edge adds the descent, which is where the line ends (§9.1)
         const float line_bottom = content_origin + line.origin.y + line.descent;
-        // the viewport is the plate the caret must stay inside (§8.2)
+        // the viewport is the plate the line must stay inside (§8.2)
         const float viewport_top = bounds().y;
+        // the bottom edge is the plate top plus its height, which is the other bound (§8.2)
         const float viewport_bottom = bounds().y + bounds().height;
-        // the offset the caret asks for starts where the scroll already is (§8.3)
+        // the offset the byte asks for starts where the scroll already is (§8.3)
         float target = m_scroll_offset;
-        // a caret above the window scrolls the content down, so the line reaches the top edge (§8.3)
+        // a line above the window scrolls the content down, so the line reaches the top edge (§8.3)
         if (line_top - m_scroll_offset < viewport_top)
             target = line_top - viewport_top;
-        // a caret below the window scrolls the content up, so the line reaches the bottom edge (§8.3)
+        // a line below the window scrolls the content up, so the line reaches the bottom edge (§8.3)
         else if (line_bottom - m_scroll_offset > viewport_bottom)
             target = line_bottom - viewport_bottom;
         // the offset is written through the one clamp, so it never leaves the range (§8.2)
         const float previous = m_scroll_offset;
+        // the destination is clamped into the range, which is what keeps the plate honest (§8.2)
         m_scroll_offset = clamped_scroll_offset(target);
-        // content that moved under the caret changes the frame, so the follow invalidates for itself (§6.1)
+        // content that moved under the line changes the frame, so the reveal invalidates for itself (§6.1)
         if (m_scroll_offset != previous)
             invalidate();
+    }
+
+    void TextField::ensure_caret_visible() {
+        // the caret's line is the one a caret move must keep on screen (§8.3)
+        reveal_byte(m_caret);
     }
 
     void TextField::autoscroll_for_drag(Point logical_position) {
@@ -1622,6 +1669,22 @@ namespace albor
         return std::max(0.0f, m_layout.size.height - bounds().height);
     }
 
+    void TextField::set_follow_end(bool follow_end) {
+        // an unchanged policy leaves the viewport where it is, because the field looks the same (§8.2)
+        if (m_follow_end == follow_end)
+            return;
+        // the policy is stored first, so the jump below reads the state it just set (§8.2)
+        m_follow_end = follow_end;
+        // enabling the policy moves to the end now, while disabling it keeps the current place (§8.2)
+        if (follow_end)
+            (void)move_offset(maximum_scroll_offset());
+    }
+
+    bool TextField::follow_end() const {
+        // the policy is what the content and viewport changes read (§8.2)
+        return m_follow_end;
+    }
+
     void TextField::scroll_to(float offset) {
         // the destination is written through the one clamp, which is what every scroll writer shares (§8.2)
         (void)move_offset(offset);
@@ -1630,6 +1693,11 @@ namespace albor
     bool TextField::scroll_by(float amount) {
         // the offset moves by the signed amount, which the wheel and the reader actions both ask for (§8.3)
         return move_offset(m_scroll_offset + amount);
+    }
+
+    void TextField::scroll_to_byte(std::size_t byte) {
+        // the row is revealed without moving the caret, because a seek is not an edit (§8.3)
+        reveal_byte(byte);
     }
 
     bool TextField::move_offset(float destination) {
@@ -2140,6 +2208,8 @@ namespace albor
         // a value that does not extend the current one needs the full path, because a prefix is what is reused (§9.1)
         if (value.size() <= m_value.size() || value.compare(0, m_value.size(), m_value) != 0)
             return false;
+        // the follow policy reads the old run before the appended tail grows it (§8.2)
+        const bool was_at_end = at_scroll_end();
         // the last line is the only one an append can change, because every earlier byte is untouched (§9.1)
         const ShapedRun::Line& last = m_layout.run->lines().back();
         // the suffix starts where that last line starts, so its shaped rows can replace it whole (§9.1)
@@ -2179,8 +2249,8 @@ namespace albor
         // the mark belonged to the old value, so the append drops it with the old tail (§8.3)
         m_marked_layout = TextLayout{};
         m_marked.clear();
-        // the longer run may have grown the scroll range, so the offset is clamped into it (§8.2)
-        m_scroll_offset = clamped_scroll_offset(m_scroll_offset);
+        // the appended tail may have grown the range, so a view that followed the end stays there (§8.2)
+        apply_follow(was_at_end);
         // a text change is a size change, so the layout passes must run again (§8.2)
         invalidate_layout();
         // the value paint changed either way, which is what an edit means (§6.1)
@@ -2189,6 +2259,8 @@ namespace albor
     }
 
     void TextField::remeasure() {
+        // the follow policy reads the old run before the new measure replaces it (§8.2)
+        const bool was_at_end = at_scroll_end();
         // a field with no engine cannot measure, so the runs stay empty and the plate keeps its minimum (§9.1)
         if (m_text_engine == nullptr) {
             m_layout = TextLayout{};
@@ -2207,8 +2279,8 @@ namespace albor
         // a fresh base run invalidates the composed one, because the mark is measured against a new value (§8.3)
         m_marked_layout = TextLayout{};
         m_marked.clear();
-        // a shorter run shrinks the scroll range, so the offset is clamped back into it (§8.2)
-        m_scroll_offset = clamped_scroll_offset(m_scroll_offset);
+        // the new run may have changed the range, so a view that followed the end stays there (§8.2)
+        apply_follow(was_at_end);
         // a text change is a size change, so the layout passes must run again (§8.2)
         invalidate_layout();
         // the value paint changed either way, which is what an edit means (§6.1)

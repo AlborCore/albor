@@ -1223,6 +1223,7 @@ namespace albor::compiler
                 {"TextField.placeholder", "set_placeholder"},
                 {"TextField.read_only", "set_read_only"},
                 {"TextField.multiline", "set_multiline"},
+                {"TextField.follow_end", "set_follow_end"},
                 {"TextField.content_align", "set_content_align"},
                 {"TextField.scrollbar", "set_scrollbar_visibility"},
                 {"TextField.disabled", "set_disabled"},
