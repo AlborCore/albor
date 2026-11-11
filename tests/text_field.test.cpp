@@ -11,6 +11,7 @@
 #include "albor/core/clipboard.h"
 #include "albor/focus/focus_manager.h"
 #include "albor/layout/column_layout.h"
+#include "albor/layout/sized_box_layout.h"
 #include "albor/render/frame_scene.h"
 #include "albor/runtime/binding_engine.h"
 #include "albor/style/theme_builder.h"
@@ -3374,6 +3375,425 @@ TEST(TextFieldScrollChecks, SettingAValueFollowsTheCaretItKept) {
     field.set_value("w\nx\ny\nz");
     // assert the kept caret was brought back on screen (§8.3)
     EXPECT_GT(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldFollowChecks, AFollowingFieldStartsAtTheEnd) {
+    // arrange an eight line field in a plate that shows three, with the policy that follows the end (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    // act the first arrange gives the field its viewport (§8.2)
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    // assert the field starts on the last line, which is what a freshly mounted log shows (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 80.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+}
+
+TEST(TextFieldFollowChecks, AnAppendKeepsAFollowingFieldAtTheEnd) {
+    // arrange a field already following the end of a value that overflows its plate (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{120.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    // act a line is appended to the live log (§8.2)
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni");
+    // assert the viewport followed the new last line, which is what the old pin did (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 96.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 96.0f);
+}
+
+TEST(TextFieldFollowChecks, ScrollingAwayPausesTheFollow) {
+    // arrange a following field the reader scrolled away from the end (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{120.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    field.scroll_by(-16.0f);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 64.0f);
+    // act another line arrives while the reader is above the end (§8.2)
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni");
+    // assert the viewport stayed where the reader left it, which is the improvement over a pin (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 96.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 64.0f);
+}
+
+TEST(TextFieldFollowChecks, ReturningToTheEndResumesTheFollow) {
+    // arrange a following field the reader scrolled away from and then back to the end (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{120.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.scroll_by(-16.0f);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 64.0f);
+    field.scroll_to(field.maximum_scroll_offset());
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    // act another line arrives after the reader reached the end again (§8.2)
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni");
+    // assert the follow resumed, because the viewport is at the end when the content grows (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 96.0f);
+}
+
+TEST(TextFieldFollowChecks, EnablingFollowAtRuntimeJumpsToTheEnd) {
+    // arrange a multiline field whose viewport sits at the leading edge (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act the policy is turned on after the field was already laid out (§8.2)
+    field.set_follow_end(true);
+    // assert enabling the policy takes the viewport to the end now, not on the next growth (§8.2)
+    EXPECT_TRUE(field.follow_end());
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+}
+
+TEST(TextFieldFollowChecks, AValueReplacementDoesNotChaseTheCaretWhileFollowing) {
+    // arrange a following field whose caret stays at byte zero while the viewport is at the end (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    ASSERT_EQ(field.caret(), 0u);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    // act a whole new value arrives, which takes the full remeasure path (§9.1)
+    field.set_value("i\nj\nk\nl\nm\nn\no\np\nq");
+    // assert the policy kept the end instead of chasing the caret back to the top (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 96.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 96.0f);
+}
+
+TEST(TextFieldFollowChecks, AValueReplacementKeepsAPausedPosition) {
+    // arrange a following field the reader scrolled away from the end (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.scroll_to(16.0f);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 16.0f);
+    // act a whole new value arrives while the reader is paused (§8.2)
+    field.set_value("i\nj\nk\nl\nm\nn\no\np\nq");
+    // assert the paused position survives, because a programmatic write must not chase the caret (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 16.0f);
+}
+
+TEST(TextFieldFollowChecks, AViewportChangeKeepsAFollowingFieldAtTheEnd) {
+    // arrange a field following the end of a value that overflows its plate (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    // act the plate shrinks, which grows the range without changing the content (§8.2)
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // assert the last line is still visible, because the viewport was at the end when it changed (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 96.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 96.0f);
+    // act the reader pauses and the plate grows again (§8.2)
+    field.scroll_to(32.0f);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    // assert a paused view keeps its place instead of snapping back to the new end (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 80.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 32.0f);
+}
+
+TEST(TextFieldFollowChecks, ScrollToByteRevealsARowWithoutMovingTheCaret) {
+    // arrange a tall field with a selection on the first line and the viewport at the top (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.set_selection(0, 5);
+    ASSERT_EQ(field.caret(), 5u);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act the row of byte twelve, which is the seventh line, is revealed (§8.3)
+    field.scroll_to_byte(12);
+    // assert the row was brought into view without moving the caret or collapsing the selection (§8.3)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 64.0f);
+    EXPECT_EQ(field.caret(), 5u);
+    EXPECT_EQ(field.selection_start(), 0u);
+    EXPECT_EQ(field.selection_end(), 5u);
+}
+
+TEST(TextFieldFollowChecks, ScrollToByteReachingTheEndResumesTheFollow) {
+    // arrange a following field the reader paused in the middle of its range (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{120.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.scroll_to(64.0f);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 64.0f);
+    // act the seek names a byte past the value, which clamps onto the last line (§8.3)
+    field.scroll_to_byte(9999);
+    // assert the last line was revealed and the follow is active again (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni");
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 96.0f);
+}
+
+TEST(TextFieldFollowChecks, ScrollToByteBeforeTheEndPausesTheFollow) {
+    // arrange a following field already at the end of its range (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{120.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    // act the seek reveals the first line, which is away from the end (§8.3)
+    field.scroll_to_byte(0);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni");
+    // assert the paused position is kept while the log grows below it (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldFollowChecks, ASingleLineFieldIgnoresTheFollowAndTheByteSeek) {
+    // arrange a single line field, which has no scroll range to follow or reveal (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdef");
+    field.set_follow_end(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act the seek names a byte the one row already shows (§8.3)
+    field.scroll_to_byte(5);
+    // assert neither the policy nor the seek moved a single line field (§8.2)
+    EXPECT_TRUE(field.follow_end());
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 0.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    EXPECT_EQ(field.caret(), 0u);
+}
+
+TEST(TextFieldFollowChecks, AFirstMeasureThatWrapsStartsAtTheEnd) {
+    // arrange a long line that only wraps once the first measure gives it a width (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, std::string(60, 'a'));
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    // act the first measure wraps the value and the arrange gives it the plate (§8.2)
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{55.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{55.0f, 32.0f}));
+    // assert the wrapped first mount starts on the last row, not the first (§8.2)
+    EXPECT_GT(field.maximum_scroll_offset(), 0.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), field.maximum_scroll_offset());
+}
+
+TEST(TextFieldFollowChecks, ARewrapKeepsAFollowingFieldAtTheEnd) {
+    // arrange a following field measured wide enough for a short run (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, std::string(60, 'a'));
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{200.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 32.0f}));
+    ASSERT_GT(field.maximum_scroll_offset(), 0.0f);
+    const float first_maximum = field.maximum_scroll_offset();
+    ASSERT_FLOAT_EQ(field.scroll_offset(), first_maximum);
+    // act the plate narrows, which rewraps the run into more rows (§8.2)
+    field.measure(SizeConstraints::at_most(Size{80.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 32.0f}));
+    // assert the follow held through the rewrap instead of stopping at the old end (§8.2)
+    EXPECT_GT(field.maximum_scroll_offset(), first_maximum);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), field.maximum_scroll_offset());
+}
+
+TEST(TextFieldFollowChecks, AContentShrinkFollowsTheNewEnd) {
+    // arrange a following field at the end of eight lines (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    // act the value shrinks to four lines, which lowers the maximum (§8.2)
+    field.set_value("a\nb\nc\nd");
+    // assert the viewport followed the new end instead of keeping an offset past it (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 16.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 16.0f);
+    // act the value shrinks to one line, which removes the range entirely (§8.2)
+    field.set_value("ab");
+    // assert the field returned to the leading edge with the empty range (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 0.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldFollowChecks, TypingAtTheTailKeepsTheEndVisible) {
+    // arrange a following field with its caret at the end of the value (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{120.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.set_caret(field.value().size());
+    ASSERT_EQ(field.caret(), 15u);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    // act a break is typed at the tail, which opens one more visual row (§8.3)
+    Event insert{.kind = EventKind::TextInput, .text = "\n"};
+    field.dispatch_event(insert);
+    // assert the caret and the viewport both followed the new last row (§8.2, §8.3)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 96.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 96.0f);
+    EXPECT_EQ(field.caret(), 16u);
+}
+
+TEST(TextFieldFollowChecks, ACaretMoveToTheLastLineResumesTheFollow) {
+    // arrange a following field the reader paused at the top (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{120.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.scroll_to(0.0f);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act the caret moves to the last line, which brings the viewport back to the end (§8.3)
+    field.set_caret(field.value().size());
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+    // assert the follow resumed, because the caret placed the viewport at the end (§8.2)
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni");
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 96.0f);
+}
+
+TEST(TextFieldFollowChecks, APolicyThatIsOffDoesNotFollowAnAppend) {
+    // arrange a multiline field whose policy is left off, with the viewport at the top (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{120.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act a line is appended without the policy (§8.2)
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni");
+    // assert the range grew while the position stayed put, which is the old behavior (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 96.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldFollowChecks, TogglingThePolicyOffKeepsThePlace) {
+    // arrange a following field the reader paused away from the end (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{120.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    field.scroll_to(16.0f);
+    // the caret sits on a row the paused viewport shows, so the policy-off write does not chase it (§8.2)
+    field.set_caret(2);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 16.0f);
+    field.set_follow_end(false);
+    // act a line arrives while the policy is off (§8.2)
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni");
+    // assert the position survived, because no policy was there to move it (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 16.0f);
+    // act the policy is turned back on, which is what a caller uses to rejoin the tail (§8.2)
+    field.set_follow_end(true);
+    // assert enabling it jumps to the current end (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 96.0f);
+}
+
+TEST(TextFieldFollowChecks, ScrollToByteOnAnUnarrangedFieldIsANoOp) {
+    // arrange a following field that has no viewport yet (§6.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.set_follow_end(true);
+    // act a seek arrives before the first layout pass (§8.3)
+    field.scroll_to_byte(12);
+    // assert an unarranged field has nowhere to scroll, while its first arrange still follows the end (§6.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 48.0f}));
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 80.0f);
+}
+
+TEST(TextFieldFollowChecks, ScrollToByteRevealsAWrappedRow) {
+    // arrange a wrapped field whose caret and selection sit on an early row (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, std::string(60, 'a'));
+    field.set_multiline(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{55.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{55.0f, 32.0f}));
+    field.set_selection(0, 5);
+    ASSERT_EQ(field.caret(), 5u);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act the seek reveals the row holding byte thirty, which is the eleventh wrapped row (§8.3)
+    field.scroll_to_byte(30);
+    // assert the wrapped row was revealed without touching the caret or the selection (§8.3)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 144.0f);
+    EXPECT_EQ(field.caret(), 5u);
+    EXPECT_EQ(field.selection_start(), 0u);
+    EXPECT_EQ(field.selection_end(), 5u);
+}
+
+TEST(TextFieldFollowChecks, ScrollToByteUsesThePlateOrigin) {
+    // arrange an overflowing field whose plate starts away from the window origin (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{120.0f, 48.0f}));
+    // act the seventh row is revealed (§8.3)
+    field.scroll_to_byte(12);
+    // assert the offset is relative to the content, not the plate origin (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 64.0f);
+}
+
+TEST(TextFieldFollowChecks, ASizedBoxCappedTailStartsAtTheEnd) {
+    // arrange the sized box the xyce output panel uses, with a tail that overflows it (§8.2)
+    EditingTextEngine engine;
+    SizedBoxLayout box;
+    box.set_height(152.0f);
+    auto owned = std::make_unique<TextField>(nullptr, &engine, "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt");
+    TextField* field = owned.get();
+    field->set_multiline(true);
+    field->set_follow_end(true);
+    box.add_child(std::move(owned));
+    // act the box gives the field the exact height the panel reserves (§8.2)
+    Size measured{};
+    box.measure(SizeConstraints::at_most(Size{400.0f, 400.0f}), measured);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 152.0f}));
+    // assert the capped field kept the box height and started on the last line (§8.2)
+    EXPECT_FLOAT_EQ(field->bounds().height, 152.0f);
+    EXPECT_GT(field->maximum_scroll_offset(), 0.0f);
+    EXPECT_FLOAT_EQ(field->scroll_offset(), field->maximum_scroll_offset());
+}
+
+TEST(TextFieldFollowChecks, EnablingMultilineStartsAtTheEnd) {
+    // arrange a single line field in a plate shorter than its line, with the policy already on (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdefgh");
+    field.set_follow_end(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 10.0f}));
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act the field becomes multiline, which opens a range in the short plate (§8.2)
+    field.set_multiline(true);
+    // assert the newly opened range starts at its end, because the policy is on (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 6.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 6.0f);
 }
 
 TEST(TextFieldUndoChecks, ADestroyedFieldRemovesItsEntriesBeforeTheStackRuns) {

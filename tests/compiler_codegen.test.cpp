@@ -3968,3 +3968,39 @@ component NotesPanel {
     const GeneratedFile& unit = file_named(files, "notes_panel.cpp");
     EXPECT_TRUE(contains(unit.content, "set_scrollbar_visibility(albor::ScrollbarVisibility::AlwaysOff)"));
 }
+
+TEST(Codegen, ATextFieldFollowPolicyReachesItsSetter) {
+    // arrange a multiline field that follows its end as the value grows (§8.2, §11.3)
+    const std::string_view source = R"(
+component LogPanel {
+    TextField {
+        multiline: true;
+        follow_end: true;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the policy reaches the widget as a bool, because the setter is what turns it on (§11.3)
+    const GeneratedFile& unit = file_named(files, "log_panel.cpp");
+    EXPECT_TRUE(contains(unit.content, "set_follow_end(true)"));
+}
+
+TEST(Codegen, ABoundTextFieldFollowPolicyReachesItsSink) {
+    // arrange a field whose follow policy is an expression over a component property (§8.2, §11.3)
+    const std::string_view source = R"(
+component LogPanel {
+    in property<bool> tail;
+    TextField {
+        multiline: true;
+        follow_end: tail;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& unit = file_named(files, "log_panel.cpp");
+    // assert the binding runs through a sink and calls the widget setter on every change (§11.3, §13.3)
+    EXPECT_TRUE(contains(unit.content, "m_sink_0_follow_end.bind_static"));
+    EXPECT_TRUE(contains(unit.content, "set_follow_end(value);"));
+}

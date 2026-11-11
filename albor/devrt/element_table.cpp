@@ -874,6 +874,13 @@ namespace albor::devrt
                      node.set_multiline(multiline);
                      return true;
                  })},
+                {"TextField.follow_end", setter<TextField>([](TextField& node, std::string_view value) {
+                     bool follow_end = false;
+                     if (!read_bool(value, follow_end))
+                         return false;
+                     node.set_follow_end(follow_end);
+                     return true;
+                 })},
                 {"TextField.content_align", setter<TextField>([](TextField& node, std::string_view value) {
                      // the alignment is a named member, which places the run inside the plate (§8.2)
                      Align align;
