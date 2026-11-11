@@ -55,6 +55,10 @@ Horizontal strips that host controls. Both expose `padding`, `spacing`, `backgro
 `corner_radius`, place visible children left to right, and announce a semantic group. `MenuBar`
 is the shell's top strip; `ToolBar` is the same container for ordinary controls.
 
+A `Menu` is a floating card, so it resolves the panel plate. A `MenuBar` and a `ToolBar` are strips
+of window chrome, so they resolve the canvas plate; a preset that paints a white card therefore
+leaves the toolbar and the menu bar grey, and an application can still author `background` on either.
+
 ## Shortcut display
 
 The item presents the one spelling the accelerator table owns:

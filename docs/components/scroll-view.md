@@ -7,7 +7,7 @@ scale, a virtualized window over a large list.
 
 | property | type | default | notes |
 | --- | --- | --- | --- |
-| `viewport_width` | `float` | `0` | the outer width, including a reserved bar gutter; `0` follows the width the parent offers; accepts `px` |
+| `viewport_width` | `float` | `0` | the outer width; a bar that reserves a gutter takes it from the content, while an overlay bar does not; `0` follows the width the parent offers; accepts `px` |
 | `viewport_height` | `float` | `0` | the outer height; `0` follows the height the parent offers; accepts `px` |
 | `overscan` | `float` | `0` | extra extent rendered past each edge to hide populate cost; accepts `px` |
 | `offset` | `float` | `0` | the current scroll position |
@@ -84,15 +84,20 @@ reuses the existing element and rebinds it, rather than rebuilding the list.
 
 ## Notes
 
-- The bar occupies a reserved gutter on the trailing edge rather than painting over the content.
-  `viewport_width` is the outer extent, so while a bar is shown the content area is
-  `viewport_width` less the bar width; the content never needs a trailing margin of its own.
-  `Scrollbar.off` returns the full width to the content.
+- The bar follows the preset's policy. By default it occupies a reserved gutter on the trailing
+  edge rather than painting over the content: `viewport_width` is the outer extent, so while a bar
+  is shown the content area is `viewport_width` less the bar width, and the content never needs a
+  trailing margin of its own. `Scrollbar.off` returns the full width to the content. A preset may
+  instead ask for an overlay bar (`scrollbar_overlay`): the bar then paints over the content,
+  reserves no gutter, widens while the pointer is on the view or the thumb is dragged
+  (`scrollbar_hover_extent`), and stands `scrollbar_overlay_inset` off the trailing edge. The macOS
+  preset takes that path; the fluent and derived presets keep their gutter.
 - An `as_needed` bar decides its gutter from a full-width probe and keeps it for that layout,
   even if the narrowed remeasure no longer overflows. Re-deciding would oscillate for content
   whose height shrinks when it is narrowed (an aspect-scaled image, for example): the
   full-width probe overflows, the narrower pass fits, and dropping the gutter would restore
-  the overflow on the next measure.
+  the overflow on the next measure. An overlay bar runs no narrowed pass, because it never takes
+  a gutter from the content.
 - `viewport_width` and `viewport_height` resolve independently: a positive axis takes its
   extent and is clamped into the parent, while a zero or negative axis follows the space the
   parent offers. To take the leftover inside a `Row` or `Column`, declare `Align.stretch` on

@@ -140,9 +140,9 @@ namespace albor
     }
 
     Color ToolBar::background() const {
-        // a themed strip resolves the panel face until the author writes a face (§6.1)
+        // a themed strip resolves the canvas plate, because a strip is chrome rather than a card (§6.1)
         if (theme() != nullptr)
-            return resolve_authored(theme()->palette().panel_background, m_background, m_background_set);
+            return resolve_authored(theme()->palette().canvas_background, m_background, m_background_set);
         // an unthemed strip keeps its own face, which is the surface it always had (§6.1)
         return m_background;
     }

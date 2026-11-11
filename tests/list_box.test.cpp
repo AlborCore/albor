@@ -1047,6 +1047,26 @@ TEST(ListBoxChecks, AGutterPressSelectsNoRow) {
     EXPECT_FALSE(fixture.box.has_selection());
 }
 
+TEST(ListBoxChecks, AnOverlayTrackPressSelectsTheRowUnderIt) {
+    // arrange a macos themed list, whose bar overlays the content and reserves no gutter (§8.2)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    apply_theme(fixture.box, theme);
+    fixture.layout(320.0f, 160.0f);
+    InputController controller;
+    controller.attach(fixture.box);
+    // act a press lands in the trailing strip, which an overlay leaves to the content (§8.2)
+    Event press{.kind = EventKind::PointerDown, .position = Point{315.0f, 150.0f}};
+    controller.deliver(press);
+    // assert the row under the pointer is selected, because an overlay bar hides no content from a press (§8.3)
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().content_viewport().width, 320.0f);
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(fixture.box.selected_index(), 6U);
+}
+
 TEST(ListBoxChecks, TheGutterThumbDragsWithoutSelectingARow) {
     // arrange a scrollable list whose thumb fills the top of the trailing gutter (§8.2)
     Fixture fixture;
@@ -1183,7 +1203,7 @@ TEST(ListBoxChecks, TheSelectionBandStopsAtTheBarGutter) {
     for (int index = 0; index < 8; index++)
         fixture.add_row("row" + std::to_string(index));
     fixture.box.set_row_height(24.0f);
-    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    const Theme theme = ThemeBuilder::light(Accents{});
     apply_theme(fixture.box, theme);
     fixture.layout(320.0f, 160.0f);
     fixture.box.select(3);
@@ -1197,6 +1217,31 @@ TEST(ListBoxChecks, TheSelectionBandStopsAtTheBarGutter) {
         if (command.kind() == DrawCommandKind::RoundedRect && command.rect_geometry().rect.width == 310.0f && command.rect_geometry().rect.height == 24.0f) {
             band = true;
             EXPECT_EQ(command.clip(), fixture.box.scroll_view().content_viewport());
+        }
+    EXPECT_TRUE(band);
+}
+
+TEST(ListBoxChecks, TheSelectionBandSpansTheWholeWidthUnderAnOverlayBar) {
+    // arrange a macos themed, overflowing list whose bar overlays the content (§6.1, §8.2)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    apply_theme(fixture.box, theme);
+    fixture.layout(320.0f, 160.0f);
+    fixture.box.select(3);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{320.0f, 160.0f}, 1.0f);
+    SceneBuilder builder;
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(fixture.box, metrics, Color::rgb(0.925f, 0.925f, 0.930f));
+    // assert the band takes the whole viewport, because an overlay bar hides nothing from the content (§8.2)
+    bool band = false;
+    for (const DrawCommand& command : scene->commands())
+        if (command.kind() == DrawCommandKind::RoundedRect && command.rect_geometry().rect.width == 320.0f && command.rect_geometry().rect.height == 24.0f) {
+            band = true;
+            EXPECT_EQ(command.clip(), fixture.box.scroll_view().content_viewport());
+            EXPECT_FLOAT_EQ(command.clip().width, 320.0f);
         }
     EXPECT_TRUE(band);
 }

@@ -130,6 +130,20 @@ namespace albor
         theme.set_text_field_caret(ControlState::Pressed, on_surface);
         theme.set_text_field_caret(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.4f));
         theme.set_text_field_caret(ControlState::Focused, on_surface);
+        // a derived field is a white well in light mode and a lift in dark, which is what an entry reads as (§8.4)
+        const Color well = scheme == ColorScheme::Dark ? lighten(surface, 0.10f) : Color::rgb(1.0f, 1.0f, 1.0f);
+        theme.set_text_field_plate(ControlState::Normal, well);
+        theme.set_text_field_plate(ControlState::Hovered, well);
+        theme.set_text_field_plate(ControlState::Pressed, well);
+        theme.set_text_field_plate(ControlState::Disabled, Color::rgba(well.red, well.green, well.blue, 0.5f));
+        theme.set_text_field_plate(ControlState::Focused, well);
+        // a derived entry strokes the shared outline, which is what keeps a white well visible on a light surface (§8.4)
+        theme.set_text_field_border(ControlState::Normal, Color::rgba(outline.red, outline.green, outline.blue, 0.35f));
+        theme.set_text_field_border(ControlState::Hovered, Color::rgba(outline.red, outline.green, outline.blue, 0.45f));
+        theme.set_text_field_border(ControlState::Pressed, Color::rgba(outline.red, outline.green, outline.blue, 0.35f));
+        theme.set_text_field_border(ControlState::Disabled, Color::rgba(outline.red, outline.green, outline.blue, 0.18f));
+        // a focused entry carries the accent line, which is the mark every preset shares (§8.4)
+        theme.set_text_field_border(ControlState::Focused, accent);
         // a selection sits behind the value, so it is the accent at a strength that leaves the text readable (§6.1)
         theme.set_text_field_selection(ControlState::Normal, Color::rgba(accent.red, accent.green, accent.blue, 0.35f));
         theme.set_text_field_selection(ControlState::Hovered, Color::rgba(accent.red, accent.green, accent.blue, 0.42f));

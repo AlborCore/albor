@@ -29,7 +29,7 @@ namespace albor
         // override: report whether a point lands inside the bounds, because a scrolled away row is not there (§8.3)
         [[nodiscard]] bool hit_test(Point logical_point) const override;
 
-        // override: clip the children to the content viewport and draw the bar in its reserved gutter (§6.2)
+        // override: clip the children to the content viewport and draw the bar in its gutter or over the content (§6.2)
         void paint_children(RenderContext& context) override;
 
         // override: bound the damage by the viewport, because the content may extend far outside it (§6.1, §6.2)
@@ -127,7 +127,7 @@ namespace albor
         [[nodiscard]] Rect clip_child_damage(const Rect& damage) const override;
 
     private:
-        // hand out the width the theme declares, which is what the measure and the content viewport reserve (§8.2)
+        // hand out the width the theme declares, which the content viewport reserves unless it overlays (§8.2)
         [[nodiscard]] float bar_extent() const;
 
         // hand out the bar width the bounds can hold, which is what the paint and the thumb use (§8.2)
@@ -136,13 +136,19 @@ namespace albor
         // report whether the current policy reserves a gutter, which the viewport and the bar both read (§8)
         [[nodiscard]] bool bar_reserved() const;
 
+        // report whether the bar paints over the content instead of reserving a gutter, which is the overlay policy (§8.2)
+        [[nodiscard]] bool bar_overlay() const;
+
+        // hand out the gap an overlay bar leaves at the trailing edge, which keeps it off the window frame (§8.2)
+        [[nodiscard]] float bar_inset() const;
+
         // measure the content against a width and a height ceiling, and hand back the extent it reports (§8.2, AD-13)
         [[nodiscard]] Size measure_content(float width, float height);
 
         // hand out the strip the bar is drawn in, which is the area a scroll damages (§6.1)
         [[nodiscard]] Rect scrollbar_track_rect() const;
 
-        // draw the bar in its reserved gutter, which is what reports where the offset sits (§6.1)
+        // draw the bar in its gutter or over the content, which is what reports where the offset sits (§6.1)
         void paint_scrollbar(RenderContext& context) const;
 
         // hand out the bar the current offset puts at this place, which is what the travel is read from (§8.2)
@@ -184,8 +190,8 @@ namespace albor
         // when the bar is drawn, which is a per instance policy (§8)
         ScrollbarVisibility m_visibility = ScrollbarVisibility::AsNeeded;
 
-        // whether the measure pass reserved the bar gutter, which arrange honours until the next measure (§8.2)
-        bool m_bar_reserved = false;
+        // whether the policy needs a bar, which the measure sets from the overflow and an always on policy forces (§8.2)
+        bool m_bar_needed = false;
 
         // how far beyond the visible area content is kept built (§8.2)
         float m_overscan = 0.0f;

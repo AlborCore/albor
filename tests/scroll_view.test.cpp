@@ -13,6 +13,8 @@
 #include "albor/layout/stack_layout.h"
 #include "albor/runtime/binding_engine.h"
 #include "albor/semantics/semantic_node.h"
+#include "albor/style/theme.h"
+#include "albor/style/theme_builder.h"
 #include "albor/ui/ui_event.h"
 #include "albor/ui/ui_node.h"
 #include "albor/widgets/scroll_view.h"
@@ -1911,6 +1913,289 @@ TEST(ScrollViewChecks, AThemeResolvesTheScrollbarPaintAndTheLineStep) {
     Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
     view.dispatch_event(down);
     EXPECT_FLOAT_EQ(view.offset(), 25.0f);
+}
+
+TEST(ScrollViewChecks, AnOverlayBarReservesNoGutter) {
+    // arrange a viewport whose theme paints an overlay bar, which is what a native scrollbar is (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(7.0f);
+    theme.set_scrollbar_overlay(true);
+    theme.set_scrollbar_overlay_inset(2.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    RecordingContext context;
+    // act
+    view.render(context);
+    // assert the content keeps the whole viewport, because an overlay bar takes no gutter (§8.2)
+    EXPECT_FLOAT_EQ(view.content_viewport().width, 200.0f);
+    // assert the strip rests against the trailing edge less its standoff, which is where an overlay bar rides (§8.2)
+    Rect track{};
+    for (const Rect& rect : context.rects)
+        if (rect.height == 300.0f)
+            track = rect;
+    EXPECT_FLOAT_EQ(track.width, 7.0f);
+    EXPECT_FLOAT_EQ(track.x, 191.0f);
+}
+
+TEST(ScrollViewChecks, AnOverlayBarAppearsOnlyWhileTheContentOverflows) {
+    // arrange a viewport whose inset content fits, which is what an as needed bar has to leave alone (§8)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 100.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(7.0f);
+    theme.set_scrollbar_overlay(true);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert content that fits draws no bar, because the as needed policy still decides (§8)
+    EXPECT_FALSE(view.scrollbar_visible());
+    // act the content grows past the viewport, which is what asks for a bar (§8)
+    content_ptr->intrinsic = Size{100.0f, 900.0f};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the overlay bar appears without shifting the content, because no gutter is reserved (§8.2)
+    EXPECT_TRUE(view.scrollbar_visible());
+    EXPECT_FLOAT_EQ(view.content_viewport().width, 200.0f);
+}
+
+TEST(ScrollViewChecks, AnOverlayBarMeasuresTheContentAtTheFullWidth) {
+    // arrange an overlay viewport whose content would wrap narrower if a gutter were taken (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(10.0f);
+    theme.set_scrollbar_overlay(true);
+    apply_theme(view, theme);
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert the content was measured once at the whole width, because an overlay runs no narrowed second pass (§8.2)
+    EXPECT_FLOAT_EQ(view.content_extent().width, 200.0f);
+}
+
+TEST(ScrollViewChecks, TheMacosPresetOverlaysAndTheDerivedPresetReserves) {
+    // arrange two identical viewports, one through each preset (§8.4)
+    BindingEngine macos_engine;
+    ScrollView macos_view(&macos_engine);
+    auto macos_content = std::make_unique<ContentNode>();
+    macos_content->intrinsic = Size{100.0f, 900.0f};
+    macos_view.add_child(std::move(macos_content));
+    macos_view.set_viewport_extent(Size{200.0f, 300.0f});
+    const Theme macos = Theme::macos(Accents{}, ColorScheme::Light);
+    apply_theme(macos_view, macos);
+    BindingEngine derived_engine;
+    ScrollView derived_view(&derived_engine);
+    auto derived_content = std::make_unique<ContentNode>();
+    derived_content->intrinsic = Size{100.0f, 900.0f};
+    derived_view.add_child(std::move(derived_content));
+    derived_view.set_viewport_extent(Size{200.0f, 300.0f});
+    const Theme derived = ThemeBuilder::light(Accents{});
+    apply_theme(derived_view, derived);
+    Size measured{};
+    // act
+    macos_view.measure(SizeConstraints::unconstrained(), measured);
+    macos_view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    derived_view.measure(SizeConstraints::unconstrained(), measured);
+    derived_view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the macos preset overlays while the derived preset keeps its ten point gutter (§8.4)
+    EXPECT_FLOAT_EQ(macos_view.content_viewport().width, 200.0f);
+    EXPECT_FLOAT_EQ(derived_view.content_viewport().width, 190.0f);
+    EXPECT_TRUE(macos_view.scrollbar_visible());
+    EXPECT_TRUE(derived_view.scrollbar_visible());
+}
+
+TEST(ScrollViewChecks, AnOverlayHoverAndDragAskForAPaint) {
+    // arrange a themed overlay bar that has already been drawn (§6.1)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(7.0f);
+    theme.set_scrollbar_overlay(true);
+    theme.set_scrollbar_hover_extent(11.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.clear_dirty();
+    // act the pointer enters, which widens the thumb (§8.3)
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{20.0f, 20.0f}};
+    view.dispatch_event(enter);
+    // assert the widening asks for the strip it now draws to be repainted (§6.1)
+    EXPECT_TRUE(view.render_dirty());
+    // act the press grabs the thumb and the release ends the drag (§8.3)
+    view.clear_dirty();
+    Event down{.kind = EventKind::PointerDown, .position = Point{194.0f, 10.0f}};
+    view.dispatch_event(down);
+    EXPECT_TRUE(view.render_dirty());
+    view.clear_dirty();
+    Event up{.kind = EventKind::PointerUp, .position = Point{194.0f, 10.0f}};
+    view.dispatch_event(up);
+    EXPECT_TRUE(view.render_dirty());
+}
+
+TEST(ScrollViewChecks, TheOverlayTrackWidensWithTheThumb) {
+    // arrange a themed overlay bar whose pointer is inside the viewport (§6.1)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(7.0f);
+    theme.set_scrollbar_overlay(true);
+    theme.set_scrollbar_hover_extent(11.0f);
+    theme.set_scrollbar_overlay_inset(2.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{20.0f, 20.0f}};
+    view.dispatch_event(enter);
+    RecordingContext context;
+    view.render(context);
+    Rect track{};
+    for (const Rect& rect : context.rects)
+        if (rect.height == 300.0f)
+            track = rect;
+    // assert the track takes the widened extent, so the thumb never rides outside its own strip (§6.1)
+    EXPECT_FLOAT_EQ(track.width, 11.0f);
+    EXPECT_FLOAT_EQ(track.x, 187.0f);
+}
+
+TEST(ScrollViewChecks, AnOverlayThumbWidensWhileThePointerIsOnTheView) {
+    // arrange a themed overlay bar, whose thumb the pointer makes grabbable (§6.1)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(7.0f);
+    theme.set_scrollbar_overlay(true);
+    theme.set_scrollbar_hover_extent(11.0f);
+    theme.set_scrollbar_overlay_inset(2.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    RecordingContext resting_context;
+    view.render(resting_context);
+    Rect resting{};
+    for (const Rect& rect : resting_context.rounded)
+        resting = rect;
+    // assert the resting thumb takes the extent the theme states (§6.1)
+    EXPECT_FLOAT_EQ(resting.width, 7.0f);
+    // act the pointer enters the viewport, which is where the bar reads its hover (§8.3)
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{20.0f, 20.0f}};
+    view.dispatch_event(enter);
+    RecordingContext hovered_context;
+    view.render(hovered_context);
+    Rect hovered{};
+    for (const Rect& rect : hovered_context.rounded)
+        hovered = rect;
+    // assert the hovered thumb widens and still stands off the trailing edge by its inset (§6.1)
+    EXPECT_FLOAT_EQ(hovered.width, 11.0f);
+    EXPECT_FLOAT_EQ(hovered.x, 187.0f);
+    // act the pointer leaves, which is what returns the thumb to its resting width (§8.3)
+    Event leave{.kind = EventKind::PointerLeave, .position = Point{20.0f, 20.0f}};
+    view.dispatch_event(leave);
+    RecordingContext left_context;
+    view.render(left_context);
+    Rect left{};
+    for (const Rect& rect : left_context.rounded)
+        left = rect;
+    EXPECT_FLOAT_EQ(left.width, 7.0f);
+}
+
+TEST(ScrollViewChecks, AnOverlayThumbWidensWhileTheThumbIsDragged) {
+    // arrange an overlay bar whose resting thumb the pointer can grab (§8.3)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(7.0f);
+    theme.set_scrollbar_overlay(true);
+    theme.set_scrollbar_hover_extent(11.0f);
+    theme.set_scrollbar_overlay_inset(2.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act the press lands on the resting thumb, which is the only draggable part (§8.3)
+    Event down{.kind = EventKind::PointerDown, .position = Point{194.0f, 10.0f}};
+    view.dispatch_event(down);
+    EXPECT_TRUE(down.handled);
+    RecordingContext drag_context;
+    view.render(drag_context);
+    Rect drag{};
+    for (const Rect& rect : drag_context.rounded)
+        drag = rect;
+    // assert a dragged thumb takes the hover extent, because the pointer is holding it (§6.1)
+    EXPECT_FLOAT_EQ(drag.width, 11.0f);
+    // act the release ends the drag, which drops the thumb back to the resting width (§8.3)
+    Event up{.kind = EventKind::PointerUp, .position = Point{194.0f, 10.0f}};
+    view.dispatch_event(up);
+    RecordingContext released_context;
+    view.render(released_context);
+    Rect released{};
+    for (const Rect& rect : released_context.rounded)
+        released = rect;
+    EXPECT_FLOAT_EQ(released.width, 7.0f);
+}
+
+TEST(ScrollViewChecks, AGutterBarIgnoresTheHoverExtent) {
+    // arrange a gutter bar whose theme also carries an overlay hover width, which must not apply (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(14.0f);
+    theme.set_scrollbar_hover_extent(20.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act the pointer enters, which is what widens an overlay bar (§8.3)
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{20.0f, 20.0f}};
+    view.dispatch_event(enter);
+    RecordingContext context;
+    view.render(context);
+    Rect thumb{};
+    for (const Rect& rect : context.rounded)
+        thumb = rect;
+    // assert a gutter bar keeps its extent and its gutter, because the overlay policy is off (§8.2)
+    EXPECT_FLOAT_EQ(thumb.width, 14.0f);
+    EXPECT_FLOAT_EQ(view.content_viewport().width, 186.0f);
 }
 
 TEST(ScrollViewChecks, AThemedActionScrollsByTheThemedStep) {

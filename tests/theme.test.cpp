@@ -300,6 +300,14 @@ namespace albor
         EXPECT_FLOAT_EQ(macos.metrics().radio_button_outline, 2.0f);
         EXPECT_EQ(macos.metrics().numeric_stepper_extent, (Size{120.0f, 30.0f}));
         EXPECT_FLOAT_EQ(macos.metrics().numeric_stepper_button_width, 28.0f);
+        // a native scrollbar is an overlay thumb, which is what the guide draws (§8.4)
+        EXPECT_TRUE(macos.metrics().scrollbar_overlay);
+        EXPECT_FLOAT_EQ(macos.metrics().scrollbar_extent, 7.0f);
+        EXPECT_FLOAT_EQ(macos.metrics().scrollbar_hover_extent, 11.0f);
+        EXPECT_FLOAT_EQ(macos.metrics().scrollbar_overlay_inset, 2.0f);
+        // a sidebar row is inset inside the strip, which is what makes it twenty eight tall (§8.4)
+        EXPECT_FLOAT_EQ(macos.metrics().tab_row_inset, 2.0f);
+        EXPECT_FLOAT_EQ(macos.metrics().tab_row_radius, 6.0f);
         // the hierarchy sizes body copy at thirteen (§8.4)
         EXPECT_FLOAT_EQ(macos.typography().body, 13.0f);
     }
@@ -313,6 +321,151 @@ namespace albor
         EXPECT_NE(macos.palette().button_plate[state_index(ControlState::Normal)], Accents{}.accent);
         // assert the halo under the ring is the accent dimmed, which is the dual layer (§8.4)
         EXPECT_FLOAT_EQ(macos.palette().focus_ring_outer[state_index(ControlState::Focused)].alpha, 0.45f);
+    }
+
+    TEST(ThemePresets, TheMacosPresetPaintsACardAsAContentPlate) {
+        // arrange a light and a dark macos theme, because a card is a content plate in both schemes (§8.4)
+        const Accents accents;
+        const Theme light = Theme::macos(accents, ColorScheme::Light);
+        const Theme dark = Theme::macos(accents, ColorScheme::Dark);
+        // act the card plate is read by state, which is how a panel resolves its face (§6.1)
+        const Color light_plate = light.palette().panel_background[state_index(ControlState::Normal)];
+        const Color dark_plate = dark.palette().panel_background[state_index(ControlState::Normal)];
+        // assert the light pane is white and the group is a grey plate inside it, which is the native direction (§8.4)
+        EXPECT_EQ(light.surface(), Color::rgb(1.0f, 1.0f, 1.0f));
+        EXPECT_EQ(light_plate, ThemeBuilder::darken(Color::rgb(1.0f, 1.0f, 1.0f), 0.05f));
+        EXPECT_EQ(dark_plate, ThemeBuilder::lighten(accents.surface, 0.10f));
+        // assert a card never reuses the neutral button face, because that is what made it read as a control (§8.4)
+        EXPECT_NE(light_plate, light.palette().button_plate[state_index(ControlState::Normal)]);
+        EXPECT_NE(dark_plate, dark.palette().button_plate[state_index(ControlState::Normal)]);
+        // assert a native card strokes no border, because the plate and the whitespace group the content (§8.4)
+        EXPECT_FLOAT_EQ(light.metrics().panel_border_width, 0.0f);
+        EXPECT_FLOAT_EQ(dark.metrics().panel_border_width, 0.0f);
+        // assert a card does not react to a pointer, because a native content plate does not (§8.4)
+        for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Focused})
+            EXPECT_EQ(light.palette().panel_background[state_index(state)], light_plate);
+        // assert a disabled card fades rather than changing its plate, which is what the state means (§6.1)
+        EXPECT_FLOAT_EQ(light.palette().panel_background[state_index(ControlState::Disabled)].alpha, 0.5f);
+    }
+
+    TEST(ThemePresets, TheMacosPresetPaintsAFieldAsAWell) {
+        // arrange a light and a dark macos theme, because a field is a well of its own in both schemes (§8.4)
+        const Accents accents;
+        const Theme light = Theme::macos(accents, ColorScheme::Light);
+        const Theme dark = Theme::macos(accents, ColorScheme::Dark);
+        // act
+        const Color light_plate = light.palette().text_field_plate[state_index(ControlState::Normal)];
+        const Color dark_plate = dark.palette().text_field_plate[state_index(ControlState::Normal)];
+        // assert a light field is a white well on the white pane, which is what the hairline is for (§8.4)
+        EXPECT_EQ(light_plate, Color::rgb(1.0f, 1.0f, 1.0f));
+        EXPECT_EQ(light_plate, light.surface());
+        // assert a dark field lifts above the window, which is what keeps it off the grey card layer (§8.4)
+        EXPECT_EQ(dark_plate, ThemeBuilder::lighten(accents.surface, 0.04f));
+        EXPECT_NE(dark_plate, dark.surface());
+        // assert the well is a recess inside the card, because a dark card lifts further than a field (§8.4)
+        EXPECT_NE(dark_plate, dark.palette().panel_background[state_index(ControlState::Normal)]);
+        // assert the focused field keeps the accent line, which is what marks the active entry (§8.4)
+        EXPECT_EQ(light.palette().text_field_border[state_index(ControlState::Focused)], accents.accent);
+        // assert the resting field keeps its hairline, because a white well needs an edge on a white card (§8.4)
+        EXPECT_GT(light.palette().text_field_border[state_index(ControlState::Normal)].alpha, 0.0f);
+    }
+
+    TEST(ThemePresets, TheMacosPresetPaintsItsDefaultControlWithTheAccent) {
+        // arrange a macos theme and its accent, which is what a native primary control is filled with (§8.4)
+        const Accents accents;
+        const Theme theme = Theme::macos(accents, ColorScheme::Light);
+        // assert the default plate is the accent while the neutral plate stays grey (§8.4)
+        EXPECT_EQ(theme.palette().button_plate_default[state_index(ControlState::Normal)], accents.accent);
+        EXPECT_NE(theme.palette().button_plate[state_index(ControlState::Normal)], accents.accent);
+        // assert the default label reads white over the accent at every state (§8.4)
+        const Color white = Color::rgb(1.0f, 1.0f, 1.0f);
+        EXPECT_EQ(theme.palette().button_label_default[state_index(ControlState::Normal)], white);
+        EXPECT_EQ(theme.palette().button_label_default[state_index(ControlState::Hovered)], white);
+        EXPECT_EQ(theme.palette().button_label_default[state_index(ControlState::Pressed)], white);
+        EXPECT_EQ(theme.palette().button_label_default[state_index(ControlState::Focused)], white);
+        // assert the disabled label fades rather than leaving a bright caption on a faded plate (§8.4)
+        EXPECT_LT(theme.palette().button_label_default[state_index(ControlState::Disabled)].alpha, 1.0f);
+        // assert the accent plate strokes no border, because the fill is what separates it from the surface (§8.4)
+        EXPECT_FLOAT_EQ(theme.palette().button_border_default[state_index(ControlState::Normal)].alpha, 0.0f);
+    }
+
+    TEST(ThemePresets, TheMacosPresetPaintsASidebarSelectionRow) {
+        // arrange a macos theme, whose vertical strip reads as a native source list (§8.4)
+        const Accents accents;
+        const Theme theme = Theme::macos(accents, ColorScheme::Dark);
+        // assert the row plate is the accent and the row label reads white over it (§6.1)
+        EXPECT_EQ(theme.palette().tab_selection_plate[state_index(ControlState::Normal)], accents.accent);
+        EXPECT_EQ(theme.palette().tab_selection_label[state_index(ControlState::Normal)], Color::rgb(1.0f, 1.0f, 1.0f));
+        // assert the row is inset inside the strip, which is what leaves the card showing around it (§8.2)
+        EXPECT_FLOAT_EQ(theme.metrics().tab_row_inset, 2.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().tab_row_radius, 6.0f);
+    }
+
+    TEST(ThemePresets, TheMacosPresetPaintsASourceListOnItsOwnPlate) {
+        // arrange a light and a dark macos theme, because a sidebar is a surface of its own in both schemes (§8.4)
+        const Accents accents;
+        const Theme light = Theme::macos(accents, ColorScheme::Light);
+        const Theme dark = Theme::macos(accents, ColorScheme::Dark);
+        // act
+        const Color light_strip = light.palette().tab_strip_background[state_index(ControlState::Normal)];
+        const Color dark_strip = dark.palette().tab_strip_background[state_index(ControlState::Normal)];
+        // assert a light sidebar is near white, lighter than a group and darker than the pane (§8.4)
+        EXPECT_EQ(light_strip, ThemeBuilder::darken(Color::rgb(1.0f, 1.0f, 1.0f), 0.03f));
+        EXPECT_GT(light_strip.red, light.palette().panel_background[state_index(ControlState::Normal)].red);
+        EXPECT_LT(light_strip.red, light.surface().red);
+        // assert a dark sidebar lifts off the surface, which is what keeps the rows readable (§8.4)
+        EXPECT_EQ(dark_strip, ThemeBuilder::lighten(accents.surface, 0.06f));
+    }
+
+    TEST(ThemePresets, TheFluentPresetKeepsItsGutterAndPaintsAPrimaryControl) {
+        // arrange a fluent theme, whose text boxes are wells and whose primary control is the accent (§8.4)
+        const Accents accents;
+        const Theme light = Theme::fluent(accents, ColorScheme::Light);
+        const Theme dark = Theme::fluent(accents, ColorScheme::Dark);
+        // assert a fluent field is a white well in light mode and a lift in dark, rather than the window colour (§8.4)
+        EXPECT_EQ(light.palette().text_field_plate[state_index(ControlState::Normal)], Color::rgb(1.0f, 1.0f, 1.0f));
+        EXPECT_EQ(dark.palette().text_field_plate[state_index(ControlState::Normal)], ThemeBuilder::lighten(accents.surface, 0.10f));
+        EXPECT_NE(light.palette().text_field_plate[state_index(ControlState::Normal)], light.surface());
+        // assert the fluent well keeps its one point line, which is what separates it from the card (§8.4)
+        EXPECT_GT(light.palette().text_field_border[state_index(ControlState::Normal)].alpha, 0.0f);
+        // assert the fluent bar still reserves its twelve point gutter, because the language never overlays content (§8.2)
+        EXPECT_FALSE(light.metrics().scrollbar_overlay);
+        EXPECT_FLOAT_EQ(light.metrics().scrollbar_extent, 12.0f);
+        // assert the primary control is the accent while a plain fluent button keeps its neutral face (§8.4)
+        EXPECT_EQ(light.palette().button_plate_default[state_index(ControlState::Normal)], accents.accent);
+        EXPECT_NE(light.palette().button_plate[state_index(ControlState::Normal)], accents.accent);
+        // assert the fluent selection keeps its indicator, because a vertical fluent strip is not a source list (§6.1)
+        EXPECT_FLOAT_EQ(light.palette().tab_selection_plate[state_index(ControlState::Normal)].alpha, 0.0f);
+    }
+
+    TEST(ThemePresets, TheDerivedPresetPaintsAFieldWellAndKeepsItsAccentPlate) {
+        // arrange a derived theme, which is the portable baseline every hand built theme follows (§6.1)
+        const Accents accents;
+        const Theme light = ThemeBuilder::light(accents);
+        const Theme dark = ThemeBuilder::dark(accents);
+        // assert a derived entry is a white well in light mode and a lift in dark, which is what a field reads as (§8.4)
+        EXPECT_EQ(light.palette().text_field_plate[state_index(ControlState::Normal)], Color::rgb(1.0f, 1.0f, 1.0f));
+        EXPECT_EQ(dark.palette().text_field_plate[state_index(ControlState::Normal)], ThemeBuilder::lighten(accents.surface, 0.10f));
+        // assert the derived well strokes the shared outline, because a white plate needs an edge to read as one (§8.4)
+        EXPECT_GT(light.palette().text_field_border[state_index(ControlState::Normal)].alpha, 0.0f);
+        EXPECT_EQ(light.palette().text_field_border[state_index(ControlState::Focused)], accents.accent);
+        // assert the derived baseline leaves the default role empty, because its buttons are already the accent (§8.4)
+        EXPECT_FLOAT_EQ(light.palette().button_plate_default[state_index(ControlState::Normal)].alpha, 0.0f);
+        // assert a default control therefore falls back to the accent plate every derived button carries (§8.4)
+        EXPECT_EQ(light.palette().button_plate[state_index(ControlState::Normal)], accents.accent);
+        // assert the derived preset keeps its gutter and its indicator, because the macos rules are gated (§8.2)
+        EXPECT_FALSE(light.metrics().scrollbar_overlay);
+        EXPECT_FLOAT_EQ(light.metrics().scrollbar_extent, 10.0f);
+        EXPECT_FLOAT_EQ(light.palette().tab_selection_plate[state_index(ControlState::Normal)].alpha, 0.0f);
+    }
+
+    TEST(ThemePresets, TheProDarkPresetKeepsItsFieldOnTheSurface) {
+        // arrange a tool theme, which separates through contrast rather than through a well (§8.4)
+        const Accents accents;
+        const Theme theme = Theme::pro_dark(accents);
+        // assert the field sits on the surface while the default control role stays empty (§8.4)
+        EXPECT_EQ(theme.palette().text_field_plate[state_index(ControlState::Normal)], accents.surface);
+        EXPECT_FLOAT_EQ(theme.palette().button_plate_default[state_index(ControlState::Normal)].alpha, 0.0f);
     }
 
     TEST(ThemePresets, TheFluentPresetSizesAControlToTheLanguage) {
@@ -360,11 +513,22 @@ namespace albor
         EXPECT_FLOAT_EQ(theme.palette().slider_fill[state_index(ControlState::Normal)].alpha, 0.0f);
         EXPECT_FLOAT_EQ(theme.palette().button_border[state_index(ControlState::Normal)].alpha, 0.0f);
         EXPECT_FLOAT_EQ(theme.palette().focus_ring_outer[state_index(ControlState::Focused)].alpha, 0.0f);
+        // assert the default control and the selection row are silent too, because a preset fills them (§8.4)
+        EXPECT_FLOAT_EQ(theme.palette().button_plate_default[state_index(ControlState::Normal)].alpha, 0.0f);
+        EXPECT_FLOAT_EQ(theme.palette().button_label_default[state_index(ControlState::Normal)].alpha, 0.0f);
+        EXPECT_FLOAT_EQ(theme.palette().button_border_default[state_index(ControlState::Normal)].alpha, 0.0f);
+        EXPECT_FLOAT_EQ(theme.palette().tab_selection_plate[state_index(ControlState::Normal)].alpha, 0.0f);
+        EXPECT_FLOAT_EQ(theme.palette().tab_selection_label[state_index(ControlState::Normal)].alpha, 0.0f);
         // assert the native metric tokens are silent by default too (§8.4)
         EXPECT_FLOAT_EQ(theme.metrics().button_padding_horizontal, 0.0f);
         EXPECT_FLOAT_EQ(theme.metrics().button_border_width, 0.0f);
         EXPECT_FLOAT_EQ(theme.metrics().checkbox_glyph_stroke, 0.0f);
         EXPECT_FLOAT_EQ(theme.metrics().slider_thumb_shadow, 0.0f);
         EXPECT_FLOAT_EQ(theme.metrics().slider_tick_length, 0.0f);
+        EXPECT_FALSE(theme.metrics().scrollbar_overlay);
+        EXPECT_FLOAT_EQ(theme.metrics().scrollbar_hover_extent, 0.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().scrollbar_overlay_inset, 0.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().tab_row_inset, 0.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().tab_row_radius, 0.0f);
     }
 } // namespace albor

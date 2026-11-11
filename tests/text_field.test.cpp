@@ -13,6 +13,7 @@
 #include "albor/layout/column_layout.h"
 #include "albor/render/frame_scene.h"
 #include "albor/runtime/binding_engine.h"
+#include "albor/style/theme_builder.h"
 #include "albor/ui/scene_builder.h"
 #include "albor/widgets/scroll_view.h"
 #include "albor/widgets/text_field.h"
@@ -937,6 +938,21 @@ TEST(TextFieldChecks, AnBoundCommandOwnsTheDisabledState) {
     // the command is enabled, and the field reads the single answer (§18.7)
     command.set_enabled(true);
     EXPECT_FALSE(field.disabled());
+}
+
+TEST(TextFieldChecks, AThemedFieldDrawsTheWellAndItsHairline) {
+    // arrange a macos themed field, which is the editable control a settings row is built from (§8.4)
+    EditingTextEngine engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    TextField field(nullptr, &engine, "20m");
+    field.set_theme(&theme);
+    // act
+    const Color face = field.background();
+    const Color line = field.border_color();
+    // assert the field reads a white well on the white pane, which is what its hairline separates (§8.4)
+    EXPECT_EQ(face, Color::rgb(1.0f, 1.0f, 1.0f));
+    EXPECT_EQ(face, theme.surface());
+    EXPECT_GT(line.alpha, 0.0f);
 }
 
 TEST(TextFieldChecks, AThemeResolvesTheFieldRoles) {

@@ -140,6 +140,12 @@ namespace albor
         // the thickness of the indicator under the selected tab (§6.1)
         float tab_indicator_height = 2.0f;
 
+        // the inset a selection row leaves inside its header, which is what sizes the row (§8.2)
+        float tab_row_inset = 0.0f;
+
+        // the corner a selection row is drawn with, which is what rounds a sidebar row at its ends (§6.1)
+        float tab_row_radius = 0.0f;
+
         // the extent of a radio button, which is a fixed circle (§8.2)
         Size radio_button_size{16.0f, 16.0f};
 
@@ -164,8 +170,17 @@ namespace albor
         // the corner radius a plate is drawn with, which is what makes a hover state read as a plate (§6.1)
         float corner_radius = 6.0f;
 
-        // how wide a scrollbar is drawn, which is reserved from the content rather than painted over it (§6.1)
+        // how wide a scrollbar rests at, which is the gutter it reserves unless the preset overlays it (§6.1)
         float scrollbar_extent = 10.0f;
+
+        // whether the bar paints over the content rather than reserving a gutter, which is an overlay scrollbar (§8.2)
+        bool scrollbar_overlay = false;
+
+        // the width an overlay bar takes while it is hovered or dragged, where zero keeps the resting extent (§6.1)
+        float scrollbar_hover_extent = 0.0f;
+
+        // the gap an overlay bar leaves at the trailing edge, which is what keeps it off the window frame (§8.2)
+        float scrollbar_overlay_inset = 0.0f;
 
         // the smallest thumb a scrollbar draws, which is what keeps a very long content grabbable (§6.1)
         float scrollbar_thumb_minimum = 24.0f;
@@ -216,6 +231,15 @@ namespace albor
         // the border a plate strokes above its fill, per state, which is the second layer of a control (§8.4)
         Color button_border[5] = {Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)};
 
+        // the plate of the dialog's default control, per state, which a preset leaves empty until it paints one (§8.4)
+        Color button_plate_default[5] = {Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)};
+
+        // the label of the dialog's default control, per state, which reads over the plate the preset filled (§8.4)
+        Color button_label_default[5] = {Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)};
+
+        // the border the dialog's default control strokes, per state, which an accent plate usually leaves empty (§8.4)
+        Color button_border_default[5] = {Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)};
+
         // the label colour of a control, per state, which is what the disabled variant fades (§6.1)
         Color button_label[5] = {Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{1.0f, 1.0f, 1.0f, 1.0f}, Color{0.88f, 0.90f, 0.94f, 1.0f}, Color{0.72f, 0.74f, 0.78f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}};
 
@@ -251,6 +275,15 @@ namespace albor
 
         // the indicator under the selected tab, per state, which marks the page that is shown (§6.1)
         Color tab_indicator[5] = {Color{0.20f, 0.55f, 0.90f, 1.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.62f, 0.66f, 0.72f, 1.0f}, Color{0.22f, 0.57f, 0.92f, 1.0f}};
+
+        // the plate a vertical strip is drawn on, per state, which a preset leaves empty for a bare strip (§6.1)
+        Color tab_strip_background[5] = {Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)};
+
+        // the row a vertical strip paints behind the selected tab, per state, which a preset may leave empty (§6.1)
+        Color tab_selection_plate[5] = {Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)};
+
+        // the label a selection row carries, per state, which reads over the row plate the preset filled (§6.1)
+        Color tab_selection_label[5] = {Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)};
 
         // the text colour of a plain label, per state, which a label has no press of its own (§6.1)
         Color label_foreground[5] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}};
@@ -414,6 +447,24 @@ namespace albor
         // replace one state of the selected tab indicator (§6.1)
         void set_tab_indicator(ControlState state, Color value);
 
+        // replace the plate a vertical strip is drawn on, which is what a source list sits on (§6.1)
+        void set_tab_strip_background(Color value);
+
+        // replace one state of the strip plate, which is what a hover or a press moves (§6.1)
+        void set_tab_strip_background(ControlState state, Color value);
+
+        // replace the row a vertical strip paints behind the selected tab, which is the selection style (§6.1)
+        void set_tab_selection_plate(Color value);
+
+        // replace one state of the selection row plate, which is what a hover or a press moves (§6.1)
+        void set_tab_selection_plate(ControlState state, Color value);
+
+        // replace the label a selection row carries, which reads over the row plate (§6.1)
+        void set_tab_selection_label(Color value);
+
+        // replace one state of the selection row label (§6.1)
+        void set_tab_selection_label(ControlState state, Color value);
+
         // replace the text colour of the normal state of a label (§6.1)
         void set_label_foreground(Color value);
 
@@ -471,6 +522,24 @@ namespace albor
         // replace the border of the normal state of a plate, which is the common case (§8.4)
         void set_button_border(Color value);
 
+        // replace one state of the plate a dialog's default control draws, which is its own role (§8.4)
+        void set_button_plate_default(ControlState state, Color value);
+
+        // replace the plate of the normal state of a default control, which is the common case (§8.4)
+        void set_button_plate_default(Color value);
+
+        // replace one state of the label a dialog's default control reads (§8.4)
+        void set_button_label_default(ControlState state, Color value);
+
+        // replace the label of the normal state of a default control (§8.4)
+        void set_button_label_default(Color value);
+
+        // replace one state of the border a dialog's default control strokes (§8.4)
+        void set_button_border_default(ControlState state, Color value);
+
+        // replace the border of the normal state of a default control (§8.4)
+        void set_button_border_default(Color value);
+
         // replace the corner radius a plate is drawn with (§6.1)
         void set_corner_radius(float value);
 
@@ -522,6 +591,12 @@ namespace albor
         // replace the thickness of the indicator under the selected tab (§6.1)
         void set_tab_indicator_height(float value);
 
+        // replace the inset a selection row leaves inside its header (§8.2)
+        void set_tab_row_inset(float value);
+
+        // replace the corner a selection row is drawn with (§6.1)
+        void set_tab_row_radius(float value);
+
         // replace the extent of a radio button (§8.2)
         void set_radio_button_size(Size value);
 
@@ -555,8 +630,17 @@ namespace albor
         // replace how wide a check mark strokes, which is what makes the glyph visible (§8.4)
         void set_checkbox_glyph_stroke(float value);
 
-        // replace how wide a scrollbar is drawn, which is the gutter a scroll container reserves (§6.1)
+        // replace how wide a scrollbar rests at, which is the gutter it takes when it does not overlay (§6.1)
         void set_scrollbar_extent(float value);
+
+        // replace whether the bar overlays the content instead of reserving a gutter (§8.2)
+        void set_scrollbar_overlay(bool value);
+
+        // replace the width an overlay bar takes while hovered or dragged, where zero keeps the resting extent (§6.1)
+        void set_scrollbar_hover_extent(float value);
+
+        // replace the gap an overlay bar leaves at the trailing edge (§8.2)
+        void set_scrollbar_overlay_inset(float value);
 
         // replace the smallest thumb a scrollbar draws (§6.1)
         void set_scrollbar_thumb_minimum(float value);

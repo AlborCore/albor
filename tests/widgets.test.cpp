@@ -3448,7 +3448,7 @@ TEST(ThemeChecks, AnAuthoredMenuBarFaceWinsOverTheTheme) {
     // arrange
     BindingEngine engine;
     Theme theme;
-    theme.set_panel_background(Color::rgb(0.0f, 1.0f, 0.0f));
+    theme.set_canvas_background(Color::rgb(0.0f, 1.0f, 0.0f));
     MenuBar bar(&engine);
     bar.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
     bar.set_theme(&theme);
@@ -3456,6 +3456,19 @@ TEST(ThemeChecks, AnAuthoredMenuBarFaceWinsOverTheTheme) {
     const Color face = bar.background();
     // assert
     EXPECT_EQ(face, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, ADerivedMenuBarTakesTheCanvasFace) {
+    // arrange a derived menu bar, which is a strip of chrome rather than a card (§6.1)
+    BindingEngine engine;
+    const Theme theme = ThemeBuilder::light(Accents{});
+    MenuBar bar(&engine);
+    bar.set_theme(&theme);
+    // act
+    const Color face = bar.background();
+    // assert the strip takes the canvas plate, so it never inherits the dark default panel face (§8.4)
+    EXPECT_EQ(face, theme.palette().canvas_background[state_index(ControlState::Normal)]);
+    EXPECT_NE(face, theme.palette().panel_background[state_index(ControlState::Normal)]);
 }
 
 TEST(ThemeChecks, AnAuthoredButtonPlateStillLiftsOnHoverAndSinksOnPress) {
@@ -3574,7 +3587,7 @@ TEST(ThemeChecks, AnAuthoredToolBarFaceWinsOverTheTheme) {
     // arrange
     BindingEngine engine;
     Theme theme;
-    theme.set_panel_background(Color::rgb(0.0f, 1.0f, 0.0f));
+    theme.set_canvas_background(Color::rgb(0.0f, 1.0f, 0.0f));
     ToolBar strip(&engine);
     strip.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
     strip.set_theme(&theme);
@@ -3582,6 +3595,19 @@ TEST(ThemeChecks, AnAuthoredToolBarFaceWinsOverTheTheme) {
     const Color face = strip.background();
     // assert
     EXPECT_EQ(face, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, TheMacosToolBarKeepsTheChromeFace) {
+    // arrange a macos themed strip, which sits on the window chrome rather than on a card (§6.1)
+    BindingEngine engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    ToolBar strip(&engine);
+    strip.set_theme(&theme);
+    // act
+    const Color face = strip.background();
+    // assert the strip takes the canvas face, because a card plate would make the toolbar white (§8.4)
+    EXPECT_EQ(face, theme.palette().canvas_background[state_index(ControlState::Normal)]);
+    EXPECT_NE(face, theme.palette().panel_background[state_index(ControlState::Normal)]);
 }
 
 TEST(ThemeChecks, AnAuthoredMenuFaceWinsOverTheTheme) {
@@ -3929,6 +3955,165 @@ TEST(ThemeBuilderChecks, AChangedAccentMovesThePlate) {
     // assert the plate followed the accent, which is the point of deriving it (§6.1)
     EXPECT_FLOAT_EQ(first_palette.button_plate[state_index(ControlState::Normal)].red, 0.20f);
     EXPECT_FLOAT_EQ(second_palette.button_plate[state_index(ControlState::Normal)].red, 0.9f);
+}
+
+TEST(DefaultButtonChecks, ADefaultButtonPaintsThePresetDefaultRole) {
+    // arrange a macos themed dialog whose OK button is the default control (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    Button button(&engine, &text_engine, "OK");
+    button.set_default(true);
+    apply_theme(button, theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 28.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the plate is the accent rather than the neutral face a plain button draws (§8.4)
+    ASSERT_FALSE(recorder.scene()->commands().empty());
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate_default[state_index(ControlState::Normal)]);
+    EXPECT_NE(recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate[state_index(ControlState::Normal)]);
+    // assert the label is white, which is what reads over the accent plate (§8.4)
+    const std::vector<DrawCommand> runs = text_commands(*recorder.scene());
+    ASSERT_EQ(runs.size(), 1u);
+    EXPECT_EQ(runs.front().paint().fill, Color::rgb(1.0f, 1.0f, 1.0f));
+    // assert the accent plate strokes nothing, because the fill is the only layer it needs (§8.4)
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().stroke.alpha, 0.0f);
+}
+
+TEST(DefaultButtonChecks, APlainButtonKeepsTheNeutralPlate) {
+    // arrange the same themed dialog with a button that is not the default control (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    Button button(&engine, &text_engine, "Cancel");
+    apply_theme(button, theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 28.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the plate stays the neutral face and the label stays the readable text colour (§8.4)
+    ASSERT_FALSE(recorder.scene()->commands().empty());
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate[state_index(ControlState::Normal)]);
+    const std::vector<DrawCommand> runs = text_commands(*recorder.scene());
+    ASSERT_EQ(runs.size(), 1u);
+    EXPECT_EQ(runs.front().paint().fill, theme.palette().button_label[state_index(ControlState::Normal)]);
+}
+
+TEST(DefaultButtonChecks, AnAuthoredPlateBeatsTheDefaultRole) {
+    // arrange a default button whose author wrote the plate, which owns the whole control (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    Button button(&engine, &text_engine, "OK");
+    button.set_default(true);
+    button.set_background(Color::rgb(0.9f, 0.1f, 0.2f));
+    apply_theme(button, theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 28.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the authored plate is what draws, because an explicit colour outranks the role (§8.4)
+    ASSERT_FALSE(recorder.scene()->commands().empty());
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, Color::rgb(0.9f, 0.1f, 0.2f));
+    // assert the label falls back to the neutral role, because the preset accent plate is gone (§8.4)
+    const std::vector<DrawCommand> runs = text_commands(*recorder.scene());
+    ASSERT_EQ(runs.size(), 1u);
+    EXPECT_EQ(runs.front().paint().fill, theme.palette().button_label[state_index(ControlState::Normal)]);
+}
+
+TEST(DefaultButtonChecks, AnUnfilledDefaultRoleKeepsTheNeutralPlate) {
+    // arrange a hand built theme that never fills the default role, which is what a custom scheme is (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_corner_radius(4.0f);
+    theme.set_button_plate(Color::rgb(0.25f, 0.25f, 0.25f));
+    Button button(&engine, &text_engine, "OK");
+    button.set_default(true);
+    apply_theme(button, theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the transparent default role falls back to the neutral plate, so a custom theme is unchanged (§8.4)
+    ASSERT_FALSE(recorder.scene()->commands().empty());
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate[state_index(ControlState::Normal)]);
+}
+
+TEST(DefaultButtonChecks, APlateOnlyDefaultRoleKeepsTheNeutralFace) {
+    // arrange a theme that fills the default plate but no default label, which would hide the caption (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_plate_default(Color::rgb(0.9f, 0.1f, 0.2f));
+    Button button(&engine, &text_engine, "OK");
+    button.set_default(true);
+    apply_theme(button, theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the half filled role falls back to the neutral plate, because the preset wrote no readable label (§8.4)
+    ASSERT_FALSE(recorder.scene()->commands().empty());
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate[state_index(ControlState::Normal)]);
+    const std::vector<DrawCommand> runs = text_commands(*recorder.scene());
+    ASSERT_EQ(runs.size(), 1u);
+    EXPECT_GT(runs.front().paint().fill.alpha, 0.0f);
+}
+
+TEST(DefaultButtonChecks, AFluentDefaultButtonPaintsTheAccentPlate) {
+    // arrange a fluent themed dialog, whose primary control is the accent and whose plain control is neutral (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::fluent(Accents{}, ColorScheme::Light);
+    Button primary(&engine, &text_engine, "OK");
+    primary.set_default(true);
+    apply_theme(primary, theme);
+    primary.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 32.0f}));
+    SceneRecorder primary_recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    primary.render(primary_recorder);
+    // assert the fluent primary control is the accent while the plain face stays neutral (§8.4)
+    ASSERT_FALSE(primary_recorder.scene()->commands().empty());
+    EXPECT_EQ(primary_recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate_default[state_index(ControlState::Normal)]);
+    EXPECT_NE(primary_recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate[state_index(ControlState::Normal)]);
+}
+
+TEST(DefaultButtonChecks, ADerivedDefaultButtonFallsBackToTheAccentPlate) {
+    // arrange a derived theme, which leaves the default role empty because every derived button is the accent (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::light(Accents{});
+    Button button(&engine, &text_engine, "OK");
+    button.set_default(true);
+    apply_theme(button, theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the empty role falls back to the neutral table, which a derived theme already fills with the accent (§8.4)
+    EXPECT_FLOAT_EQ(theme.palette().button_plate_default[state_index(ControlState::Normal)].alpha, 0.0f);
+    ASSERT_FALSE(recorder.scene()->commands().empty());
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate[state_index(ControlState::Normal)]);
+}
+
+TEST(DefaultButtonChecks, AChangedDefaultFlagInvalidatesThePlate) {
+    // arrange a themed button that has already been laid out and painted (§8.4, §6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    Button button(&engine, &text_engine, "OK");
+    apply_theme(button, theme);
+    button.clear_dirty();
+    // act the flag moves, which changes the plate the button resolves (§8.4)
+    button.set_default(true);
+    // assert the write asks for a repaint, because a role change is visual (§6.1)
+    EXPECT_TRUE(button.render_dirty());
+    // act an unchanged flag is a no-op, which is what keeps a repeated write off the frame (§6.1)
+    button.clear_dirty();
+    button.set_default(true);
+    EXPECT_FALSE(button.render_dirty());
 }
 
 TEST(ThemeBuilderChecks, ADerivedButtonDrawsTheDerivedPlate) {
@@ -6101,6 +6286,241 @@ TEST(TabViewChecks, VerticalTabsStackDownTheLeft) {
     EXPECT_EQ(rects[0], (Rect::from_origin_size(Point{0.0f, 12.0f}, Size{2.0f, 8.0f})));
 }
 
+TEST(TabViewChecks, AVerticalStripPaintsTheSelectionAsARow) {
+    // arrange a macos themed vertical strip, which reads as a native source list (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Accents accents;
+    const Theme theme = Theme::macos(accents, ColorScheme::Light);
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.set_vertical(true);
+    Size measured{};
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    tabs.render(recorder);
+    // assert the strip paints the source-list plate before anything else, which is what a sidebar sits on (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const std::vector<DrawCommand>& commands = scene->commands();
+    ASSERT_EQ(commands.size(), 4u);
+    EXPECT_EQ(commands[0].kind(), DrawCommandKind::Rect);
+    EXPECT_EQ(commands[0].rect_geometry().rect, (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{72.0f, 64.0f})));
+    EXPECT_EQ(commands[0].paint().fill, theme.palette().tab_strip_background[state_index(ControlState::Normal)]);
+    // assert the selection is one rounded row inset inside the first header, not a 2px marker (§6.1)
+    EXPECT_EQ(commands[1].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_EQ(commands[1].rect_geometry().rect, (Rect::from_origin_size(Point{2.0f, 2.0f}, Size{68.0f, 28.0f})));
+    EXPECT_FLOAT_EQ(commands[1].rect_geometry().radius, 6.0f);
+    // assert the row carries the accent plate the preset filled (§8.4)
+    EXPECT_EQ(commands[1].paint().fill, theme.palette().tab_selection_plate[state_index(ControlState::Normal)]);
+    // assert the strip plate and the row are the only rectangles, because no indicator is left (§6.1)
+    EXPECT_EQ(rect_commands(*scene).size(), 2u);
+}
+
+TEST(TabViewChecks, ASelectionRowCarriesTheRowLabelInk) {
+    // arrange a macos themed vertical strip whose selected row holds a plain label (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.set_vertical(true);
+    Size measured{};
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    tabs.render(recorder);
+    // assert the selected label reads the row ink, because the accent plate needs a white caption (§6.1)
+    const std::vector<DrawCommand> runs = text_commands(*recorder.scene());
+    ASSERT_EQ(runs.size(), 2u);
+    EXPECT_EQ(runs[0].paint().fill, theme.palette().tab_selection_label[state_index(ControlState::Normal)]);
+    // assert the unselected label keeps the normal text colour, because it sits on the window (§6.1)
+    EXPECT_EQ(runs[1].paint().fill, theme.palette().tab_label[state_index(ControlState::Normal)]);
+}
+
+TEST(TabViewChecks, ATopStripKeepsTheIndicatorWhenThePresetFillsTheRow) {
+    // arrange a macos themed horizontal strip, which is not a sidebar (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    Size measured{};
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    tabs.render(recorder);
+    // assert the top strip draws its marker rather than a row, because the row style is vertical only (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const std::vector<DrawCommand>& commands = scene->commands();
+    ASSERT_EQ(commands.size(), 3u);
+    EXPECT_EQ(commands[0].kind(), DrawCommandKind::Rect);
+    EXPECT_FLOAT_EQ(commands[0].rect_geometry().rect.height, 2.0f);
+    // assert no row plate was recorded, because the preset row role did not apply (§6.1)
+    for (const DrawCommand& command : commands)
+        EXPECT_NE(command.kind(), DrawCommandKind::RoundedRect);
+}
+
+TEST(TabViewChecks, AVerticalStripWithoutARowRoleKeepsTheIndicator) {
+    // arrange a vertical strip whose theme never fills the row role, which is what a custom scheme is (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_tab_indicator(Color::rgb(0.9f, 0.1f, 0.2f));
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.set_vertical(true);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    tabs.render(recorder);
+    // assert the empty row role falls back to the indicator the strip always drew (§6.1)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 1u);
+    EXPECT_EQ(rects[0], (Rect::from_origin_size(Point{0.0f, 12.0f}, Size{2.0f, 8.0f})));
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, Color::rgb(0.9f, 0.1f, 0.2f));
+}
+
+TEST(TabViewChecks, ASelectionRowPaintsBehindAComposedTitle) {
+    // arrange a macos themed vertical strip whose selected page carries a composed title (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{40.0f, 20.0f};
+    title_owner->add_child(std::move(icon));
+    second_owner->add_child(std::move(title_owner));
+    tabs.add_child(std::move(second_owner));
+    tabs.set_vertical(true);
+    tabs.set_selected(1);
+    Size measured{};
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    tabs.render(recorder);
+    // assert the row draws before the title, because a composed title sits on the plate (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const std::vector<DrawCommand>& commands = scene->commands();
+    ASSERT_EQ(commands.size(), 4u);
+    EXPECT_EQ(commands[0].kind(), DrawCommandKind::Rect);
+    EXPECT_EQ(commands[2].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_EQ(commands[3].kind(), DrawCommandKind::Rect);
+    // assert the row is the second header's plate, which is the one the selection names (§8.2)
+    EXPECT_EQ(commands[2].rect_geometry().rect, (Rect::from_origin_size(Point{2.0f, 34.0f}, Size{68.0f, 28.0f})));
+}
+
+TEST(TabViewChecks, ASelectionRowFollowsTheHoverState) {
+    // arrange a macos themed vertical strip whose pointer has entered it (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.set_vertical(true);
+    Size measured{};
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 10.0f}};
+    tabs.dispatch_event(enter);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    tabs.render(recorder);
+    // assert the row takes the hover plate, because the strip reports the state the pointer put it in (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_GT(scene->commands().size(), 1u);
+    EXPECT_EQ(scene->commands()[1].paint().fill, theme.palette().tab_selection_plate[state_index(ControlState::Hovered)]);
+}
+
+TEST(TabViewChecks, ANegativeRowInsetStaysInsideTheHeader) {
+    // arrange a theme whose row inset and radius are negative, which a hand built theme can write (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_tab_selection_plate(Color::rgb(0.2f, 0.5f, 0.9f));
+    theme.set_tab_selection_label(Color::rgb(1.0f, 1.0f, 1.0f));
+    theme.set_tab_row_inset(-4.0f);
+    theme.set_tab_row_radius(-2.0f);
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.set_vertical(true);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    tabs.render(recorder);
+    // assert the row is clamped to the header and the radius at zero, so a bad token cannot paint outside (§6.2)
+    ASSERT_FALSE(recorder.scene()->commands().empty());
+    EXPECT_EQ(recorder.scene()->commands()[0].rect_geometry().rect, tabs.tab_at(0)->header_bounds());
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].rect_geometry().radius, 0.0f);
+}
+
+TEST(TabViewChecks, AnUnclaimedPressDoesNotPressTheStrip) {
+    // arrange a macos themed vertical strip whose row rests on the normal plate (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.set_vertical(true);
+    Size measured{};
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act a press lands on the page body, which no header claims (§8.3)
+    Event page{.kind = EventKind::PointerDown, .position = Point{150.0f, 60.0f}};
+    tabs.dispatch_event(page);
+    EXPECT_FALSE(page.handled);
+    // act a press lands outside the view, which belongs to nothing it holds (§8.3)
+    Event outside{.kind = EventKind::PointerDown, .position = Point{260.0f, 60.0f}};
+    tabs.dispatch_event(outside);
+    EXPECT_FALSE(outside.handled);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{300.0f, 100.0f}, 1.0f));
+    tabs.render(recorder);
+    // assert the row keeps its resting plate, because an unclaimed press never pressed the strip (§8.3)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_GT(scene->commands().size(), 1u);
+    EXPECT_EQ(scene->commands()[1].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_EQ(scene->commands()[1].paint().fill, theme.palette().tab_selection_plate[state_index(ControlState::Normal)]);
+}
+
+TEST(TabViewChecks, APlateOnlyRowRoleKeepsTheIndicator) {
+    // arrange a theme that fills the row plate but no row ink, which would leave the selected label invisible (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_tab_selection_plate(Color::rgb(0.2f, 0.5f, 0.9f));
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.set_vertical(true);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    tabs.render(recorder);
+    // assert the strip keeps the indicator and a readable label, because the row is a plate and an ink together (§6.1)
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].kind(), DrawCommandKind::Rect);
+    EXPECT_GT(text_commands(*recorder.scene()).size(), 0u);
+    EXPECT_GT(text_commands(*recorder.scene()).front().paint().fill.alpha, 0.0f);
+}
+
 TEST(TabViewChecks, AVerticalStripSelectsByRow) {
     // arrange a vertical view with two headers stacked down the left side (§8.2)
     BindingEngine engine;
@@ -7555,6 +7975,21 @@ TEST(PanelChecks, AnAuthoredFaceWinsEvenWhenItMatchesTheFallback) {
     EXPECT_EQ(panel.background(), authored);
 }
 
+TEST(PanelChecks, TheMacosPresetPaintsAContentPlateWithoutABorder) {
+    // arrange a macos themed card, which is the surface a settings form groups its rows on (§8.4)
+    BindingEngine engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    Panel panel(&engine, "card");
+    panel.set_theme(&theme);
+    // act
+    const Color face = panel.background();
+    // assert the card is the grey group plate inside the white pane, and it strokes nothing (§8.4)
+    EXPECT_EQ(face, theme.palette().panel_background[state_index(ControlState::Normal)]);
+    EXPECT_NE(face, theme.surface());
+    EXPECT_NE(face, theme.palette().button_plate[state_index(ControlState::Normal)]);
+    EXPECT_FLOAT_EQ(panel.border_width(), 0.0f);
+}
+
 TEST(PanelChecks, RendersItsFaceAndBorderThroughTheTheme) {
     // arrange a themed panel with a distinct face and hairline (§6.1, §8.4)
     BindingEngine engine;
@@ -7664,6 +8099,23 @@ TEST(PanelChecks, AThemeResolvesThePanelTokens) {
     EXPECT_FLOAT_EQ(panel.padding(), 5.0f);
     EXPECT_FLOAT_EQ(panel.corner_radius(), 7.0f);
     EXPECT_FLOAT_EQ(panel.border_width(), 2.0f);
+}
+
+TEST(ComboBoxChecks, TheMacosTriggerTakesTheFieldWell) {
+    // arrange a macos themed choice control, whose trigger is built from the field role (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    ComboBox choice(&engine, &text_engine);
+    choice.set_items({"Alpha", "Beta"});
+    choice.set_theme(&theme);
+    // act
+    const Color face = choice.background();
+    const Color line = choice.border_color();
+    // assert the trigger reads the white well and the hairline, because a combo box is an editable-looking control (§8.4)
+    EXPECT_EQ(face, theme.palette().text_field_plate[state_index(ControlState::Normal)]);
+    EXPECT_EQ(face, Color::rgb(1.0f, 1.0f, 1.0f));
+    EXPECT_GT(line.alpha, 0.0f);
 }
 
 TEST(ComboBoxChecks, SelectsAnItemAndAnnouncesTheChoice) {
