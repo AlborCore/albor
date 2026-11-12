@@ -6,6 +6,7 @@
 #include "albor/commands/command.h"
 #include "albor/render/image_resource.h"
 #include "albor/text/text_engine.h"
+#include "albor/widgets/tool_bar.h"
 
 namespace albor
 {
@@ -126,6 +127,28 @@ namespace albor
         return inside && !b.empty();
     }
 
+    PointerFocusPolicy Button::pointer_focus_policy() const {
+        // an authored policy wins, because a control may opt in or out of the context it sits in (§8.3)
+        if (pointer_focus_policy_authored())
+            return UiNode::pointer_focus_policy();
+        // a strip action performs work without taking the editor's keys, which is the toolbar contract (§8.3)
+        if (inside_tool_bar())
+            return PointerFocusPolicy::Preserve;
+        // every other button is a normal pointer target, which a dialog key and a form expect (§8.3)
+        return PointerFocusPolicy::Take;
+    }
+
+    bool Button::inside_tool_bar() const {
+        // the climb starts above the button, because the button itself is not its own context (§8.3)
+        for (const UiNode* ancestor = parent(); ancestor != nullptr; ancestor = ancestor->parent()) {
+            // the first strip on the climb is the context, because a button is placed by the surface that holds it (§8.3)
+            if (dynamic_cast<const ToolBar*>(ancestor) != nullptr)
+                return true;
+        }
+        // a button outside every strip has no action context to preserve against (§8.3)
+        return false;
+    }
+
     void Button::dispatch_event(Event& event) {
         // a hidden button takes no event at all, because it draws nothing to aim at (§8.3)
         if (!visible())
@@ -143,7 +166,7 @@ namespace albor
             // the event is claimed, so no ancestor reacts to the same key (§8.3)
             event.handled = true;
             // the activation runs once, which is what a key press means (§8.3)
-            activate(InvocationSource::Pointer);
+            activate(InvocationSource::Keyboard);
             return;
         }
         // a press is the only other event that activates a button (§8.3)

@@ -47,6 +47,9 @@ namespace
         // whether this node reports itself as disabled, because a disabled node takes no focus (§8.3)
         bool blocked = false;
 
+        // whether this node accepts the tab stop, because a drag target may decline it (§8.3)
+        bool accepts = true;
+
         // the last event kind and button the node was offered, which the button tests read (§8.3)
         EventKind last_kind = EventKind::PointerDown;
         PointerButton last_button = PointerButton::Left;
@@ -57,9 +60,22 @@ namespace
         // the reason the last cancel named, which separates an escape from a lost capture (§8.3)
         PointerCancelReason last_cancel_reason = PointerCancelReason::CaptureLost;
 
+        // how a pointer press treats the focus, which a test sets to model a preserving control (§8.3)
+        PointerFocusPolicy policy = PointerFocusPolicy::Take;
+
         [[nodiscard]] bool disabled() const override {
             // the flag is the reported state, which the focus ring reads (§8.3)
             return blocked;
+        }
+
+        [[nodiscard]] bool accepts_focus() const override {
+            // the flag is what the tab walk reads, and a drag target may decline it (§8.3)
+            return accepts;
+        }
+
+        [[nodiscard]] PointerFocusPolicy pointer_focus_policy() const override {
+            // the policy is what the pointer decision reads, and a test controls it here (§8.3)
+            return policy;
         }
 
         void measure(const SizeConstraints& constraints, Size& out_size) override {
@@ -115,14 +131,29 @@ namespace
         // whether the node believes it holds the focus (§8.3)
         bool focused = false;
 
+        // whether the manager told the node to paint the keyboard cue (§8.3)
+        bool cue_visible = false;
+
         // how many times the manager told this node about the focus (§8.3)
         std::size_t told = 0;
+
+        // how many times the manager told this node about the cue (§8.3)
+        std::size_t cue_told = 0;
 
         void set_focused(bool value) override {
             // the state is stored, because that is what the assertion reads (§8.3)
             this->focused = value;
+            // a direct focus report is programmatic, so it carries the cue like a widget does (§8.3)
+            cue_visible = value;
             // the count rises on every report, so a test can see it happened at all (§8.3)
             told++;
+        }
+
+        void set_focus_visible(bool visible) override {
+            // the cue is stored, because that is what the assertion reads (§8.3)
+            cue_visible = visible;
+            // the count rises on every report, so a test can see it happened at all (§8.3)
+            cue_told++;
         }
 
         void measure(const SizeConstraints& constraints, Size& out_size) override {
@@ -659,6 +690,141 @@ TEST(FocusManagerChecks, MovingFocusInvalidatesBothNodes) {
     EXPECT_TRUE(second.render_dirty());
 }
 
+TEST(FocusManagerChecks, APointerRequestKeepsTheCueHidden) {
+    // arrange a tracked node that can take the focus (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    // act the focus arrives from a pointer
+    manager.request_focus(&node, FocusReason::Pointer);
+    // assert the node owns the keys without painting the keyboard cue (§8.3)
+    EXPECT_TRUE(node.focused);
+    EXPECT_FALSE(node.cue_visible);
+    EXPECT_FALSE(manager.focus_visible());
+    EXPECT_EQ(manager.focused(), &node);
+}
+
+TEST(FocusManagerChecks, AKeyboardRequestShowsTheCue) {
+    // arrange a tracked node that can take the focus (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    // act the focus arrives from the keyboard
+    manager.request_focus(&node, FocusReason::Keyboard);
+    // assert the node owns the keys and paints the cue, which is the tab path (§8.3)
+    EXPECT_TRUE(node.focused);
+    EXPECT_TRUE(node.cue_visible);
+    EXPECT_TRUE(manager.focus_visible());
+    EXPECT_EQ(node.cue_told, 1u);
+}
+
+TEST(FocusManagerChecks, AProgrammaticRequestShowsTheCue) {
+    // arrange a tracked node that can take the focus (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    // act the focus arrives from a programmatic request, which a dialog initial focus uses (§8.3)
+    manager.request_focus(&node, FocusReason::Programmatic);
+    // assert a programmatic focus carries the cue, because it is a navigation context (§8.3)
+    EXPECT_TRUE(node.focused);
+    EXPECT_TRUE(node.cue_visible);
+    EXPECT_TRUE(manager.focus_visible());
+}
+
+TEST(FocusManagerChecks, APointerRequestOnTheFocusedNodeHidesTheCue) {
+    // arrange a node that the keyboard focused first (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&node, FocusReason::Keyboard);
+    ASSERT_TRUE(node.cue_visible);
+    // the first request pushed the cue once, which is the baseline the pointer write must move (§8.3)
+    const std::size_t cue_reports = node.cue_told;
+    // act the pointer presses the same node, which changes the modality and not the owner (§8.3)
+    manager.request_focus(&node, FocusReason::Pointer);
+    // assert the owner stayed and only the cue moved, because a pointer does not mark the control (§8.3)
+    EXPECT_EQ(manager.focused(), &node);
+    EXPECT_FALSE(node.cue_visible);
+    EXPECT_EQ(node.cue_told, cue_reports + 1);
+    EXPECT_EQ(manager.change_count(), 1u);
+}
+
+TEST(FocusManagerChecks, RevealFocusShowsTheCueWithoutMovingTheOwner) {
+    // arrange a pointer focused node, which carries no cue (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&node, FocusReason::Pointer);
+    ASSERT_FALSE(node.cue_visible);
+    // act a key interaction asks for the cue
+    manager.reveal_focus();
+    // assert the cue appears without a second focus change, because only the modality moved (§8.3)
+    EXPECT_EQ(manager.focused(), &node);
+    EXPECT_TRUE(node.cue_visible);
+    EXPECT_EQ(manager.change_count(), 1u);
+}
+
+TEST(FocusManagerChecks, HideFocusCueKeepsTheOwner) {
+    // arrange a keyboard focused node, which carries the cue (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&node, FocusReason::Keyboard);
+    ASSERT_TRUE(node.cue_visible);
+    // act a pointer press lowers the cue on the current owner
+    manager.hide_focus_cue();
+    // assert the owner survives the modality change, because a click does not clear the focus (§8.3)
+    EXPECT_EQ(manager.focused(), &node);
+    EXPECT_FALSE(node.cue_visible);
+    EXPECT_EQ(manager.change_count(), 1u);
+}
+
+TEST(FocusManagerChecks, LosingTheKeyStatusHidesTheCueWithoutDroppingTheOwner) {
+    // arrange a keyboard focused node in a window that holds key status (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&node, FocusReason::Keyboard);
+    ASSERT_TRUE(node.cue_visible);
+    // act the window loses key status, which hides the cue but keeps the owner (§8.3)
+    manager.set_window_active(false);
+    // assert the owner survived while the cue went away, which is the inactive window rule (§8.3)
+    EXPECT_EQ(manager.focused(), &node);
+    EXPECT_FALSE(node.cue_visible);
+    EXPECT_FALSE(manager.focus_visible());
+    EXPECT_EQ(manager.change_count(), 1u);
+}
+
+TEST(FocusManagerChecks, ReturningTheKeyStatusRestoresTheCue) {
+    // arrange a keyboard focused node whose window lost key status (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&node, FocusReason::Keyboard);
+    manager.set_window_active(false);
+    ASSERT_FALSE(node.cue_visible);
+    // act the window regains key status
+    manager.set_window_active(true);
+    // assert the cue the owner carried returns, without a new focus change (§8.3)
+    EXPECT_EQ(manager.focused(), &node);
+    EXPECT_TRUE(node.cue_visible);
+    EXPECT_TRUE(manager.focus_visible());
+}
+
+TEST(FocusManagerChecks, AKeyStatusReturnDoesNotShowAPointerCue) {
+    // arrange a pointer focused node whose window lost key status (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&node, FocusReason::Pointer);
+    manager.set_window_active(false);
+    // act the window regains key status
+    manager.set_window_active(true);
+    // assert a pointer origin stays unmarked, because the key status restores what was there (§8.3)
+    EXPECT_FALSE(node.cue_visible);
+    EXPECT_FALSE(manager.focus_visible());
+}
+
 TEST(FocusManagerChecks, ClearFocusDropsTheNode) {
     // arrange
     FocusManager manager;
@@ -1002,6 +1168,154 @@ TEST(InputControllerChecks, APressOnADisabledNodeFocusesNothing) {
     EXPECT_TRUE(press.handled);
     EXPECT_EQ(controller.focus().focused(), nullptr);
     EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, APointerPressOnAPreservingControlKeepsTheCaret) {
+    // arrange a field and a toolbar action under a claiming container, with the caret on the field (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    auto field = std::make_unique<FocusRecordingNode>();
+    field->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}));
+    FocusRecordingNode* field_node = field.get();
+    auto action = std::make_unique<RecordingNode>();
+    action->claims = true;
+    action->policy = PointerFocusPolicy::Preserve;
+    action->arrange(Rect::from_origin_size(Point{60.0f, 0.0f}, Size{40.0f, 40.0f}));
+    root.add_child(std::move(field));
+    root.add_child(std::move(action));
+    controller.attach(root);
+    controller.focus().request_focus(field_node, FocusReason::Keyboard);
+    ASSERT_EQ(controller.focus().focused(), field_node);
+    ASSERT_TRUE(field_node->cue_visible);
+    // act a primary press lands on the action, which claims it (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{70.0f, 10.0f}};
+    controller.deliver(press);
+    // assert the action ran and captured, while the field kept the caret and lost only the cue (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(controller.focus().focused(), field_node);
+    EXPECT_TRUE(controller.capturing());
+    EXPECT_FALSE(field_node->cue_visible);
+    EXPECT_FALSE(controller.focus().focus_visible());
+}
+
+TEST(InputControllerChecks, APointerPressOnANoneControlKeepsTheCaret) {
+    // arrange a keyboard focused field and a control that declines pointer focus (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    auto field = std::make_unique<FocusRecordingNode>();
+    field->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}));
+    FocusRecordingNode* field_node = field.get();
+    auto action = std::make_unique<RecordingNode>();
+    action->claims = true;
+    action->policy = PointerFocusPolicy::None;
+    action->arrange(Rect::from_origin_size(Point{60.0f, 0.0f}, Size{40.0f, 40.0f}));
+    root.add_child(std::move(field));
+    root.add_child(std::move(action));
+    controller.attach(root);
+    controller.focus().request_focus(field_node, FocusReason::Keyboard);
+    ASSERT_EQ(controller.focus().focused(), field_node);
+    // act a primary press lands on the none control, which claims it (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{70.0f, 10.0f}};
+    controller.deliver(press);
+    // assert the none control captured without taking the caret, while the pointer lowered the cue (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(controller.focus().focused(), field_node);
+    EXPECT_TRUE(controller.capturing());
+    EXPECT_FALSE(field_node->cue_visible);
+}
+
+TEST(InputControllerChecks, AnUnfocusableClaimingPressCapturesWithoutTheCaret) {
+    // arrange a node that claims the press but declines the tab stop, beside a keyboard focused field (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.accepts = false;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 80.0f}));
+    auto field = std::make_unique<RecordingNode>();
+    field->arrange(Rect::from_origin_size(Point{40.0f, 40.0f}, Size{20.0f, 20.0f}));
+    RecordingNode* field_node = field.get();
+    root.add_child(std::move(field));
+    controller.attach(root);
+    controller.focus().request_focus(field_node, FocusReason::Keyboard);
+    ASSERT_TRUE(controller.focus().focus_visible());
+    // act a primary press lands on the unfocusable surface, which claims it (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    // assert the capture belongs to the claiming node whether or not the caret moved (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(controller.focus().focused(), field_node);
+    EXPECT_TRUE(controller.capturing());
+    // assert the cue stayed, because the press landed on no focusable control (§8.3)
+    EXPECT_TRUE(controller.focus().focus_visible());
+}
+
+TEST(InputControllerChecks, APressOnEmptySpaceKeepsTheCaretAndTheCue) {
+    // arrange a field focused by the keyboard under a container that claims the surface (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    auto field = std::make_unique<RecordingNode>();
+    field->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}));
+    RecordingNode* field_node = field.get();
+    root.add_child(std::move(field));
+    controller.attach(root);
+    controller.focus().request_focus(field_node, FocusReason::Keyboard);
+    ASSERT_TRUE(controller.focus().focus_visible());
+    // act a primary press lands outside every control
+    Event press{.kind = EventKind::PointerDown, .position = Point{200.0f, 200.0f}};
+    controller.deliver(press);
+    // assert empty space preserves the caret and its cue, because no control was pressed (§8.3)
+    EXPECT_EQ(controller.focus().focused(), field_node);
+    EXPECT_TRUE(controller.focus().focus_visible());
+}
+
+TEST(InputControllerChecks, APointerPressOnAPointerFocusedControlHidesTheCue) {
+    // arrange a field focused by the keyboard, which carries the cue (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    auto field = std::make_unique<RecordingNode>();
+    field->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}));
+    RecordingNode* field_node = field.get();
+    root.add_child(std::move(field));
+    controller.attach(root);
+    controller.focus().request_focus(field_node, FocusReason::Keyboard);
+    ASSERT_TRUE(controller.focus().focus_visible());
+    // act the pointer presses the same field, which takes pointer focus (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    // assert the owner stayed while the cue went away, because a pointer is not a keyboard origin (§8.3)
+    EXPECT_EQ(controller.focus().focused(), field_node);
+    EXPECT_FALSE(controller.focus().focus_visible());
+}
+
+TEST(InputControllerChecks, AKeyRevealsAPointerFocusedCue) {
+    // arrange a field focused by a pointer, which carries no cue (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    auto field = std::make_unique<RecordingNode>();
+    field->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}));
+    RecordingNode* field_node = field.get();
+    root.add_child(std::move(field));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    ASSERT_EQ(controller.focus().focused(), field_node);
+    ASSERT_FALSE(controller.focus().focus_visible());
+    // act a key reaches the focused control, which is the keyboard modality (§8.3)
+    Event key{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    controller.deliver(key);
+    // assert the cue returned without moving the owner, which is the focus visible rule (§8.3)
+    EXPECT_EQ(controller.focus().focused(), field_node);
+    EXPECT_TRUE(controller.focus().focus_visible());
 }
 
 TEST(InputControllerChecks, ADragReachesTheCapturedNodeOutsideItsBounds) {
@@ -1379,6 +1693,7 @@ TEST(InputControllerChecks, TabMovesTheCaretForward) {
     // assert the tab moved the caret forward and was claimed, so the tree saw nothing (§8.3)
     EXPECT_TRUE(tab.handled);
     EXPECT_EQ(controller.focus().focused(), &root);
+    EXPECT_TRUE(controller.focus().focus_visible());
     EXPECT_EQ(child_ptr->deliveries, 0u);
 }
 
@@ -1400,6 +1715,7 @@ TEST(InputControllerChecks, ShiftTabMovesTheCaretBackward) {
     // assert the shift tab moved the caret backward, so the last node of the ring lands (§8.3)
     EXPECT_TRUE(shift_tab.handled);
     EXPECT_EQ(controller.focus().focused(), child_ptr);
+    EXPECT_TRUE(controller.focus().focus_visible());
 }
 
 TEST(InputControllerChecks, AModifiedTabIsRoutedToTheTree) {

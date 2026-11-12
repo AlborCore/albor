@@ -190,7 +190,7 @@ namespace albor
             // the event is claimed, so no ancestor reacts to the same key (§8.3)
             event.handled = true;
             // the value moves by one step, which step reports when it changed (§8.3)
-            step(delta);
+            step(delta, InvocationSource::Keyboard);
             return;
         }
         // a move that continues a drag steers the value, which is what dragging means (§8.3)
@@ -288,13 +288,13 @@ namespace albor
         node.set_range(SemanticRange{.value = m_value, .minimum = m_minimum, .maximum = m_maximum, .step = STEP}, [control = mutable_owner(this)](double value) { control->set_value(static_cast<float>(value)); });
         // the step actions move by one step, no disabled guard because invoke refuses actions on a disabled node (§10.1)
         (void)node.add_action("increment", [control = mutable_owner(this)] {
-            // the value moves up by one step, which is what a key press on a focused slider does (§8.3)
-            control->step(STEP);
+            // the value moves up by one step, which is what a semantic activation asks for (§8.3)
+            control->step(STEP, InvocationSource::Accessibility);
         });
         // the matching step action moves down, which completes the pair assistive technology expects (§10.1)
         (void)node.add_action("decrement", [control = mutable_owner(this)] {
-            // the value moves down by one step, which is the other direction a key press takes (§8.3)
-            control->step(-STEP);
+            // the value moves down by one step, which is the other direction a semantic activation takes (§8.3)
+            control->step(-STEP, InvocationSource::Accessibility);
         });
         return node;
     }
@@ -347,7 +347,7 @@ namespace albor
         m_on_change = std::move(handler);
     }
 
-    void Slider::step(float delta) {
+    void Slider::step(float delta, InvocationSource source) {
         // a disabled slider refuses a step, because it refuses input (§8.3)
         if (disabled())
             return;
@@ -360,7 +360,7 @@ namespace albor
             return;
         // a bound command is invoked with the new value, which is what an action that carries a value receives (§18.3)
         if (command() != nullptr) {
-            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = static_cast<double>(m_value), .selection = {}, .source = InvocationSource::Pointer});
+            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = static_cast<double>(m_value), .selection = {}, .source = source});
             return;
         }
         // the handler receives the new value, which is what a change reports (§8.3)

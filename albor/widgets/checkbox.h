@@ -71,7 +71,7 @@ namespace albor
 
     private:
         // flip the state and report it, which a press and a semantic action share (§8.3, §10.1)
-        void toggle();
+        void toggle(InvocationSource source = InvocationSource::Pointer);
 
         // the outline width the box strokes with, which comes from the theme when one is installed (§6.1)
         [[nodiscard]] float outline_width() const;

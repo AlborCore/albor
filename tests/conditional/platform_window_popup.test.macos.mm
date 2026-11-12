@@ -32,6 +32,8 @@ namespace
 
         void on_platform_focus_lost() override { focus_lost++; }
 
+        void on_platform_focus_gained() override { focus_gained++; }
+
         void on_platform_appearance_changed(const SystemAppearance&) override { appearance_changed++; }
 
         // the metrics the window last reported, which the resize observer pushes (§9.1)
@@ -51,6 +53,9 @@ namespace
 
         // how many focus losses the window raised, which a key status change drives (§8.3)
         int focus_lost = 0;
+
+        // how many focus gains the window raised, which a key status return drives (§8.3)
+        int focus_gained = 0;
 
         // how many appearance changes the window raised, which a theme flip drives (§8.4)
         int appearance_changed = 0;
@@ -485,6 +490,32 @@ TEST(MacosPopupWindow, ALostKeyStatusReportsTheFocusLoss) {
     [[NSNotificationCenter defaultCenter] postNotificationName:NSWindowDidResignKeyNotification object:window];
     // assert the framework was told the drag can no longer finish (§8.3)
     EXPECT_EQ(listener.focus_lost, 1);
+    // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
+    platform->hide();
+}
+
+TEST(MacosPopupWindow, AKeyStatusReturnReportsTheFocusGain) {
+    // arrange a shown normal window with a listener, which restores the cue when key status returns (§8.3)
+    WindowOptions options;
+    options.title = "focus-gained";
+    options.size = albor::Size{200.0f, 200.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* window = nil;
+    for (NSWindow* candidate in [NSApplication sharedApplication].windows) {
+        if ([candidate.title isEqualToString:@"focus-gained"])
+            window = candidate;
+    }
+    ASSERT_NE(window, nil);
+    // the show may already have made the window key, so the report is measured from that baseline (§5.1)
+    const int before = listener.focus_gained;
+    // act the window becomes key, which is what a focus return posts (§5.1)
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSWindowDidBecomeKeyNotification object:window];
+    // assert the framework was told the cue can return (§8.3)
+    EXPECT_EQ(listener.focus_gained, before + 1);
     // cleanup the window leaves the screen, so a later suite starts with no stray surface (§5.3)
     platform->hide();
 }

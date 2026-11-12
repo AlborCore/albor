@@ -7,18 +7,31 @@
 
 namespace albor
 {
-    void FocusManager::request_focus(UiNode* node) {
+    void FocusManager::request_focus(UiNode* node, FocusReason reason) {
         // a null node cannot take the focus, so the request is refused rather than stored (§8.3)
         if (node == nullptr)
             return;
         // a node that cannot take the focus is refused, so tab traversal stays consistent (§8.3)
         if (!focusable(*node))
             return;
-        // focusing the node that already has it changes nothing, so no frame is requested (§8.3)
-        if (m_focused == node)
+        // the cue is updated even when the node holds the focus, because a pointer press may lower it (§8.3)
+        const bool visible = shows_focus_cue(reason);
+        // focusing the node that already has it changes no owner, so only the cue can move (§8.3)
+        if (m_focused == node) {
+            // an unchanged cue changes nothing, so no frame is requested (§8.3)
+            if (m_focus_visible == visible)
+                return;
+            // the modality is stored first, because the ring paints through it (§8.3)
+            m_focus_visible = visible;
+            // the owner repaints through the effective cue, which also honors the window status (§8.3)
+            apply_focus_visibility();
+            // the frame request reaches the tree, because the cue changed without a focus move (§6.1, §8.3)
+            if (m_focus_changed)
+                m_focus_changed();
             return;
+        }
         // the focus moves through the one path both requests and traversals share (§8.3)
-        move_focus(node);
+        move_focus(node, reason);
     }
 
     void FocusManager::clear_focus() {
@@ -26,12 +39,65 @@ namespace albor
         if (m_focused == nullptr)
             return;
         // the focus moves to nothing, which is what losing the window does (§8.3)
-        move_focus(nullptr);
+        move_focus(nullptr, FocusReason::Programmatic);
+    }
+
+    void FocusManager::reveal_focus() {
+        // a window with no focus has no cue to raise, which is the detached case of §8.3
+        if (m_focused == nullptr)
+            return;
+        // an already raised cue changes nothing, which is the common case of typing in a field (§8.3)
+        if (m_focus_visible)
+            return;
+        // the keyboard modality is stored first, because the ring paints through it (§8.3)
+        m_focus_visible = true;
+        // the owner repaints through the effective cue, which also honors the window status (§8.3)
+        apply_focus_visibility();
+        // the frame request reaches the tree, because the cue is a visual change (§6.1, §8.3)
+        if (m_focus_changed)
+            m_focus_changed();
+    }
+
+    void FocusManager::hide_focus_cue() {
+        // a window with no focus has no cue to lower, which is the detached case of §8.3
+        if (m_focused == nullptr)
+            return;
+        // an already hidden cue changes nothing, which keeps a press off the frame (§8.3)
+        if (!m_focus_visible)
+            return;
+        // the pointer modality is stored first, because the ring paints through it (§8.3)
+        m_focus_visible = false;
+        // the owner repaints through the effective cue, which also honors the window status (§8.3)
+        apply_focus_visibility();
+        // the frame request reaches the tree, because the cue is a visual change (§6.1, §8.3)
+        if (m_focus_changed)
+            m_focus_changed();
+    }
+
+    void FocusManager::set_window_active(bool active) {
+        // an unchanged key status changes nothing, so no frame is requested (§8.3)
+        if (m_window_active == active)
+            return;
+        // the status is stored first, because the effective cue reads it (§8.3)
+        m_window_active = active;
+        // a window with no owner has no cue to hide, which leaves the status alone (§8.3)
+        if (m_focused == nullptr)
+            return;
+        // the owner repaints through the effective cue, which is now the desired one or clear (§8.3)
+        apply_focus_visibility();
+        // the frame request reaches the tree, because the cue is a visual change (§6.1, §8.3)
+        if (m_focus_changed)
+            m_focus_changed();
     }
 
     UiNode* FocusManager::focused() const {
         // the focused node is the one the keyboard path routes to (§8.3)
         return m_focused;
+    }
+
+    bool FocusManager::focus_visible() const {
+        // the effective cue is the desired one only while the window holds key status (§8.3)
+        return m_focus_visible && m_window_active;
     }
 
     bool FocusManager::has_focus(const UiNode* node) const {
@@ -125,16 +191,18 @@ namespace albor
             index = static_cast<int>(std::distance(nodes.begin(), current));
         // the index moves one step and wraps, which is what makes tab cycle through the whole ring (§8.3)
         const int moved = ((index + direction) % count + count) % count;
-        // the focus moves to the node the walk landed on (§8.3)
-        move_focus(nodes[static_cast<std::size_t>(moved)]);
+        // the focus moves to the node the walk landed on, which is a keyboard origin (§8.3)
+        move_focus(nodes[static_cast<std::size_t>(moved)], FocusReason::Keyboard);
     }
 
-    void FocusManager::move_focus(UiNode* node) {
+    void FocusManager::move_focus(UiNode* node, FocusReason reason) {
         // the previous holder is cleared first, so a node is never focused twice (§8.3)
         if (m_focused != nullptr) {
             // a node that tracks the focus is told it lost it, because a caret follows the focus (§8.3)
-            if (auto* target = dynamic_cast<FocusTarget*>(m_focused))
+            if (auto* target = dynamic_cast<FocusTarget*>(m_focused)) {
                 target->set_focused(false);
+                target->set_focus_visible(false);
+            }
             // the node knows its focus changed, because that is what its semantic state reports (§8.3, §10.1)
             m_focused->invalidate();
         }
@@ -143,6 +211,10 @@ namespace albor
             target->set_focused(true);
         // the new holder is stored, so the keyboard path routes to it (§8.3)
         m_focused = node;
+        // the origin decides the cue the new owner asked for, which a pointer press hides (§8.3)
+        m_focus_visible = node != nullptr && shows_focus_cue(reason);
+        // the effective cue follows the origin and the window status, which is what the ring paints (§8.3)
+        apply_focus_visibility();
         // the new holder is invalidated, because a focus ring or a caret is a visual change (§8.3)
         if (m_focused != nullptr)
             m_focused->invalidate();
@@ -151,5 +223,14 @@ namespace albor
         // the frame request reaches the tree, because a focus change must be presented (§6.1, §8.3)
         if (m_focus_changed)
             m_focus_changed();
+    }
+
+    void FocusManager::apply_focus_visibility() {
+        // a manager with no owner has no target to tell, which is the cleared state (§8.3)
+        if (m_focused == nullptr)
+            return;
+        // the owner paints the cue only while the window holds key status, which hides it while inactive (§8.3)
+        if (auto* target = dynamic_cast<FocusTarget*>(m_focused))
+            target->set_focus_visible(m_focus_visible && m_window_active);
     }
 } // namespace albor

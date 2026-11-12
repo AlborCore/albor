@@ -55,7 +55,7 @@ namespace albor
         void set_on_change(std::function<void(float)> handler);
 
         // move the value by a signed amount and report the change, what a key press on a focused slider does (§8.3)
-        void step(float delta);
+        void step(float delta, InvocationSource source = InvocationSource::Pointer);
 
         // refuse or accept input, which redraws and changes what a press does (§8.3)
         void set_disabled(bool disabled);

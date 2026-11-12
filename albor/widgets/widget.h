@@ -110,8 +110,14 @@ namespace albor
         // report whether the widget holds the keyboard focus, which is what the focus ring reads (§8.3)
         [[nodiscard]] bool focused() const;
 
+        // report whether the keyboard focus cue is shown, which is what the ring paints (§8.3)
+        [[nodiscard]] bool focus_visible() const;
+
         // override: take or drop the focus, which the focus manager calls and which a ring repaints for (§8.3)
         void set_focused(bool focused) override;
+
+        // override: show or hide the keyboard focus cue, which a pointer origin hides and a key origin reveals (§8.3)
+        void set_focus_visible(bool visible) override;
 
         // bind the widget to a shared command, which publishes its label and its two states (§18.7, AD-15)
         void set_command(Command* command);
@@ -171,5 +177,8 @@ namespace albor
 
         // whether the widget holds the keyboard focus, which the focus manager sets and the ring reads (§8.3)
         bool m_focused = false;
+
+        // whether the keyboard focus cue is shown, which the focus reason and the window status decide (§8.3)
+        bool m_focus_visible = false;
     };
 } // namespace albor

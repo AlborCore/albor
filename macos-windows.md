@@ -77,6 +77,13 @@ Losing key status now reconciles the framework capture on both platforms. AppKit
 notification test, and the application tests prove a live drag receives one `PointerCancel` and that the next press
 starts a fresh drag.
 
+The same key-status pair now drives the focus cue. AppKit observes `NSWindowDidBecomeKeyNotification` beside the
+resign observer, and Win32 handles `WM_SETFOCUS` beside `WM_ACTIVATE`; both raise
+`PlatformWindowListener::on_platform_focus_gained`. `Application` forwards the pair to the window's stage, and
+`FocusManager::set_window_active` hides the cue while the window is inactive and restores the one the focus owner
+carried when it returns, without changing the owner. The mirrored suites assert one gained report on each platform,
+and the application test proves the owner survives the pair while the cue does not.
+
 Window teardown now follows one ordering on both platforms. A window is created with `releasedWhenClosed = NO`,
 because ARC already owns it and `close` must not send a second release; that extra release was the over-release the
 display cycle surfaced in the Touch Bar finder. A child is also detached from its owner before it is ordered out,
