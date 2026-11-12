@@ -32,11 +32,20 @@ vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
         blend2d ALBOR_RENDERER_BLEND2D
 )
 
+# a pinned release from before the renderer retirement still declares the retired option, so the port
+# disables it for that source; the current tree carries neither the option nor the module
+set(RETIRED_RENDERER_OPTIONS "")
+file(READ "${SOURCE_PATH}/CMakeLists.txt" ALBOR_ROOT_CMAKE)
+if(ALBOR_ROOT_CMAKE MATCHES "ALBOR_RENDERER_SKIA")
+    list(APPEND RETIRED_RENDERER_OPTIONS -DALBOR_RENDERER_SKIA=OFF)
+endif()
+
 # the port builds the framework and nothing else, because examples and the test binary are development surfaces (§2.2)
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
         ${FEATURE_OPTIONS}
+        ${RETIRED_RENDERER_OPTIONS}
         # the published tag may predate its version commit, so the port supplies the release version to the build (AD-19)
         -DALBOR_VERSION=${VERSION}
         -DALBOR_EXAMPLES=OFF
