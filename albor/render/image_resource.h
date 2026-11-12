@@ -10,7 +10,7 @@ namespace albor
     // how the bytes of an image resource are laid out, which the backend translates into a texture (§6.4, AD-26)
     enum class ImageFormat
     {
-        // four bytes per pixel in premultiplied rgb(a), matching the skia reference (§6.4, AD-26)
+        // four bytes per pixel in premultiplied rgb(a), matching the software reference (§6.4, AD-26)
         RGBA8,
     };
 

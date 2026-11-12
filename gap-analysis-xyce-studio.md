@@ -102,8 +102,8 @@ follow-ups; they do not block the desktop port.
   popup is hidden rather than destroyed, follows its owner, and dismisses on outside press or
   deactivation (`window/popup_host.h`, `widgets/combo_box.h`).
 - **Distribution:** the source/CMake subtree and the vcpkg overlay port (`ports/albor/`) carry the
-  same targets. The default package is the GPU runtime, `blend2d` is a feature, and the
-  transitional Skia reference is not a package surface (`docs/consuming.md`).
+  same targets. The default package is the GPU runtime, and `blend2d` is a feature for the
+  portable CPU renderer (`docs/consuming.md`).
 - **Platforms:** macOS and Windows are implemented; Linux is planned. The macOS and Windows
   jobs pass in CI runs 40691294678 (widgets and popups) and 41093329717 (package fixtures),
   including the popup parity tests on both platforms.
@@ -289,7 +289,7 @@ This is P0 for the netlist editor. The rest of the shell can be ported before it
 | Rendering and performance backlog | #24, #32–#36, #107, #112–#118 | The current renderer is fast enough to port against; these are steady-state cost, damage-rectangle and text fast-path work. |
 | RTL and bidi | #10, #98, #99 | The reference application is English/LTR; RTL can be a separate correctness cycle. |
 | Linux and AT-SPI | #41, #42, #110 | macOS and Windows are the implemented platforms. #41 and #42 are stale descriptions and need re-scoping before they can be worked. |
-| Renderer roadmap and retirement | #102, #109, #111 | `render-albor` works on both native platforms; retiring Skia and broadening the backend roadmap is parallel infrastructure work. |
+| Renderer roadmap | #102, #109 | `render-albor` works on both native platforms; broadening the backend roadmap is parallel infrastructure work. |
 | Product and documentation decisions | #26, #27, #47, #48, #119 | Important, but none of these stops a form from rendering or editing. |
 
 ## Completion tracking
@@ -309,7 +309,7 @@ reason is recorded with it.
 | vcpkg package, overlay port and consumer fixtures | #134 | `ports/albor/`, install/export in the root `CMakeLists.txt`, `build/check-port.sh`, `.github/workflows/port.yml`, `.github/workflows/release.yml`, `tests/consumer/`, `tests/port-consumer*`; both platform fixtures green in run 41093329717 | **close** |
 | Styled/syntax-highlighted TextField | #132 | `TextDecoration` in `widgets/text_field.*`, three decoration tests, `.ui` record list, `TheNetlistFixturePaintsItsThreeTokenColours` and `WrappedDecorationsScrollWithTheCaretAndSelection`; full debug suite green | **close** |
 | Menus, menu items and toolbars | #55 | `widgets/menu.*`, `widgets/menu_item.*`, `widgets/menu_bar.*`, `widgets/tool_bar.*`, `MenuChecks`, hidden-row and stale-focus tests, `.ui` catalogue and codegen | **close** |
-| Draw vocabulary, path curves and text measure | #28 | `PathVerb` curve verbs, software/Skia/Blend2D/native replay, six new draw primitives, `Canvas::measure_text`, line-only and image codegen tests, checker and contour tests | **close** |
+| Draw vocabulary, path curves and text measure | #28 | `PathVerb` curve verbs, software/Blend2D/native replay, six new draw primitives, `Canvas::measure_text`, line-only and image codegen tests, checker and contour tests | **close** |
 | Per-node `.ui` styling | #72 | Builtin `Point`/`Shadow`, common opacity/border/drop-shadow properties, styled `p0_widgets.ui`, codegen test | **close** |
 | Focus-ring headless proof | #74 | `HeadlessFocusRingChecks.AFocusedButtonRastersARingOutsideItsPlate`, semantic focus in `Button` | **close** |
 | Accessibility action table and range writes | #57 | `semantics/semantic_action.h`, macOS range write and action tests, Win32 Toggle/ExpandCollapse/RangeValue tests | **close** |
@@ -366,8 +366,6 @@ and must be green before the editor port.
 
 - **#41, #42 and #109** keep the status the previous revision recorded: their descriptions are
   stale or need an explicit acceptance pass, not a closing keyword from this branch.
-- **#111** is the Skia retirement; the package writes Skia out of its surface as the first step,
-  but the backend still exists for the conformance suites, so the issue stays open.
 
 ## Recommended sequence
 

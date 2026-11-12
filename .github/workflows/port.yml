@@ -166,7 +166,7 @@ jobs:
       - name: staging build with the port's default features
         run: |
           # the stage resolves its dependencies through the test bed's manifest, which the drift gate keeps
-          # equal to the port's default matrix, so no package job ever walks the skia closure (AD-26, issue 111)
+          # equal to the port's default matrix (AD-26)
           cmake -S . -B .build-port-stage -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             ${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }} \
@@ -174,7 +174,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DVCPKG_MANIFEST_DIR="$PWD/tests/consumer" \
             -DALBOR_EXAMPLES=OFF -DALBOR_TESTS=OFF \
-            -DALBOR_RENDERER_SKIA=OFF -DALBOR_RENDERER_BLEND2D=OFF
+            -DALBOR_RENDERER_BLEND2D=OFF
           cmake --build .build-port-stage --parallel 4
       - name: install the staged package
         run: cmake --install .build-port-stage --prefix .build-port-stage/stage

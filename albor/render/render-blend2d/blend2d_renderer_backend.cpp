@@ -41,7 +41,7 @@ namespace albor::blend2d
         // a frame needs a surface that could draw, and a surface that cannot is not a refusal to retry (§6.1)
         if (!surface.valid())
             return FrameOutcome::Presented;
-        // a scene at stale metrics is refused rather than repaired here, exactly as the skia backend does (§6.1, D9.1)
+        // a scene at stale metrics is refused rather than repaired here, exactly as the other backends do (§6.1, D9.1)
         if (surface.metrics() != scene.metrics())
             return FrameOutcome::RefusedStaleMetrics;
         // a software surface redraws every pixel, so a culled list would leave the rest stale (§6.1)
@@ -52,7 +52,7 @@ namespace albor::blend2d
         // the background is a full surface rectangle, which is the clear of phase 1 (§6.1)
         const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, scene.metrics().logical_size);
         context.draw_rect(full, {.fill = scene.background()});
-        // the commands replay through the one shared replay, which is what the skia backend also calls (§6.1, §6.2)
+        // the commands replay through the one shared replay, which is what every backend calls (§6.1, §6.2)
         replay_commands(scene.commands(), context, full);
         // the frame finishes once the immutable scene is fully recorded (§6.1)
         surface.end_frame();

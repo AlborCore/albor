@@ -13,7 +13,7 @@ namespace albor::blend2d
     // the raster and the context a frame draws into, so that no blend2d header leaves this file (§3.5)
     struct Blend2DSurfaceState;
 
-    // the surface that rasterizes on the cpu through blend2d, a portable alternative to the skia reference (§6.3, AD-26)
+    // the surface that rasterizes on the cpu through blend2d, the portable cpu renderer (§6.3, AD-26)
     class Blend2DRenderSurface final : public RenderSurface
     {
     public:

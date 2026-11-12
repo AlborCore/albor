@@ -1264,7 +1264,7 @@ TEST(VendoredWrapChecks, AWrappedRunHasMoreThanOneRow) {
 }
 
 TEST(VendoredWrapChecks, TheByteSpansOfAWrappedRunRiseWithoutOverlapping) {
-    // arrange the carried fixture, which the wrap walks the same way the skia oracle does (§9.1, AD-34)
+    // arrange the carried fixture, which the wrap walks the same way the reference oracle does (§9.1, AD-34)
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
@@ -1873,7 +1873,7 @@ TEST(SoftwareGlyphAtlasChecks, TheAtlasRasterizesAGlyphFromTheCarriedBytes) {
     // act the atlas rasterizes the glyph from the carried bytes, which is the reference's own rasterizer (§6.3, AD-26)
     software::SoftwareGlyphAtlas atlas;
     const std::shared_ptr<const software::GlyphBitmap> bitmap = atlas.glyph(font->content_hash, glyph, 20.0f);
-    // assert the atlas produced a real coverage, so the reference rasterizes rather than asking skia (§6.3)
+    // assert the atlas produced a real coverage, so the reference rasterizes rather than asking the platform (§6.3)
     ASSERT_NE(bitmap, nullptr);
     EXPECT_GT(bitmap->width, 0u);
     EXPECT_GT(bitmap->height, 0u);
@@ -1942,13 +1942,13 @@ TEST(SoftwareTextChecks, TheSoftwareSurfaceDrawsTextThroughItsOwnAtlas) {
     resources::FontRegistry::clear();
 }
 
-TEST(SoftwareTextChecks, ARunTheAtlasCannotResolveFallsBackToSkia) {
+TEST(SoftwareTextChecks, ARunTheAtlasCannotResolveFallsBackToBlend2D) {
     // arrange a run whose font hash the build does not carry, which the atlas cannot rasterize (§6.3)
     ShapedRun::Line line;
     line.glyphs.push_back(ShapedGlyph{.id = 1u, .position = Point{0.0f, 0.0f}, .cluster = 0u});
     const std::shared_ptr<const ShapedRun> run = ShapedRun::make({line}, 16.0f, 999999u, ShapeSource::Embedded);
     const TextLayout layout{.run = run, .size = Size{20.0f, 20.0f}, .ascent = 16.0f, .descent = 4.0f};
-    // act the run is drawn, and the atlas refuses it, so skia draws the fallback rather than dropping the text (§6.3)
+    // act the run is drawn, and the atlas refuses it, so blend2d draws the fallback rather than dropping the text (§6.3)
     const std::unique_ptr<software::SoftwareRenderSurface> surface = software::SoftwareRenderSurface::create(WindowMetrics::from_logical(Size{80.0f, 40.0f}, 1.0f));
     ASSERT_NE(surface, nullptr);
     RenderContext& context = surface->begin_frame();

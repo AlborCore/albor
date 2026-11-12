@@ -21,6 +21,7 @@
       "platform": "osx",
       "default-features": false,
       "features": [
+        "freetype",
         "icu",
         "coretext"
       ]
@@ -30,6 +31,7 @@
       "platform": "windows",
       "default-features": false,
       "features": [
+        "freetype",
         "icu",
         "directwrite",
         "gdi"
@@ -40,12 +42,9 @@
       "platform": "linux",
       "default-features": false,
       "features": [
+        "freetype",
         "icu"
       ]
-    },
-    {
-      "name": "freetype",
-      "default-features": false
     },
     {
       "name": "bzip2",
@@ -54,36 +53,6 @@
     {
       "name": "icu",
       "default-features": false
-    },
-    {
-      "name": "skia",
-      "version>=": "148",
-      "platform": "osx",
-      "default-features": false,
-      "features": [
-        "graphite",
-        "metal"
-      ]
-    },
-    {
-      "name": "skia",
-      "version>=": "148",
-      "platform": "windows",
-      "default-features": false,
-      "features": [
-        "graphite",
-        "direct3d"
-      ]
-    },
-    {
-      "name": "skia",
-      "version>=": "148",
-      "platform": "linux",
-      "default-features": false,
-      "features": [
-        "graphite",
-        "vulkan"
-      ]
     },
     {
       "name": "libpng",

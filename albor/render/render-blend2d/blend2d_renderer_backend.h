@@ -6,7 +6,7 @@
 
 namespace albor::blend2d
 {
-    // the renderer backend that rasterizes on the cpu through blend2d, a portable alternative to skia (§6.3, AD-26)
+    // the renderer backend that rasterizes on the cpu through blend2d, the portable cpu renderer (§6.3, AD-26)
     class Blend2DRendererBackend final : public RendererBackend
     {
     public:

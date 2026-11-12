@@ -88,11 +88,6 @@ binaries, because the default umbrella needs none:
 | *(none)* | `albor`, the recommended GPU runtime |
 | `blend2d` | `albor-blend2d`, the portable CPU renderer umbrella |
 
-The transitional skia reference is **not** shipped in the package: it is a source-tree
-backend that the conformance suites compare against, and the package drops it on the way
-to its retirement (issue 111). A package consumer chooses between the two shipped
-renderers; an expert composition that needs the skia reference builds from source.
-
 Until the framework sits in a vcpkg registry, the port ships inside the repository
 (`ports/albor/`) and a consumer wires it through an overlay:
 
@@ -120,9 +115,8 @@ runtime, so switching renderers does not change application code.
 | `albor-blend2d` | a portable CPU path, or a platform where the GPU backend is not the recommended default |
 
 In the vcpkg route the renderer choice is the package feature as well as the link target:
-`albor-blend2d` exists once the `blend2d` feature is installed; the skia reference is not a
-package surface. In the source route both backends build by default, and the CMake options
-`ALBOR_RENDERER_SKIA` and `ALBOR_RENDERER_BLEND2D` trim them for a smaller build.
+`albor-blend2d` exists once the `blend2d` feature is installed. In the source route the
+portable backend builds by default, and `ALBOR_RENDERER_BLEND2D` trims it for a smaller build.
 
 Do not link both, and do not add a second renderer target to an umbrella target. Backends
 install themselves at load through whole-archive registration; two renderers in one binary
@@ -167,7 +161,6 @@ underlying targets directly. The framework's public building blocks are:
 | `albor-render` | the portable rendering HAL, frame scene and pipeline |
 | `albor-render-albor-auto` | the in-repo GPU backend (Metal or Direct3D) |
 | `albor-render-blend2d-auto` | the Blend2D CPU backend |
-| `albor-render-skia-auto` | the transitional Skia reference backend |
 | `albor-render-software-auto` | the Test-configuration software reference |
 | `albor-devrt-auto` | the Dev hot-swap extension |
 | `albor-automation-auto` | the Dev/Test automation host |
@@ -190,7 +183,7 @@ target_link_libraries(my_app PRIVATE
     albor-widgets
     albor-accessibility
     albor-i18n
-    albor-render-skia-auto)
+    albor-render-blend2d-auto)
 ```
 
 The same rules apply to every composition:

@@ -949,7 +949,7 @@ namespace albor::blend2d
         m_context->setStrokeStyle(to_blend_color(stroke.color));
         m_context->setStrokeWidth(stroke.width);
         m_context->setCompOp(to_blend_comp(stroke.composition));
-        // the butt cap and miter join match the skia reference, which sets neither for a batched stroke (§6.2, AD-26)
+        // the butt cap and miter join match the software reference, which sets neither for a batched stroke (§6.2, AD-26)
         m_context->setStrokeCaps(BL_STROKE_CAP_BUTT);
         m_context->setStrokeJoin(BL_STROKE_JOIN_MITER_CLIP);
         m_context->strokePath(path);
@@ -979,7 +979,7 @@ namespace albor::blend2d
         if (paint.strokes()) {
             m_context->setStrokeStyle(to_blend_color(paint.stroke));
             m_context->setStrokeWidth(paint.stroke_width);
-            // the default butt cap and miter join are what a contour strokes with, like the skia reference (§6.2)
+            // the default butt cap and miter join are what a contour strokes with, like the software reference (§6.2)
             m_context->setStrokeCaps(BL_STROKE_CAP_BUTT);
             m_context->setStrokeJoin(BL_STROKE_JOIN_MITER_CLIP);
             m_context->strokePath(contour);

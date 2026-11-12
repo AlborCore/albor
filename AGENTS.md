@@ -21,9 +21,9 @@ platform without inspecting the file. The infix goes between the base name and t
 
 Mandatory rules for a source that reaches a platform API (`AppKit`, `Metal`, `CoreVideo`, `Win32`, `xcb`, `wayland`):
 
-- The file carries the infix of the platform it targets, so `render/render-skia/skia_renderer_backend.macos.mm` is correct and `skia_renderer_backend.mm` is not
+- The file carries the infix of the platform it targets, so `render/render-albor/albor_metal_backend.macos.mm` is correct and `albor_metal_backend.mm` is not
 - The base name never repeats the platform, so the file is `platform_window.macos.mm` and not `macos_platform_window.mm`; the platform is already carried by the infix and by the directory
-- A source that reaches no platform API stays portable, even inside a platform module, so `skia_render_context.cpp` stays `.cpp` because it only calls skia
+- A source that reaches no platform API stays portable, even inside a platform module, so `render/render-blend2d/blend2d_render_context.cpp` stays `.cpp` because it only calls blend2d
 - A header stays portable whenever it can: the module's public header carries no platform type (§3.5, AD-05), so it is `platform/macos/platform_window.h` and not `platform_window.macos.h`
 - A header that cannot be portable, because it declares platform types or imports platform headers, carries the infix as well, for example `native_surface.macos.h`
 - The infix is part of the file's identity: renaming a file is a build change, so the module `CMakeLists.txt` and every `#include` are updated in the same change
@@ -61,7 +61,7 @@ Violating any of these is a defect, not a style issue.
 - **Two-stage frame** (AD-18, §10.2): scene build runs on the UI thread and produces an immutable `FrameScene`; render execution may run on a render thread and must never call application code.
 - **Immutable snapshots cross threads** (§10.5, §13.2): application data reaches custom nodes and bindings as `std::shared_ptr<const T>` in an observable `Snapshot<T>`. `Observable<T>::post_set` is the thread-safe path; `set` is UI-thread only.
 - **The manifest is the single source of truth for native components** (AD-17, §11.2): C++ glue is generated from the manifest, and the compiler never parses C++ headers.
-- **No platform or Skia types in public headers** (§3.5, AD-05, AD-19).
+- **No platform or renderer types in public headers** (§3.5, AD-05, AD-19).
 - **Native backend parity** (§6.3, AD-05): `render-albor` ships two native GPU backends, Metal on macOS and Direct3D 11 on Windows, and they stay at the same level. Every capability, fix and optimization is applied to both in the same change: the same retained resources, cache policy, base-vertex handling, profiling coverage and tests. A change carried by one backend only is a defect, not a follow-up, and the backend that cannot be built on the host is verified in CI before the change is done.
 - **Platform parity** (§5.3, AD-16): macOS and Windows stay at the same level. Any change to a macOS-specific source (`*.macos.mm`, AppKit, CoreText, CoreVideo, Metal, NSAccessibility) carries its Windows equivalent (`*.win32.c++`, Win32, DirectWrite, Direct3D, UI Automation) in the same change, with the same tests; the reverse holds too. A change carried by one platform only is a defect, not a follow-up. The platform that cannot be built on the host is verified in CI before the change is done, and `macos-windows.md` is updated with the new status.
 - **The compiler is not the runtime, and development tooling is not the production application** (§2).
@@ -115,7 +115,7 @@ albor/ (every framework module lives under this include folder, so consumers
 ├── core/ application/ ui/ layout/ input/ focus/ commands/ model/
 ├── text/ style/ animation/ window/
 ├── platform/ (macos/ windows/ headless/)
-├── render/ render-skia/ render-software/ render-blend2d/ render-albor/ widgets/ semantics/ accessibility/
+├── render/ render-software/ render-blend2d/ render-albor/ widgets/ semantics/ accessibility/
 ├── resources/ i18n/
 ├── compiler/ manifest/ language-server/ preview/
 ├── devrt/ automation/ inspector/

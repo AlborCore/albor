@@ -3,7 +3,7 @@
 # the shaper is discovered here so its include root and archive are named explicitly, because the engine
 # shapes and draws through harfbuzz alone and no longer relies on a renderer carrying the archive (AD-28, AD-34)
 #
-# freetype stays installed because this baseline's harfbuzz config find_dependency's it, though no source here links it
+# freetype arrives through harfbuzz's freetype feature, which its config requires, though no source here calls its api
 find_package(harfbuzz CONFIG REQUIRED)
 
 # the line breaker is ICU's, which is the shaper's own unicode dependency and the fixed one for identity (AD-34)
@@ -45,14 +45,8 @@ if(APPLE)
     set_source_files_properties("./harfbuzz_typeface_resolver.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-text-harfbuzz PRIVATE "-framework CoreText" "-framework CoreFoundation")
 elseif(WIN32)
-    # the resolver walks the system collection directly, which dwrite fronts, so no skia archive reaches this target (AD-16)
+    # the resolver walks the system collection directly, which dwrite fronts, so no renderer archive reaches this target (AD-16)
     target_link_libraries(albor-text-harfbuzz PRIVATE dwrite)
-endif()
-
-# the windows skia build carries neither freetype nor harfbuzz on its link interface, where the apple one does, so
-# the font reader this engine walks an embedded face with is named here rather than assumed to arrive (AD-28)
-if(WIN32)
-    target_link_libraries(albor-text-harfbuzz PRIVATE freetype)
 endif()
 
 # the auto target links the archive whole, so the vendored path installs itself at load without a call (§9.1)

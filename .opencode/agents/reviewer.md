@@ -43,7 +43,7 @@ paths, and you read files directly.
    owner, a callback that runs after teardown.
 3. Threading — application code reached from the render thread, a mutable snapshot
    shared across threads, a UI-thread-only call made off the UI thread.
-4. Boundaries — a public header carrying a platform or Skia type, dev-only code
+4. Boundaries — a public header carrying a platform or renderer type, dev-only code
    behind `#ifdef` instead of a link-time exclusion, automation reachable from a
    core module, an interpreter path in a Release build.
 5. Parity — a macOS behavior without its Windows twin, a Metal change without the

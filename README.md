@@ -12,9 +12,8 @@ modality, and a two-stage render pipeline that never blocks the UI thread on dra
 > (Win32 + Direct3D) are implemented and built in CI; the Linux (Wayland/X11/Vulkan)
 > port follows. `render-albor`, the in-repo GPU 2D renderer, draws shapes, retained
 > resources, outlined text, shadows, composited layers and all Porter-Duff composition
-> modes, and is gated against a software reference by a parity suite. Skia remains the
-> transitional/reference backend. The architecture is settled and specified in
-> [`albor-design-v4.md`](albor-design-v4.md).
+> modes, and is gated against a software reference by a parity suite. The architecture
+> is settled and specified in [`albor-design-v4.md`](albor-design-v4.md).
 
 ## Why Albor exists
 
@@ -186,7 +185,6 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | dev runtime extension: self-installing, patches a live tree in place | done (§12.1) |
 | macOS platform: AppKit window, display-link pacing, input | done (§5) |
 | `render-albor` GPU backend: fills, strokes, outlined text, retained resources, images, shadows, layers, fill rules, 11 composition modes | done on macOS and Windows (§6.2–§6.4, AD-26) |
-| Skia renderer backend (Metal/Ganesh) | transitional/reference, not the default consumer backend (§6, #102) |
 | software reference (Blend2D + HarfBuzz glyph atlas) and Blend2D windowed backend | done (§6.3, AD-26) |
 | GPU/software parity suite, headless CI | done (AD-26, §16) |
 | reactive properties, eager-push binding engine, snapshots | done (§7) |
@@ -221,8 +219,7 @@ directly.
 Third-party projects install the framework through vcpkg. The port ships inside this
 repository (`ports/albor/`) and a consumer wires it as an overlay until a registry carries
 it; the default install carries the recommended GPU runtime, and the `blend2d` feature adds
-the portable CPU renderer. The transitional skia reference is not a package surface — it
-retires from the framework in issue 111:
+the portable CPU renderer:
 
 ```json
 { "dependencies": [{ "name": "albor" }] }

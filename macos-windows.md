@@ -287,10 +287,9 @@ The complete Windows suite has exactly **2 skips**:
 Neither skip hides required Windows coverage. The previous D3D device, window, composited-surface, DirectWrite,
 collection-font and accessibility skips are gone: those paths now assert.
 
-The macOS configuration still excludes `metal_teardown.test.cpp` from Release at link time (issue 29) and the
-Metal footprint test skips when coverage instrumentation is active. Those are macOS-specific, intentional, and
-unrelated to Windows. Both the Metal and Direct3D footprint probes drain the present queue before each
-measurement, so a frame still in flight is not counted as retained growth.
+The Metal footprint test skips when coverage instrumentation is active. Those are macOS-specific,
+intentional, and unrelated to Windows. Both the Metal and Direct3D footprint probes drain the present
+queue before each measurement, so a frame still in flight is not counted as retained growth.
 
 The radio-group, radio-button, numeric-stepper, Image and dual-engine suites are included in the macOS count,
 but not in the Windows counts above, because this host cannot build Windows. The pushed CI run is the
@@ -311,8 +310,6 @@ job remains a tracked enhancement rather than a parity requirement.
 | Platform font resolver | 8 dedicated | 8 |
 | Accessibility roles | 18 | 20 (19 parity + 1 UI Automation client) |
 | Windows platform services | not present | 8 |
-| Skia backend | 30 macOS-only | replaced by D3D |
-| Metal teardown | 2 macOS-only | not applicable |
 
 ## 8. Changes in the Windows parity pass
 
@@ -378,16 +375,16 @@ job remains a tracked enhancement rather than a parity requirement.
   commands, with visibility, enablement, shortcut display, semantic activation and arrow traversal.
   The portable suite covers one command across a menu item, a button and an accelerator.
 - Added the declarative draw vocabulary: line, rectangle, rounded rectangle, circle, text and image
-  primitives plus `measure_text`, and quadratic and cubic `PathVerb` entries replayed by Skia,
+  primitives plus `measure_text`, and quadratic and cubic `PathVerb` entries replayed by
   Blend2D, the software reference and `render-albor`.
 - Added per-node `.ui` styling through builtin `Point`/`Shadow` records and common opacity, border
   and drop-shadow properties.
 - Updated `README.md` and `docs/status.md` to describe both accessibility bridges.
 - Added the vcpkg distribution (`ports/albor`) for both platforms: exported targets, installed headers, tools
   and the package config is a cross-platform CMake story, so the port carries the same surface on macOS and
-  Windows; the renderer backends are vcpkg features (`blend2d`, `skia-reference`) on both. The macOS leg is
+  Windows; the renderer backend is the vcpkg feature `blend2d` on both. The macOS leg is
   verified with end-to-end overlay consumption; the Windows leg is a CI matrix in `.github/workflows/port.yml`
-  (staged install fixture + overlay port default/blend2d on both platforms, skia-reference on macOS), whose
+  (staged install fixture + overlay port default/blend2d on both platforms), whose
   first green run is the parity evidence for this entry.
 - Theme presets stay portable C++ and are not a platform-source item. `Theme::macos` now dresses cards,
   fields, overlay scrollbars, the default control and the sidebar selection through new palette and metric
