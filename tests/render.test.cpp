@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -1537,18 +1538,23 @@ TEST(RenderExecutor, StoppingFlushesTheFrameAlreadyQueued) {
 }
 
 TEST(RenderExecutor, DestructionFlushesThePendingFrame) {
-    // arrange
-    TestRendererBackend backend;
+    // arrange a first frame parked in the render thread, so a second one is queued behind it (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    GatedRendererBackend backend;
     TestRenderSurface surface;
-    const std::uint64_t executed = [&] {
-        // the executor must outlive the submit, so it is scoped here and read after the scope
-        RenderExecutor executor(&backend);
-        executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f)));
-        return executor.executed_count();
-    }();
-    // act, assert
-    EXPECT_EQ(executed, 0u);
-    EXPECT_EQ(surface.ended, 1u);
+    auto executor = std::make_unique<RenderExecutor>(&backend);
+    executor->submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}})));
+    backend.wait_until_arrived();
+    executor->submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}, Rect{1.0f, 1.0f, 2.0f, 2.0f}})));
+    ASSERT_TRUE(executor->pending());
+    // act the executor is destroyed while the second frame is queued, and the parked first one is released (§6.1)
+    std::thread destroyer([&] { executor.reset(); });
+    backend.release();
+    destroyer.join();
+    // assert both frames ran, so destruction flushed the queued frame instead of dropping it (§6.1)
+    ASSERT_EQ(backend.executed_rect_counts.size(), 2u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 2u);
 }
 
 TEST(RenderExecutor, DestructionStopsTheRenderThread) {
