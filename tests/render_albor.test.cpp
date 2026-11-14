@@ -1074,6 +1074,305 @@ TEST(DrawCommandReplayChecks, ADrawingRecordedWithNoTransformStaysWhereItWasReco
     }
 }
 
+TEST(AlborRenderContextChecks, ATranslatedPictureKeepsTheSceneClipOnTheRaster) {
+    // arrange a picture whose local origin lies above the clip it is replayed inside, which a damage frame produces (§6.1)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{4.0f, 0.0f}, Size{20.0f, 12.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(41u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act the scene clip starts below the picture's local origin, while the placement puts the picture inside it (§6.4)
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 20.0f}, Size{64.0f, 20.0f}));
+    context.draw_picture(picture, Transform::translation(0.0f, 24.0f));
+    // assert the picture drew and its scissor still maps the scene clip rather than a translated copy of it (§6.2)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    const Point mapped = scissor.inverse.apply(Point{.x = 14.0f, .y = 30.0f});
+    EXPECT_LE(std::abs(mapped.x), scissor.extent_x);
+    EXPECT_LE(std::abs(mapped.y), scissor.extent_y);
+    // a point below the scene clip must stay outside, because a scissor that merely grew would pass the first check (§6.2)
+    const Point below = scissor.inverse.apply(Point{.x = 14.0f, .y = 46.0f});
+    EXPECT_GT(std::abs(below.y), scissor.extent_y);
+}
+
+TEST(AlborRenderContextChecks, APictureInnerClipNarrowsInsideThePictureSpace) {
+    // arrange a picture whose fill is clipped in its own space, which a tab label records (§6.2, §6.4)
+    PictureRecorder recorder;
+    recorder.save();
+    recorder.clip_rect(Rect::from_origin_size(Point{4.0f, 0.0f}, Size{20.0f, 12.0f}));
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    recorder.restore();
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(42u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act the scene clip and the picture's inner clip live in different spaces before the placement composes them (§6.2)
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 20.0f}, Size{64.0f, 20.0f}));
+    context.draw_picture(picture, Transform::translation(0.0f, 24.0f));
+    // assert the inner clip narrowed the fill instead of collapsing it against the scene clip (§6.2)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    const Point inside = scissor.inverse.apply(Point{.x = 10.0f, .y = 30.0f});
+    EXPECT_LE(std::abs(inside.x), scissor.extent_x);
+    EXPECT_LE(std::abs(inside.y), scissor.extent_y);
+    // a point outside the inner clip must stay outside, because the fill covers the whole picture (§6.2)
+    const Point outside = scissor.inverse.apply(Point{.x = 30.0f, .y = 30.0f});
+    EXPECT_GT(std::abs(outside.x), scissor.extent_x);
+}
+
+TEST(AlborRenderContextChecks, TheSceneClipAndItsDeviceTransformReturnAfterAPicture) {
+    // arrange a picture drawn inside a clip, which changes the clip while it replays (§6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(43u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Rect clip = Rect::from_origin_size(Point{10.0f, 10.0f}, Size{40.0f, 30.0f});
+    context.clip_rect(clip);
+    // act the picture is placed and a rectangle follows it, which the restored clip must cut (§6.2)
+    context.draw_picture(picture, Transform::translation(0.0f, 5.0f));
+    context.draw_rect(extent, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert the following draw stands under the scene clip again, not the rebased picture clip (§6.2)
+    EXPECT_EQ(context.clip(), clip);
+    ASSERT_EQ(batch.draws.size(), 2u);
+    const BatchScissor& after = batch.draws[1].scissor;
+    ASSERT_TRUE(after.enabled);
+    EXPECT_NEAR(after.extent_x, 20.0f, 0.0001f);
+    EXPECT_NEAR(after.extent_y, 15.0f, 0.0001f);
+    // the scissor centre is the scene clip centre, which a clip left in picture space would move (§6.2)
+    const Point centre = after.inverse.apply(Point{.x = 30.0f, .y = 25.0f});
+    EXPECT_NEAR(centre.x, 0.0f, 0.0001f);
+    EXPECT_NEAR(centre.y, 0.0f, 0.0001f);
+}
+
+TEST(AlborRenderContextChecks, APictureScaledInsideAClipMapsTheSceneClipOnce) {
+    // arrange a picture replayed at double scale inside a scene clip (§6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(44u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Rect clip = Rect::from_origin_size(Point{8.0f, 8.0f}, Size{32.0f, 24.0f});
+    context.clip_rect(clip);
+    // act the placement scales the picture while the scene clip stays where it was recorded (§6.2)
+    context.draw_picture(picture, Transform::scaling(2.0f, 2.0f));
+    // assert the scissor covers the scene clip and nothing more, which a missed inverse scale would widen (§6.2)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    const Point inside = scissor.inverse.apply(Point{.x = 24.0f, .y = 20.0f});
+    EXPECT_LE(std::abs(inside.x), scissor.extent_x);
+    EXPECT_LE(std::abs(inside.y), scissor.extent_y);
+    const Point outside = scissor.inverse.apply(Point{.x = 50.0f, .y = 20.0f});
+    EXPECT_GT(std::abs(outside.x), scissor.extent_x);
+}
+
+TEST(AlborRenderContextChecks, ASingularPlacementUnderAScaledSceneReplaysNothing) {
+    // arrange a scene scaled enough to lift a collapsed placement above the device singularity check (§6.2)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(45u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    context.set_transform(Transform::scaling(1000.0f, 1000.0f));
+    const Transform before = context.transform();
+    // act the placement itself collapses, though the composed device transform does not (§6.2)
+    context.draw_picture(picture, Transform::scaling(0.00001f, 0.00001f));
+    // assert the picture drew nothing and the context stood where it was, not rebased through an identity inverse (§6.2)
+    EXPECT_TRUE(batch.draws.empty());
+    EXPECT_EQ(context.transform(), before);
+    EXPECT_EQ(context.clip(), extent);
+}
+
+TEST(AlborRenderContextChecks, APictureInARoundedClipScalesItsRadiusByThePlacement) {
+    // arrange a rounded scene clip replayed through a picture at double scale (§6.2, §6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(46u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    context.clip_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}), 8.0f);
+    // act the placement halves the clip and its radius as it enters picture space (§6.2)
+    context.draw_picture(picture, Transform::scaling(2.0f, 2.0f));
+    // assert the radius follows the placement, so the mask rounds by the scene radius after the scale (§6.2)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    EXPECT_NEAR(scissor.radius, 4.0f, 0.0001f);
+    const Point centre = scissor.inverse.apply(Point{.x = 20.0f, .y = 20.0f});
+    EXPECT_LE(std::abs(centre.x), scissor.extent_x);
+    EXPECT_LE(std::abs(centre.y), scissor.extent_y);
+}
+
+TEST(AlborRenderContextChecks, ANestedPictureMapsBothClips) {
+    // arrange a hand built picture nesting another, which is the only way to exercise the recursive path (§6.4)
+    PictureRecorder inner;
+    inner.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> inner_picture = std::make_shared<const PictureResource>(47u, inner.commands());
+    DrawCommand nest = DrawCommand::picture(inner_picture, Transform::translation(0.0f, 4.0f));
+    nest.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{32.0f, 32.0f}));
+    std::vector<DrawCommand> nested;
+    nested.push_back(std::move(nest));
+    const std::shared_ptr<const PictureResource> outer_picture = std::make_shared<const PictureResource>(48u, nested);
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act the scene clip, the outer picture and the inner picture each place a bound on the fill (§6.2)
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 20.0f}, Size{64.0f, 20.0f}));
+    context.draw_picture(outer_picture, Transform::translation(0.0f, 24.0f));
+    // assert both clips composed, so the visible band is the scene clip cut by the nest clip (§6.2, §6.4)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    const Point inside = scissor.inverse.apply(Point{.x = 10.0f, .y = 30.0f});
+    EXPECT_LE(std::abs(inside.x), scissor.extent_x);
+    EXPECT_LE(std::abs(inside.y), scissor.extent_y);
+    const Point below = scissor.inverse.apply(Point{.x = 10.0f, .y = 44.0f});
+    EXPECT_GT(std::abs(below.y), scissor.extent_y);
+}
+
+TEST(AlborRenderContextChecks, ATranslatedPictureMapsAClipPushedBeforeTheTransformMoved) {
+    // arrange a clip pushed under one transform, which a later transform must not move (§6.2)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(49u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    context.set_transform(Transform::translation(10.0f, 0.0f));
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    context.set_transform(Transform::translation(100.0f, 0.0f));
+    // act the picture is placed after the transform moved, while the clip stays where it was pushed (§6.2)
+    context.draw_picture(picture, Transform::translation(0.0f, 5.0f));
+    // assert the rebase used the push transform, so the scissor is the clip the scene actually holds (§6.2)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    const Point inside = scissor.inverse.apply(Point{.x = 15.0f, .y = 10.0f});
+    EXPECT_LE(std::abs(inside.x), scissor.extent_x);
+    EXPECT_LE(std::abs(inside.y), scissor.extent_y);
+    const Point outside = scissor.inverse.apply(Point{.x = 100.0f, .y = 10.0f});
+    EXPECT_GT(std::abs(outside.x), scissor.extent_x);
+}
+
+TEST(AlborRenderContextChecks, ARotatedPictureMapsAClipPushedBeforeTheTransformMoved) {
+    // arrange a clip pushed under one transform, which the scene conversion must not move either (§6.2)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(50u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    context.set_transform(Transform::translation(10.0f, 0.0f));
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    context.set_transform(Transform::translation(100.0f, 0.0f));
+    const Transform turn = Transform::translation(-32.0f, -24.0f).then(Transform{.scale_x = 0.0f, .skew_x = -1.0f, .skew_y = 1.0f, .scale_y = 0.0f}).then(Transform::translation(32.0f, 24.0f));
+    // act the rotated picture keeps the clip in scene space, which must be the pushed clip (§6.2)
+    context.draw_picture(picture, turn);
+    // assert the container is the pushed clip, not the one the later transform would map (§6.2)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    const Point inside = scissor.inverse.apply(Point{.x = 15.0f, .y = 10.0f});
+    EXPECT_LE(std::abs(inside.x), scissor.extent_x);
+    EXPECT_LE(std::abs(inside.y), scissor.extent_y);
+    const Point outside = scissor.inverse.apply(Point{.x = 100.0f, .y = 10.0f});
+    EXPECT_GT(std::abs(outside.x), scissor.extent_x);
+}
+
+TEST(AlborRenderContextChecks, ARotatedPictureMapsItsInnerClipIntoSceneSpace) {
+    // arrange a picture whose square clip is recorded in its own space (§6.2, §6.4)
+    PictureRecorder recorder;
+    recorder.save();
+    recorder.clip_rect(Rect::from_origin_size(Point{24.0f, 24.0f}, Size{16.0f, 16.0f}));
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    recorder.restore();
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(51u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 64.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    context.clip_rect(Rect::from_origin_size(Point{16.0f, 16.0f}, Size{32.0f, 32.0f}));
+    const Transform turn = Transform::translation(-32.0f, -32.0f).then(Transform{.scale_x = 0.70710678f, .skew_x = -0.70710678f, .skew_y = 0.70710678f, .scale_y = 0.70710678f}).then(Transform::translation(32.0f, 32.0f));
+    // act the inner clip is mapped through the placement into the scene container (§6.2)
+    context.draw_picture(picture, turn);
+    // assert the inner clip became its scene box, which the scissor holds in scene space (§6.2)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    // the 11.31 scene box snaps to whole device pixels, which the scissor holds as 11 (§6.2, AD-26)
+    EXPECT_NEAR(scissor.extent_x, 11.0f, 0.0001f);
+    EXPECT_NEAR(scissor.extent_y, 11.0f, 0.0001f);
+    const Point centre = scissor.inverse.apply(Point{.x = 32.0f, .y = 32.0f});
+    EXPECT_LE(std::abs(centre.x), scissor.extent_x);
+    EXPECT_LE(std::abs(centre.y), scissor.extent_y);
+    const Point corner = scissor.inverse.apply(Point{.x = 17.0f, .y = 17.0f});
+    EXPECT_GT(std::abs(corner.x), scissor.extent_x);
+    EXPECT_GT(std::abs(corner.y), scissor.extent_y);
+}
+
+TEST(AlborRenderContextChecks, ARotatedPictureInsideAScaledPictureKeepsTheContainerExact) {
+    // arrange a rotated picture inside an outer picture at double scale, under a scene clip (§6.4)
+    PictureRecorder inner;
+    inner.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> inner_picture = std::make_shared<const PictureResource>(52u, inner.commands());
+    const Transform turn = Transform::translation(-8.0f, -8.0f).then(Transform{.scale_x = 0.0f, .skew_x = -1.0f, .skew_y = 1.0f, .scale_y = 0.0f}).then(Transform::translation(8.0f, 8.0f));
+    std::vector<DrawCommand> nested;
+    nested.push_back(DrawCommand::picture(inner_picture, turn));
+    const std::shared_ptr<const PictureResource> outer_picture = std::make_shared<const PictureResource>(53u, nested);
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 64.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Rect container = Rect::from_origin_size(Point{8.0f, 8.0f}, Size{16.0f, 16.0f});
+    context.clip_rect(container);
+    // act the outer scale rebases the clip, while the rotated inner picture keeps it in scene space (§6.2)
+    context.draw_picture(outer_picture, Transform::scaling(2.0f, 2.0f));
+    // assert the scene container survived both placements instead of doubling with the outer scale (§6.2)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    EXPECT_NEAR(scissor.extent_x, 8.0f, 0.0001f);
+    EXPECT_NEAR(scissor.extent_y, 8.0f, 0.0001f);
+    const Point centre = scissor.inverse.apply(Point{.x = 16.0f, .y = 16.0f});
+    EXPECT_LE(std::abs(centre.x), scissor.extent_x);
+    EXPECT_LE(std::abs(centre.y), scissor.extent_y);
+    // the outer clip and transform return after both pictures end (§6.4)
+    EXPECT_EQ(context.clip(), container);
+    EXPECT_EQ(context.transform(), Transform{});
+}
+
+TEST(AlborRenderContextChecks, ARotatedPictureScissorsTheContainerAtTwoToOneScale) {
+    // arrange a two-to-one context, where the scene container and the device box differ (§6.1, AD-27)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(54u, recorder.commands());
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 48.0f});
+    AlborRenderContext context(batch, extent, 2.0f);
+    const Rect container = Rect::from_origin_size(Point{8.0f, 8.0f}, Size{16.0f, 16.0f});
+    context.clip_rect(container);
+    const Transform turn = Transform::translation(-32.0f, -24.0f).then(Transform{.scale_x = 0.0f, .skew_x = -1.0f, .skew_y = 1.0f, .scale_y = 0.0f}).then(Transform::translation(32.0f, 24.0f));
+    // act the scene container is scissored on the physical raster (§6.2, AD-27)
+    context.draw_picture(picture, turn);
+    // assert the box is the container in device pixels, which a missed inverse scale would double (§6.2)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    ASSERT_TRUE(scissor.enabled);
+    EXPECT_NEAR(scissor.extent_x, 16.0f, 0.0001f);
+    EXPECT_NEAR(scissor.extent_y, 16.0f, 0.0001f);
+    const Point centre = scissor.inverse.apply(Point{.x = 32.0f, .y = 32.0f});
+    EXPECT_LE(std::abs(centre.x), scissor.extent_x);
+    EXPECT_LE(std::abs(centre.y), scissor.extent_y);
+    const Point outside = scissor.inverse.apply(Point{.x = 64.0f, .y = 32.0f});
+    EXPECT_GT(std::abs(outside.x), scissor.extent_x);
+}
+
 TEST(AlborRenderContextChecks, SavePushesAndRestorePopsTheWholeState) {
     // arrange
     FrameBatch batch;

@@ -120,6 +120,9 @@ namespace albor
         // the transform applying this one first and the argument second, how a retained draw joins (§6.2, §6.4)
         [[nodiscard]] Transform then(const Transform& outer) const;
 
+        // the transform reversing this one, which the identity answers when the mapping collapses (§6.2)
+        [[nodiscard]] Transform inverse() const;
+
         // compare two transforms component wise
         friend bool operator==(const Transform& lhs, const Transform& rhs) = default;
     };

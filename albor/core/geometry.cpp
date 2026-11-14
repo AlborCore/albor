@@ -119,4 +119,22 @@ namespace albor
         // hand back the composed transform
         return composed;
     }
+
+    Transform Transform::inverse() const {
+        // the determinant of the linear part decides whether the mapping can be reversed at all (§6.2)
+        const float determinant = scale_x * scale_y - skew_x * skew_y;
+        // a collapsed mapping has no reverse, so the identity stands in and nothing draws through it (§6.2)
+        if (std::abs(determinant) < 0.000001f)
+            return Transform{};
+        // the adjugate over the determinant reverses the linear part (§6.2)
+        const float inverse_scale_x = scale_y / determinant;
+        const float inverse_skew_x = -skew_x / determinant;
+        const float inverse_skew_y = -skew_y / determinant;
+        const float inverse_scale_y = scale_x / determinant;
+        // the translation reverses after the linear part, which is the order apply runs (§6.2)
+        const float inverse_translate_x = -(inverse_scale_x * translate_x + inverse_skew_x * translate_y);
+        const float inverse_translate_y = -(inverse_skew_y * translate_x + inverse_scale_y * translate_y);
+        // the components return in the row wise layout the struct packs (§6.2)
+        return Transform{.scale_x = inverse_scale_x, .skew_x = inverse_skew_x, .translate_x = inverse_translate_x, .skew_y = inverse_skew_y, .scale_y = inverse_scale_y, .translate_y = inverse_translate_y};
+    }
 } // namespace albor

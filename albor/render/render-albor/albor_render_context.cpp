@@ -31,7 +31,7 @@ namespace albor::render
 
     void AlborRenderContext::save() {
         // the current transform, clip, clip transform and opacity are pushed, which a restore pops (§6.2)
-        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .opacity = m_opacity});
+        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .clip_scene = m_clip_scene, .opacity = m_opacity});
     }
 
     void AlborRenderContext::restore() {
@@ -44,6 +44,7 @@ namespace albor::render
         m_transform = state.transform;
         m_clip = state.clip;
         m_clip_device = state.clip_device;
+        m_clip_scene = state.clip_scene;
         m_opacity = state.opacity;
     }
 
@@ -58,6 +59,18 @@ namespace albor::render
     }
 
     void AlborRenderContext::clip_rect(const Rect& rect) {
+        // a scene space clip maps the rect through the placement into the scene it stores (§6.2)
+        if (m_clip_scene) {
+            // a placement that collapses spans no scene area, so it cuts everything away (§6.2)
+            const float determinant = m_transform.scale_x * m_transform.scale_y - m_transform.skew_x * m_transform.skew_y;
+            if (std::abs(determinant) < SINGULAR_LIMIT) {
+                m_clip = ClipState{};
+                return;
+            }
+            // a rotated inner clip becomes its scene box, which may loosen it but never the container (§6.2)
+            clip_to_rect(m_clip, m_transform.map(rect));
+            return;
+        }
         // the clip freezes the transform it is pushed under, which a later transform must not move (§6.2)
         m_clip_device = device_transform();
         // a clip pushed under a collapsed transform spans no device area, so it cuts everything away (§6.2)
@@ -66,11 +79,25 @@ namespace albor::render
             m_clip = ClipState{};
             return;
         }
-        // the recorded clip is the overlap of what was there and what was asked for, radius included (§6.2)
+        // the recorded clip is the overlap of what was there and what was asked for (§6.2)
         clip_to_rect(m_clip, rect);
     }
 
     void AlborRenderContext::clip_rounded_rect(const Rect& rect, float radius) {
+        // a scene space clip maps the rounded rect through the placement into the scene it stores (§6.2)
+        if (m_clip_scene) {
+            // a placement that collapses spans no scene area, so it cuts everything away (§6.2)
+            const float determinant = m_transform.scale_x * m_transform.scale_y - m_transform.skew_x * m_transform.skew_y;
+            if (std::abs(determinant) < SINGULAR_LIMIT) {
+                m_clip = ClipState{};
+                return;
+            }
+            // the radius follows the placement, exactly as a recorded rounded clip scales it (§6.2)
+            const float scale = std::sqrt(std::abs(determinant));
+            // the scene box rounds where it can, which may loosen a rotated inner clip but never the container (§6.2)
+            clip_to_rounded_rect(m_clip, m_transform.map(rect), radius * scale);
+            return;
+        }
         // the clip freezes the transform it is pushed under, which a later transform must not move (§6.2)
         m_clip_device = device_transform();
         // a rounded clip pushed under a collapsed transform spans no device area, so it cuts everything away (§6.2)
@@ -100,7 +127,7 @@ namespace albor::render
 
     void AlborRenderContext::push_layer(float opacity) {
         // the layer begins at the state the context stands at, which its pop returns to (§6.2)
-        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .opacity = m_opacity});
+        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .clip_scene = m_clip_scene, .opacity = m_opacity});
         // the marker names the draw the layer begins at, which the backend opens its offscreen pass on (§6.2)
         m_batch.layers.push_back(BatchLayer{.opacity = std::clamp(opacity, 0.0f, 1.0f), .draw_begin = m_batch.draws.size(), .draw_end = m_batch.draws.size()});
         // the open index tells the matching pop which marker to close (§6.2)
@@ -153,7 +180,7 @@ namespace albor::render
         // an unclipped draw carries no scissor, which the shader skips (§6.2)
         BatchScissor result;
         // a rectangular clip that covers the whole extent leaves every draw uncut (§6.2)
-        if (m_clip.rect == m_extent && m_clip.radius <= 0.0f)
+        if (m_clip.rect == m_extent && m_clip.radius <= 0.0f && m_clip_device == Transform::scaling(m_device_scale, m_device_scale))
             return result;
         // a clip without area cuts every draw away, so no scissor is carried at all (§6.2)
         if (m_clip.rect.empty())
@@ -600,9 +627,9 @@ namespace albor::render
             draw_path(outline.path(), transform, paint);
             return;
         }
-        // a mesh is device space geometry, so it answers only while the placement is a translation (AD-27)
+        // a mesh is device space geometry, so only a translation placement answers it (AD-27)
         const bool mesh_cacheable = m_glyph_meshes != nullptr && transform.scale_x == 1.0f && transform.scale_y == 1.0f && transform.skew_x == 0.0f && transform.skew_y == 0.0f;
-        // a placement that scales or shears the glyph replays the retained path, which carries the transform (§6.4)
+        // a scaled or sheared glyph replays the retained path, which carries the transform (§6.4)
         if (!mesh_cacheable) {
             draw_path(outline.path(), transform, paint);
             return;
@@ -620,12 +647,47 @@ namespace albor::render
         // a picture with no command draws nothing (§6.4, AD-06)
         if (!drawable() || !picture || picture->empty())
             return;
+        // a placement that collapses spans no device area, so the picture draws nothing (§6.2)
+        const float placement_determinant = transform.scale_x * transform.scale_y - transform.skew_x * transform.skew_y;
+        if (std::abs(placement_determinant) < SINGULAR_LIMIT)
+            return;
         // the picture nests under the transform the scene gave it, which applies before the current one (§6.4)
         const Transform outer = m_transform;
+        // the clip the picture was placed under returns when its list ends (§6.4)
+        const ClipState outer_clip = m_clip;
+        const Transform outer_clip_device = m_clip_device;
+        const bool outer_clip_scene = m_clip_scene;
+        // the frozen clip transform maps the push space into the scene, which a later transform never moves (§6.2)
+        const Transform clip_to_scene = m_clip_device.then(Transform::scaling(1.0f / m_device_scale, 1.0f / m_device_scale));
+        // an axis aligned placement rebases the clip exactly, while a rotated one keeps it in scene space (§6.2)
+        const bool axis_aligned = std::abs(transform.skew_x) < 0.0001f && std::abs(transform.skew_y) < 0.0001f;
+        if (!m_clip_scene && !axis_aligned) {
+            // the clip becomes the scene box the push transform maps it into (§6.2)
+            const float scene_scale = std::sqrt(std::abs(clip_to_scene.scale_x * clip_to_scene.scale_y - clip_to_scene.skew_x * clip_to_scene.skew_y));
+            m_clip.rect = clip_to_scene.map(m_clip.rect);
+            m_clip.radius = scene_scale > 0.0f ? std::min(m_clip.radius * scene_scale, std::min(m_clip.rect.width, m_clip.rect.height) * 0.5f) : 0.0f;
+            // a scene space clip is scissored by the device scale alone, which keeps the container exact (§6.2)
+            m_clip_device = Transform::scaling(m_device_scale, m_device_scale);
+            m_clip_scene = true;
+        }
         m_transform = transform.then(outer);
-        // the inner commands draw in picture space, while the clip is scene space, so the whole list replays (§6.1, §6.4)
-        replay_commands(picture->commands(), *this, m_extent);
-        // the transform the draw was recorded under is restored (§6.4)
+        if (!m_clip_scene) {
+            // the picture and the clip meet in the scene, so the clip is rebased through both transforms (§6.2, §6.4)
+            const Transform picture_to_clip = transform.then(outer).then(clip_to_scene.inverse());
+            const Transform clip_to_picture = picture_to_clip.inverse();
+            // the radius follows the rebase, exactly as a recorded rounded clip scales it (§6.2)
+            const float placement_scale = std::sqrt(std::abs(clip_to_picture.scale_x * clip_to_picture.scale_y - clip_to_picture.skew_x * clip_to_picture.skew_y));
+            m_clip.rect = clip_to_picture.map(m_clip.rect);
+            m_clip.radius = placement_scale > 0.0f ? std::min(m_clip.radius * placement_scale, std::min(m_clip.rect.width, m_clip.rect.height) * 0.5f) : 0.0f;
+            // the frozen device transform follows the rebased clip, so the scissor maps the picture space once (§6.2)
+            m_clip_device = device_transform();
+        }
+        // the list replays against the unclipped base its recorder started from (§6.2, §6.4)
+        replay_commands(picture->commands(), *this, DrawCommand::unclipped());
+        // the clip, its device transform, its space and the placement return to the scene that drew the picture (§6.4)
+        m_clip = outer_clip;
+        m_clip_device = outer_clip_device;
+        m_clip_scene = outer_clip_scene;
         m_transform = outer;
     }
 

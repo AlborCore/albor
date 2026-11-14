@@ -351,21 +351,8 @@ namespace albor::render
     } // namespace
 
     Transform invert_transform(const Transform& transform) {
-        // the determinant of the two by two linear part decides invertibility
-        const float determinant = transform.scale_x * transform.scale_y - transform.skew_x * transform.skew_y;
-        // a singular transform inverts to the identity, which a degenerate draw never maps through
-        if (std::abs(determinant) < 0.000001f)
-            return Transform{};
-        // the inverse of the linear part is the adjugate over the determinant
-        const float inverse_a = transform.scale_y / determinant;
-        const float inverse_b = -transform.skew_x / determinant;
-        const float inverse_c = -transform.skew_y / determinant;
-        const float inverse_d = transform.scale_x / determinant;
-        // the translation maps through the inverse linear part
-        const float inverse_tx = -(inverse_a * transform.translate_x + inverse_b * transform.translate_y);
-        const float inverse_ty = -(inverse_c * transform.translate_x + inverse_d * transform.translate_y);
-        // the albor transform packs the matrix row wise
-        return Transform{.scale_x = inverse_a, .skew_x = inverse_b, .translate_x = inverse_tx, .skew_y = inverse_c, .scale_y = inverse_d, .translate_y = inverse_ty};
+        // the core transform owns the reverse, so every backend and the scissor share one rule (§6.2)
+        return transform.inverse();
     }
 
     int curve_divs(float radius, float arc, float tess_tolerance) {

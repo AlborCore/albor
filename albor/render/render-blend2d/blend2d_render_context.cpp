@@ -991,6 +991,12 @@ namespace albor::blend2d
         // a picture with no command draws nothing (§6.4, AD-06)
         if (!picture || picture->empty())
             return;
+        // a placement that collapses spans no device area, so the picture draws nothing (§6.2)
+        if (std::abs(transform.scale_x * transform.scale_y - transform.skew_x * transform.skew_y) < 1e-6f)
+            return;
+        // the inner commands and clips live in picture space, so the scene clip is rebased into it (§6.2, §6.4)
+        const Rect outer_clip = m_clip;
+        m_clip = transform.inverse().map(m_clip);
         // the list nests under the transform the scene gave it, like any other retained draw (§6.4)
         if (m_context != nullptr) {
             m_context->save();
@@ -999,10 +1005,12 @@ namespace albor::blend2d
         // the bookkeeping follows the context, so a command that reads the transform back sees the same one (§6.2)
         const Transform outer = m_transform;
         m_transform = transform.then(outer);
-        // the recorded clip applies to the list, and a narrower one opens a switch of its own (§6.2)
-        replay_commands(picture->commands(), *this, m_clip);
+        // the list replays against the unclipped base its recorder started from (§6.2, §6.4)
+        replay_commands(picture->commands(), *this, DrawCommand::unclipped());
         // the transform the picture was drawn under is restored with the context (§6.4)
         m_transform = outer;
+        // the clip the scene stood at returns with the transform the placement changed (§6.4)
+        m_clip = outer_clip;
         // the list is closed, because a picture draws inside the scope it was given (§6.2)
         if (m_context != nullptr)
             m_context->restore();
