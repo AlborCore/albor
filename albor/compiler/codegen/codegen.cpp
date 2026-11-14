@@ -60,6 +60,44 @@ namespace albor::compiler
             return out;
         }
 
+        // reserve a generated declaration name, appending underscores until it is unique in its component (§14.1)
+        std::string unique_name(std::string_view name, std::unordered_set<std::string>& used) {
+            // the sanitised spelling is the starting point, because a reserved word cannot stand alone (§14.1)
+            std::string out = sanitize(name);
+            // every earlier declaration keeps its name, so a colliding twin grows until it is distinct (§14.1)
+            while (used.contains(out))
+                out += '_';
+            // the chosen name joins the set, so a later declaration grows past it (§14.1)
+            used.insert(out);
+            return out;
+        }
+
+        // the generated C++ names of one component's declarations, which its facade and its importers share (§14.1)
+        struct DeclarationNames
+        {
+            // the property names, which the accessors and the members carry (§14.1)
+            std::unordered_map<std::string, std::string> properties;
+
+            // the signal names, which the slots and the handlers carry (§14.1)
+            std::unordered_map<std::string, std::string> signals;
+
+            // every spelling already taken, which a common property fallback must also avoid (§14.1)
+            std::unordered_set<std::string> used;
+        };
+
+        // map the declared property and signal names onto the C++ names their facade declares (§14.1)
+        DeclarationNames declaration_names(const std::vector<CheckedProperty>& properties, const std::vector<CheckedSignal>& signals) {
+            // the names are collected in declaration order, which is what makes the mapping deterministic (§14.1)
+            DeclarationNames names;
+            // each property takes the first free spelling of its name (§14.1)
+            for (const CheckedProperty& property : properties)
+                names.properties[property.name] = unique_name(property.name, names.used);
+            // each signal takes the first free spelling after the properties (§14.1)
+            for (const CheckedSignal& signal : signals)
+                names.signals[signal.name] = unique_name(signal.name, names.used);
+            return names;
+        }
+
         // render a colour as the constructor call, which scales the channels into the unit range (§11.3)
         std::string shortest_float(double value) {
             // the buffer is generous, because a long exponent still fits with room (§11.3)
@@ -737,6 +775,24 @@ namespace albor::compiler
             // the setter a property assignment maps to, where a file component names it after its property (§11.3)
             [[nodiscard]] std::string setter_of(std::string_view element, std::string_view property) const;
 
+            // the generated C++ name of a property an element declares, which its facade and its sinks share (§14.1)
+            [[nodiscard]] std::string element_property_name(std::string_view element, std::string_view property) const;
+
+            // the generated C++ name of an assignment's target, which its sink and evaluator suffix carry (§13.3)
+            [[nodiscard]] std::string assignment_name(const NodeSlot& slot, const CheckedAssignment& assignment) const;
+
+            // the generated C++ name of a signal an element declares, which its facade and its handler share (§14.1)
+            [[nodiscard]] std::string element_signal_name(std::string_view element, std::string_view signal) const;
+
+            // the generated C++ name of a property of this component, which a member read or write resolves to (§14.1)
+            [[nodiscard]] std::string property_name(std::string_view name) const;
+
+            // the generated C++ name of a signal of this component, which a raised invocation resolves to (§14.1)
+            [[nodiscard]] std::string signal_name(std::string_view name) const;
+
+            // the generated C++ name of a command of this component, which a bound child resolves to (§18, AD-15)
+            [[nodiscard]] std::string command_name(std::string_view name) const;
+
             // the callback setter an element signal wires to, where a file component signal names itself (§11.3)
             [[nodiscard]] std::string signal_setter_of(std::string_view element, std::string_view signal) const;
 
@@ -792,7 +848,7 @@ namespace albor::compiler
             [[nodiscard]] std::vector<const NodeSlot*> handler_slots() const;
 
             // the generated name of a handler, which a row body distinguishes from an open tree node (§11.3, §18.1)
-            [[nodiscard]] static std::string handler_name(const NodeSlot& slot, std::string_view signal);
+            [[nodiscard]] std::string handler_name(const NodeSlot& slot, std::string_view signal) const;
 
             // the lambda that wires one handler, which adapts the raised arguments to the written body (§11.3)
             [[nodiscard]] std::string handler_lambda(const NodeSlot& slot, const CheckedHandler& handler, std::string_view capture) const;
@@ -932,11 +988,17 @@ namespace albor::compiler
             // the tree nodes in build order, which the builder walks once (§8.1)
             std::vector<NodeSlot> m_nodes;
 
-            // the C++ names of the declared properties and signals, keyed by the written names (§14.1)
-            std::unordered_map<std::string, std::string> m_names;
+            // the C++ names of the declared properties, keyed by the written names (§14.1)
+            std::unordered_map<std::string, std::string> m_property_names;
 
-            // the signal parameters the handler body reads, which are the lambda arguments (§11.3)
-            std::vector<std::string> m_signal_parameters;
+            // the C++ names of the declared signals, keyed by the written names (§14.1)
+            std::unordered_map<std::string, std::string> m_signal_names;
+
+            // the C++ names of the declared commands, keyed by the written names (§18, AD-15)
+            std::unordered_map<std::string, std::string> m_command_names;
+
+            // the signal parameters the handler body reads, which are the written and generated name pairs (§11.3)
+            std::vector<std::pair<std::string, std::string>> m_signal_parameters;
 
             // the types of those parameters, which a conversion in the body resolves against as it is scanned (§11.3)
             std::vector<std::pair<std::string, ValueType>> m_signal_parameter_types;
@@ -1098,20 +1160,104 @@ namespace albor::compiler
             return widget_info().at(element);
         }
 
+        std::string ComponentEmitter::element_property_name(std::string_view element, std::string_view property) const {
+            // a file component declares its own spelling, which its facade and its sinks share (§14.1)
+            if (const CheckedComponent* component = component_named(element)) {
+                // the mapping is computed from the same lists the facade used, so the two stay in step (§14.1)
+                const DeclarationNames names = declaration_names(component->properties, component->signals);
+                // a declared property keeps its name, while a common one falls through to the base spelling (§8.2)
+                const auto found = names.properties.find(std::string(property));
+                if (found != names.properties.end())
+                    return found->second;
+                // a common property takes the first spelling the declarations left free, so its sink stays distinct (§8.2)
+                std::unordered_set<std::string> used = names.used;
+                return unique_name(property, used);
+            }
+            // an imported component exposes the spelling its own generated file chose (§14.1)
+            if (const ImportedComponent* component = imported_component_named(element)) {
+                // the declared mapping is recomputed from the copied interface, which is deterministic (§14.1)
+                const DeclarationNames names = declaration_names(component->properties, component->signals);
+                // a declared property keeps its name, while a common one falls through to the base spelling (§8.2)
+                const auto found = names.properties.find(std::string(property));
+                if (found != names.properties.end())
+                    return found->second;
+                // a common property takes the first spelling the declarations left free, so its sink stays distinct (§8.2)
+                std::unordered_set<std::string> used = names.used;
+                return unique_name(property, used);
+            }
+            // a builtin property keeps the sanitised spelling, which is what the internal sink names already use (§11.3)
+            return sanitize(property);
+        }
+
+        std::string ComponentEmitter::assignment_name(const NodeSlot& slot, const CheckedAssignment& assignment) const {
+            // the widget property decides the suffix, which a declared component names through its facade (§14.1)
+            return element_property_name(slot.node->element_type, assignment.name);
+        }
+
+        std::string ComponentEmitter::element_signal_name(std::string_view element, std::string_view signal) const {
+            // a file component declares its own spelling, which its facade and its handler share (§14.1)
+            if (const CheckedComponent* component = component_named(element)) {
+                // the mapping is computed from the same lists the facade used, so the two stay in step (§14.1)
+                const DeclarationNames names = declaration_names(component->properties, component->signals);
+                // a declared signal keeps its name, while a builtin one uses the catalogue spelling (§8.3)
+                const auto found = names.signals.find(std::string(signal));
+                if (found != names.signals.end())
+                    return found->second;
+                // a signal outside the declarations takes the first free spelling, so its handler stays distinct (§8.3)
+                std::unordered_set<std::string> used = names.used;
+                return unique_name(signal, used);
+            }
+            // an imported component exposes the spelling its own generated file chose (§14.1)
+            if (const ImportedComponent* component = imported_component_named(element)) {
+                // the declared mapping is recomputed from the copied interface, which is deterministic (§14.1)
+                const DeclarationNames names = declaration_names(component->properties, component->signals);
+                // a declared signal keeps its name, while a builtin one uses the catalogue spelling (§8.3)
+                const auto found = names.signals.find(std::string(signal));
+                if (found != names.signals.end())
+                    return found->second;
+                // a signal outside the declarations takes the first free spelling, so its handler stays distinct (§8.3)
+                std::unordered_set<std::string> used = names.used;
+                return unique_name(signal, used);
+            }
+            // a builtin signal keeps the sanitised spelling, which is what the catalogue names (§8.3)
+            return sanitize(signal);
+        }
+
+        std::string ComponentEmitter::property_name(std::string_view name) const {
+            // a declared property carries the name its accessor and member share (§14.1)
+            const auto found = m_property_names.find(std::string(name));
+            // an undeclared name falls back to the sanitised spelling, which only a blocked output reaches (§11.3)
+            return found == m_property_names.end() ? sanitize(name) : found->second;
+        }
+
+        std::string ComponentEmitter::signal_name(std::string_view name) const {
+            // a declared signal carries the name its slot and handler share (§14.1)
+            const auto found = m_signal_names.find(std::string(name));
+            // an undeclared name falls back to the sanitised spelling, which only a blocked output reaches (§11.3)
+            return found == m_signal_names.end() ? sanitize(name) : found->second;
+        }
+
+        std::string ComponentEmitter::command_name(std::string_view name) const {
+            // a declared command carries the name its accessor and member share (§18, AD-15)
+            const auto found = m_command_names.find(std::string(name));
+            // an undeclared name falls back to the sanitised spelling, which only a blocked output reaches (§11.3)
+            return found == m_command_names.end() ? sanitize(name) : found->second;
+        }
+
         std::string ComponentEmitter::setter_of(std::string_view element, std::string_view property) const {
             // a file component exposes one setter per declared property, named the way its facade declares it (§11.3)
             if (const CheckedComponent* component = component_named(element)) {
                 for (const CheckedProperty& declared : component->properties)
                     // the declared name decides, because a property that shadows a common one keeps its accessor (§11.1)
                     if (declared.name == property)
-                        return "set_" + sanitize(property);
+                        return "set_" + declaration_names(component->properties, component->signals).properties.at(declared.name);
             }
             // an imported component exposes the accessor its own file generated (§11.3)
             else if (const ImportedComponent* imported = imported_component_named(element)) {
                 for (const CheckedProperty& declared : imported->properties)
                     // the declared name decides, because a property that shadows a common one keeps its accessor (§11.1)
                     if (declared.name == property)
-                        return "set_" + sanitize(property);
+                        return "set_" + declaration_names(imported->properties, imported->signals).properties.at(declared.name);
             }
             // a manifest component names its accessor after the property, as the generated glue spells it (§11.2)
             else if (native_construction(element) != nullptr)
@@ -1265,7 +1411,7 @@ namespace albor::compiler
         std::string ComponentEmitter::signal_setter_of(std::string_view element, std::string_view signal) const {
             // a file or imported component signal wires through the slot its facade declares (§11.3)
             if (declared_component(element))
-                return "set_on_" + sanitize(signal);
+                return "set_on_" + element_signal_name(element, signal);
             // a manifest component names its slot after the signal, as the generated glue spells it (§11.2)
             if (native_construction(element) != nullptr)
                 return "set_on_" + std::string(signal);
@@ -1294,11 +1440,13 @@ namespace albor::compiler
                         continue;
                     // the parameters pair type and name in declaration order, which the handler signature follows (§11.3)
                     std::vector<std::pair<std::string, std::string>> named;
+                    // the context and the body locals are reserved, so a parameter may not shadow them (§11.3)
+                    std::unordered_set<std::string> used = {"raw", "self"};
                     for (std::size_t index = 0; index < declared.parameter_types.size(); index++) {
                         // the C++ type is the checked spelling, which the facade setter already uses (§11.3)
                         const std::string type = cpp_type(declared.parameter_types[index]);
-                        // the name is shared with the facade slot, so the lambda declares the same one (§14.1)
-                        named.emplace_back(type, sanitize(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}));
+                        // the name is shared with the facade slot, so the lambda declares a unique one (§14.1)
+                        named.emplace_back(type, unique_name(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}, used));
                     }
                     return named;
                 }
@@ -1314,11 +1462,13 @@ namespace albor::compiler
                         continue;
                     // the parameters pair type and name in declaration order, which the handler signature follows (§11.3)
                     std::vector<std::pair<std::string, std::string>> named;
+                    // the context and the body locals are reserved, so a parameter may not shadow them (§11.3)
+                    std::unordered_set<std::string> used = {"raw", "self"};
                     for (std::size_t index = 0; index < declared.parameter_types.size(); index++) {
                         // the C++ type is the checked spelling, which the facade setter already uses (§11.3)
                         const std::string type = cpp_type(declared.parameter_types[index]);
-                        // the name is shared with the facade slot, so the lambda declares the same one (§14.1)
-                        named.emplace_back(type, sanitize(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}));
+                        // the name is shared with the facade slot, so the lambda declares a unique one (§14.1)
+                        named.emplace_back(type, unique_name(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}, used));
                     }
                     return named;
                 }
@@ -1339,12 +1489,14 @@ namespace albor::compiler
                         continue;
                     // the parameters pair type and name in declaration order, which the handler signature follows (§11.3)
                     std::vector<std::pair<std::string, std::string>> named;
+                    // the context and the body locals are reserved, so a parameter may not shadow them (§11.3)
+                    std::unordered_set<std::string> used = {"raw", "self"};
                     // each parameter is walked, because the lambda spells every one (§11.3)
                     for (std::size_t index = 0; index < declared.parameter_types.size(); index++) {
                         // the C++ type is the checked spelling, which the facade setter already uses (§11.3)
                         const std::string type_name = cpp_type(declared.parameter_types[index]);
-                        // the name is shared with the facade slot, so the lambda declares the same one (§11.2)
-                        named.emplace_back(type_name, sanitize(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}));
+                        // the name is shared with the facade slot, so the lambda declares a unique one (§11.2)
+                        named.emplace_back(type_name, unique_name(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}, used));
                     }
                     return named;
                 }
@@ -2169,7 +2321,7 @@ namespace albor::compiler
             // every property contributes a read and a write, which is what a host binds against (§14.1)
             for (const CheckedProperty& property : m_component.properties) {
                 // the accessor name is the shared C++ name of the property (§14.1)
-                const std::string& name = m_names.at(property.name);
+                const std::string& name = m_property_names.at(property.name);
                 // a large value is handed out by reference, which avoids a copy on the read path (§14.1)
                 const std::string ret = read_return_type(property.type);
                 line(2, "// hand out the current value of the " + property.name + " property, which reads the reactive value (§14.1, §7.1)");
@@ -2182,7 +2334,7 @@ namespace albor::compiler
             // every command contributes the pointer a host binds its work to, which every child shares (§18.1, AD-15)
             for (const CheckedCommand& command : m_component.commands) {
                 // the accessor name is the sanitised declaration name behind the command (§18)
-                const std::string& name = sanitize(command.name);
+                const std::string& name = m_command_names.at(command.name);
                 line(2, "// hand out the " + command.name + " command, which every bound child shares (§18.1, AD-15)");
                 line(2, "[[nodiscard]] Command* command_" + name + "() const;");
                 line(0, "");
@@ -2190,7 +2342,7 @@ namespace albor::compiler
             // every signal contributes a slot, which is how a host receives an invocation (§8.3)
             for (const CheckedSignal& signal : m_component.signals) {
                 // the slot name is the shared C++ name of the signal (§14.1)
-                const std::string& name = m_names.at(signal.name);
+                const std::string& name = m_signal_names.at(signal.name);
                 // the parameters are rendered as the C++ list, which the handler signature needs (§14.1)
                 std::string params;
                 // each parameter appends its own text, which is the declaration order (§11.3)
@@ -2459,7 +2611,7 @@ namespace albor::compiler
             // each property becomes a reactive member, which holds its current value (§7.2)
             for (const CheckedProperty& property : m_component.properties) {
                 // the member name is the shared C++ name behind the accessor (§14.1)
-                const std::string& name = m_names.at(property.name);
+                const std::string& name = m_property_names.at(property.name);
                 line(2, "// the property behind " + property.name + ", which the bindings read (§7.2)");
                 // a literal default initialises the member, which is what the facade presents at once (§14.1)
                 if (property.has_default && property.default_dependencies.empty()) {
@@ -2475,7 +2627,7 @@ namespace albor::compiler
             // each command becomes an owned object, which every bound child shares (§18.1, AD-15)
             for (const CheckedCommand& command : m_component.commands) {
                 // the member name is the sanitised declaration name behind the accessor (§18)
-                const std::string& name = sanitize(command.name);
+                const std::string& name = m_command_names.at(command.name);
                 line(2, "// the " + command.name + " command, which every consumer binds rather than copies (§18.1)");
                 line(2, "std::unique_ptr<Command> m_command_" + name + ";");
                 line(0, "");
@@ -2539,7 +2691,7 @@ namespace albor::compiler
                     if (slot.node->element_type == "ScrollView" && assignment.name == "offset")
                         continue;
                     // the sink name is the composite of the node and the property (§13.3)
-                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
+                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment);
                     line(2, "// the sink behind the " + assignment.name + " assignment, which the engine keeps current (§13.3)");
                     line(2, "Property<" + cpp_type(assignment.type) + "> " + sink + ";");
                     line(0, "");
@@ -2548,7 +2700,7 @@ namespace albor::compiler
             // each signal becomes a slot, which the generated handler invokes (§8.3)
             for (const CheckedSignal& signal : m_component.signals) {
                 // the slot name is the shared C++ name of the signal (§14.1)
-                const std::string& name = m_names.at(signal.name);
+                const std::string& name = m_signal_names.at(signal.name);
                 std::string params;
                 // each parameter appends its own text, which is the declaration order (§11.3)
                 for (const ValueType& parameter : signal.parameter_types) {
@@ -2593,7 +2745,7 @@ namespace albor::compiler
                         continue;
                     // the declaration reads after a blank, which separates it from the previous one (§14.1)
                     line(0, "");
-                    const std::string evaluator = "evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
+                    const std::string evaluator = "evaluate_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment);
                     line(2, "// evaluate the " + assignment.name + " into the widget and the sink, which is the binding body (§13.3)");
                     line(2, "static " + cpp_type(assignment.type) + " " + evaluator + "(void* raw);");
                 }
@@ -2606,7 +2758,7 @@ namespace albor::compiler
                 // the declaration reads after a blank, which separates it from the previous one (§14.1)
                 line(0, "");
                 // the evaluator is named after the property, which the builder registered (§13.3)
-                const std::string& name = m_names.at(property.name);
+                const std::string& name = m_property_names.at(property.name);
                 line(2, "// evaluate the default of " + property.name + ", which recomputes it when a source changes (§13.3)");
                 line(2, "static " + cpp_type(property.type) + " compute_" + name + "(void* raw);");
             }
@@ -2661,7 +2813,7 @@ namespace albor::compiler
             // each property contributes its read and its write, which the host uses (§14.1)
             for (const CheckedProperty& property : m_component.properties) {
                 // the accessor name is the shared C++ name of the property (§14.1)
-                const std::string& name = m_names.at(property.name);
+                const std::string& name = m_property_names.at(property.name);
                 // the read returns a reference for a large value, which avoids a copy (§14.1)
                 const std::string ret = read_return_type(property.type);
                 line(0, "");
@@ -2678,7 +2830,7 @@ namespace albor::compiler
             // each command hands out the object its consumers share, which the host installs work on (§18.1, AD-15)
             for (const CheckedCommand& command : m_component.commands) {
                 // the accessor name is the sanitised declaration name behind the command (§18)
-                const std::string& name = sanitize(command.name);
+                const std::string& name = m_command_names.at(command.name);
                 line(0, "");
                 line(1, "Command* " + m_class + "::command_" + name + "() const {");
                 line(2, "// the body owns the command, so the accessor hands out the pointer every child holds (§18.1)");
@@ -2688,7 +2840,7 @@ namespace albor::compiler
             // each signal contributes its slot, which the host wires (§8.3)
             for (const CheckedSignal& signal : m_component.signals) {
                 // the slot name is the shared C++ name of the signal (§14.1)
-                const std::string& name = m_names.at(signal.name);
+                const std::string& name = m_signal_names.at(signal.name);
                 std::string params;
                 // each parameter appends its own text, which is the declaration order (§11.3)
                 for (const ValueType& parameter : signal.parameter_types) {
@@ -2718,14 +2870,14 @@ namespace albor::compiler
             // every property joins the component scope, which gives it an identifier (§7.2)
             for (const CheckedProperty& property : m_component.properties) {
                 // the member name is the shared C++ name of the property (§7.2)
-                const std::string& name = m_names.at(property.name);
+                const std::string& name = m_property_names.at(property.name);
                 line(2, "// the property joins the component scope, which gives it a unique id (§7.2)");
                 line(2, "owner->register_property(m_" + name + ");");
             }
             // every command is built before the widgets that bind it (§18.1, AD-15)
             for (const CheckedCommand& command : m_component.commands) {
                 // the member name is the sanitised declaration name behind the accessor (§18)
-                const std::string& name = sanitize(command.name);
+                const std::string& name = m_command_names.at(command.name);
                 line(2, "// the " + command.name + " command is built once, so every consumer shares one label and enablement (§18.1)");
                 line(2, "m_command_" + name + " = std::make_unique<Command>(" + emit_string_literal(m_class + "." + command.name) + ", " + emit_string_literal(command.label) + ");");
             }
@@ -2739,7 +2891,7 @@ namespace albor::compiler
                     // a bound offset has no sink, because it is the widget property that is bound (§7.3, AD-24)
                     if (slot.node->element_type == "ScrollView" && assignment.name == "offset")
                         continue;
-                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
+                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment);
                     line(2, "// the sink joins the component scope, which gives the binding a unique id (§13.3)");
                     line(2, "owner->register_property(" + sink + ");");
                 }
@@ -2754,7 +2906,7 @@ namespace albor::compiler
             // a default that reads no source is computed once, which is what the builder owns (§14.1)
             for (const CheckedProperty& property : m_component.properties) {
                 // the member name is the shared C++ name of the property (§14.1)
-                const std::string& name = m_names.at(property.name);
+                const std::string& name = m_property_names.at(property.name);
                 // a default that reads sources is bound, which is handled after the plain ones (§13.3)
                 if (!property.has_default || !property.default_dependencies.empty())
                     continue;
@@ -2768,7 +2920,7 @@ namespace albor::compiler
                 if (!property.has_default || property.default_dependencies.empty())
                     continue;
                 // the member name is the shared C++ name of the property (§13.3)
-                const std::string& name = m_names.at(property.name);
+                const std::string& name = m_property_names.at(property.name);
                 line(0, "");
                 line(2, "// the default of " + property.name + " reads its sources, so it is bound (§13.3)");
                 line(2, "const PropertyId deps_" + name + "[] = {" + dep_list(property.default_dependencies) + "};");
@@ -2869,10 +3021,10 @@ namespace albor::compiler
                     }
                     // a bound dimension runs through a sink, which recomputes it when a source changes (§13.3)
                     else {
-                        const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
+                        const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment);
                         line(2, "// bind the canvas " + assignment.name + " over its sources, which recomputes it when one changes (§13.3)");
-                        line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + "[] = {" + dep_list(assignment.dependencies) + "};");
-                        line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ", this, deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ");");
+                        line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + "[] = {" + dep_list(assignment.dependencies) + "};");
+                        line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + ", this, deps_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + ");");
                     }
                     canvas_written = true;
                     continue;
@@ -2889,10 +3041,10 @@ namespace albor::compiler
                     if (assignment.dependencies.empty())
                         continue;
                     // a bound extent runs through a sink, which the evaluator keeps current (§13.3)
-                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
+                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment);
                     line(2, "// bind the " + assignment.name + " over its sources, which recomputes it when one changes (§13.3)");
-                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + "[] = {" + dep_list(assignment.dependencies) + "};");
-                    line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ", this, deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ");");
+                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + "[] = {" + dep_list(assignment.dependencies) + "};");
+                    line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + ", this, deps_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + ");");
                     continue;
                 }
                 // a bound offset attaches to the widget property, which a user scroll outranks (§7.3, AD-24)
@@ -2918,9 +3070,9 @@ namespace albor::compiler
                     if (assignment.dependencies.empty())
                         continue;
                     // the sink is registered now and settles before the deferred value sink (§13.3)
-                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
-                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + "[] = {" + dep_list(assignment.dependencies) + "};");
-                    line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ", this, deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ");");
+                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment);
+                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + "[] = {" + dep_list(assignment.dependencies) + "};");
+                    line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + ", this, deps_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + ");");
                     continue;
                 }
                 // the slider range is one setter for two properties, because the widget takes both bounds (§8)
@@ -2944,10 +3096,10 @@ namespace albor::compiler
                 }
                 // a bound assignment runs through its sink, which the evaluator keeps live (§13.3)
                 else {
-                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
+                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment);
                     line(2, "// bind the " + assignment.name + " over its sources, which recomputes it when one changes (§13.3)");
-                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + "[] = {" + dep_list(assignment.dependencies) + "};");
-                    line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ", this, deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ");");
+                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + "[] = {" + dep_list(assignment.dependencies) + "};");
+                    line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + ", this, deps_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment) + ");");
                 }
             }
             // the canvas intrinsic size is applied once, after both tracks were written (§11.3)
@@ -3687,7 +3839,7 @@ namespace albor::compiler
                     // a constant assignment has no evaluator, because the builder applies it directly (§13.3)
                     if (assignment.dependencies.empty())
                         continue;
-                    const std::string evaluator = "evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
+                    const std::string evaluator = "evaluate_" + std::to_string(slot.index) + "_" + assignment_name(slot, assignment);
                     line(0, "");
                     line(1, cpp_type(assignment.type) + " " + m_class + "::Impl::" + evaluator + "(void* raw) {");
                     line(2, "// the body is recovered from the context, which keeps the path allocation free (§13.3)");
@@ -3745,7 +3897,7 @@ namespace albor::compiler
                 if (!property.has_default || property.default_dependencies.empty())
                     continue;
                 // the evaluator is named after the property, which the builder registered (§13.3)
-                const std::string& name = m_names.at(property.name);
+                const std::string& name = m_property_names.at(property.name);
                 line(0, "");
                 line(1, cpp_type(property.type) + " " + m_class + "::Impl::compute_" + name + "(void* raw) {");
                 line(2, "// the body is recovered from the context, which keeps the path allocation free (§13.3)");
@@ -3775,10 +3927,12 @@ namespace albor::compiler
                     m_object = "self";
                     // the signal parameters are readable as names, because they are the arguments this body took (§11.1)
                     m_signal_parameters.clear();
-                    for (const std::pair<std::string, std::string>& parameter : named_signal_params(slot.node->element_type, handler.name))
-                        m_signal_parameters.push_back(parameter.second);
                     // their types are published too, because a conversion in the body resolves against them (§11.3)
                     m_signal_parameter_types = signal_parameter_types(slot.node->element_type, handler.name);
+                    // the generated name is paired with its written name, which is the key the body resolves (§11.3)
+                    const std::vector<std::pair<std::string, std::string>> named_parameters = named_signal_params(slot.node->element_type, handler.name);
+                    for (std::size_t index = 0; index < named_parameters.size(); index++)
+                        m_signal_parameters.emplace_back(index < m_signal_parameter_types.size() ? m_signal_parameter_types[index].first : std::string{}, named_parameters[index].second);
                     // a body that reads no context still carries it, so the generated signature stays uniform (§13.3)
                     if (handler.body.empty())
                         line(2, "(void)self;");
@@ -3787,12 +3941,12 @@ namespace albor::compiler
                         // an assignment writes the target property, which the engine settles (§11.3)
                         if (statement.kind == HandlerStatementKind::Assignment) {
                             line(2, "// the written assignment runs, which updates the component property (§11.3)");
-                            line(2, "self->m_" + sanitize(statement.target) + ".set(" + emit_expression(*statement.value) + ");");
+                            line(2, "self->m_" + property_name(statement.target) + ".set(" + emit_expression(*statement.value) + ");");
                         }
                         // a built-in method either fires a command or mutates a collection in place (§11.1, §18.1)
                         else if (statement.kind == HandlerStatementKind::PropertyMethod) {
                             // the property name is shared, because the mutation writes through it (§11.3)
-                            const std::string property = "self->m_" + sanitize(statement.target);
+                            const std::string property = "self->m_" + property_name(statement.target);
                             // a command invocation fires the action in the slot and needs no working copy (§18.1, AD-15)
                             if (statement.method == "invoke") {
                                 line(2, "// the shared action is invoked, and an unfilled slot makes it a no-op (§18.1, AD-15)");
@@ -3841,7 +3995,7 @@ namespace albor::compiler
                         // a field write copies the record, writes the field and sets it back (§11.1)
                         else if (statement.kind == HandlerStatementKind::FieldAssignment) {
                             // the property name is shared, because the write goes through it (§11.3)
-                            const std::string property = "self->m_" + sanitize(statement.target);
+                            const std::string property = "self->m_" + property_name(statement.target);
                             // the mutation is scoped, so the statement owns its working name (§11.1)
                             line(2, "{");
                             // a working copy is taken, because the field write rebuilds the record it sets back (§11.1)
@@ -3864,8 +4018,8 @@ namespace albor::compiler
                                 arguments += emit_expression(*argument);
                             }
                             line(2, "// the written invocation runs, which reports the component signal (§11.3)");
-                            line(2, "if (self->m_on_" + sanitize(statement.target) + ")");
-                            line(3, "self->m_on_" + sanitize(statement.target) + "(" + arguments + ");");
+                            line(2, "if (self->m_on_" + signal_name(statement.target) + ")");
+                            line(3, "self->m_on_" + signal_name(statement.target) + "(" + arguments + ");");
                         }
                     }
                     line(1, "}");
@@ -3876,11 +4030,11 @@ namespace albor::compiler
             }
         }
 
-        std::string ComponentEmitter::handler_name(const NodeSlot& slot, std::string_view signal) {
+        std::string ComponentEmitter::handler_name(const NodeSlot& slot, std::string_view signal) const {
             // a row body takes its own prefix, because its index counts row bodies across the component (§18.1, §11.3)
             const std::string prefix = slot.row_body ? "handle_row_" : "handle_";
-            // the name joins the slot index and the signal, which is what the wiring and the definition share (§11.3)
-            return prefix + std::to_string(slot.index) + "_" + sanitize(signal);
+            // the name joins the slot index and the resolved signal, which the wiring and the definition share (§11.3)
+            return prefix + std::to_string(slot.index) + "_" + element_signal_name(slot.node->element_type, signal);
         }
 
         std::string ComponentEmitter::handler_lambda(const NodeSlot& slot, const CheckedHandler& handler, std::string_view capture) const {
@@ -4118,10 +4272,10 @@ namespace albor::compiler
                 if (m_draw_extent && reference->name == "canvas_height")
                     return "canvas_height";
                 // a signal parameter is the handler argument, which the catalog names for the body (§11.1)
-                for (const std::string& parameter : m_signal_parameters) {
-                    // the name decides, so a parameter resolves to the argument the lambda forwarded (§11.3)
-                    if (parameter == reference->name)
-                        return parameter;
+                for (const std::pair<std::string, std::string>& parameter : m_signal_parameters) {
+                    // the written name decides, so a parameter resolves to the forwarded argument (§11.3)
+                    if (parameter.first == reference->name)
+                        return parameter.second;
                 }
                 // a function parameter is the argument the static function received, which the body reads by name (§11.1)
                 for (const std::pair<std::string, ValueType>& parameter : m_function_parameters) {
@@ -4131,11 +4285,11 @@ namespace albor::compiler
                 }
                 // a declared command is handed out as the pointer a widget binds, because the body owns it (§18, AD-15)
                 if (command_named(reference->name) != nullptr)
-                    return m_object.empty() ? "m_command_" + sanitize(reference->name) + ".get()" : m_object + "->m_command_" + sanitize(reference->name) + ".get()";
+                    return m_object.empty() ? "m_command_" + command_name(reference->name) + ".get()" : m_object + "->m_command_" + command_name(reference->name) + ".get()";
                 // a name no property declares may still be a module-scoped value, which is the file-level static (§11.1)
                 if (global_named(reference->name) != nullptr)
                     return sanitize(reference->name);
-                return m_object.empty() ? "m_" + sanitize(reference->name) + ".get()" : m_object + "->m_" + sanitize(reference->name) + ".get()";
+                return m_object.empty() ? "m_" + property_name(reference->name) + ".get()" : m_object + "->m_" + property_name(reference->name) + ".get()";
             }
             // a conversion renders through its operand, which the operand type decides (§11.3)
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression))
@@ -4369,7 +4523,7 @@ namespace albor::compiler
                 if (!out.empty())
                     out += ", ";
                 // the dependency id is the property member id, which the engine keys on (§13.3)
-                out += "m_" + sanitize(dependency) + ".id()";
+                out += "m_" + property_name(dependency) + ".id()";
             }
             return out;
         }
@@ -4381,13 +4535,12 @@ namespace albor::compiler
             if (m_blocked)
                 return false;
             // the names are fixed up front, which every emitted line reads (§14.1)
-            m_names.reserve(m_component.properties.size() + m_component.signals.size());
-            // each property gets its C++ name, which the accessors and the members share (§14.1)
-            for (const CheckedProperty& property : m_component.properties)
-                m_names[property.name] = sanitize(property.name);
-            // each signal gets its C++ name, which the slot and the handler share (§14.1)
-            for (const CheckedSignal& signal : m_component.signals)
-                m_names[signal.name] = sanitize(signal.name);
+            DeclarationNames declared = declaration_names(m_component.properties, m_component.signals);
+            m_property_names = std::move(declared.properties);
+            m_signal_names = std::move(declared.signals);
+            // each command takes the first spelling the properties and signals left free (§18, AD-15)
+            for (const CheckedCommand& command : m_component.commands)
+                m_command_names[command.name] = unique_name(command.name, declared.used);
             // the signal flag drives the functional headers, which a signal component needs (§8.3)
             m_has_signals = !m_component.signals.empty();
             // the tree is walked into preorder, which is how the builder emits it (§8.1)

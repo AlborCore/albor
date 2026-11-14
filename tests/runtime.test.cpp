@@ -1453,6 +1453,168 @@ TEST(Property, UnbindingTwiceChangesNothingTheSecondTime) {
     EXPECT_EQ(property.id().base, base);
 }
 
+TEST(Property, DestroyingABoundPropertyRemovesItsEngineBinding) {
+    // arrange
+    BindingEngine engine;
+    (void)engine.begin_component();
+    Property<int> source(1);
+    source.set_id(engine.next_property_id());
+    source.set_engine(&engine);
+    const PropertyId source_id = source.id();
+    {
+        Property<int> property(1);
+        property.set_id(engine.next_property_id());
+        property.set_engine(&engine);
+        property.bind([&source] { return source.get() * 2; }, {source_id});
+        engine.settle();
+        ASSERT_EQ(engine.size(), 1u);
+    }
+    // act
+    const std::size_t evaluations = engine.evaluation_count();
+    source.set(3);
+    engine.settle();
+    // assert the source change had no binding to dirty, so a later settle finds no work (§7.3)
+    EXPECT_EQ(engine.size(), 0u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_EQ(engine.evaluation_count(), evaluations);
+    EXPECT_EQ(engine.dependent_count(source_id), 0u);
+}
+
+TEST(Property, DestroyingAStaticallyBoundPropertyRemovesItsEngineBinding) {
+    // arrange
+    BindingEngine engine;
+    (void)engine.begin_component();
+    Property<int> source(2);
+    source.set_id(engine.next_property_id());
+    source.set_engine(&engine);
+    struct Evaluator
+    {
+        static int evaluate(void* context) { return static_cast<Property<int>*>(context)->get() * 2; }
+    };
+    // the one member source is the dependency array, which the engine reads as a span (§13.3)
+    const PropertyId deps[] = {source.id()};
+    {
+        Property<int> property(1);
+        property.set_id(engine.next_property_id());
+        property.set_engine(&engine);
+        property.bind_static(&Evaluator::evaluate, &source, deps);
+        engine.settle();
+        ASSERT_EQ(property.get(), 4);
+    }
+    // act
+    source.set(5);
+    engine.settle();
+    // assert the static context went with the property, so no evaluator reaches it (§13.3)
+    EXPECT_EQ(engine.size(), 0u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_EQ(engine.dependent_count(source.id()), 0u);
+}
+
+TEST(Property, DestroyingOneBoundPropertyLeavesItsSiblingBindingIntact) {
+    // arrange
+    BindingEngine engine;
+    (void)engine.begin_component();
+    Property<int> source(1);
+    source.set_id(engine.next_property_id());
+    source.set_engine(&engine);
+    const PropertyId source_id = source.id();
+    Property<int> survivor(0);
+    survivor.set_id(engine.next_property_id());
+    survivor.set_engine(&engine);
+    survivor.bind([&source] { return source.get() * 2; }, {source_id});
+    {
+        Property<int> doomed(0);
+        doomed.set_id(engine.next_property_id());
+        doomed.set_engine(&engine);
+        doomed.bind([&source] { return source.get() * 3; }, {source_id});
+        engine.settle();
+        ASSERT_EQ(engine.size(), 2u);
+    }
+    // act
+    source.set(4);
+    engine.settle();
+    // assert the surviving property still settled and only its binding remains (§7.3)
+    EXPECT_EQ(engine.size(), 1u);
+    EXPECT_EQ(engine.dependent_count(source_id), 1u);
+    EXPECT_EQ(survivor.get(), 8);
+}
+
+TEST(Property, AnExplicitlyUnboundPropertyDestroyedDoesNotReleaseItsSlotTwice) {
+    // arrange
+    BindingEngine engine;
+    (void)engine.begin_component();
+    {
+        Property<int> property(1);
+        property.set_id(engine.next_property_id());
+        property.set_engine(&engine);
+        property.bind([] { return 4; }, {});
+        ASSERT_EQ(engine.binding_slot_count(), 1u);
+        property.unbind();
+        ASSERT_EQ(engine.binding_slot_count(), 1u);
+    }
+    // act
+    Property<int> replacement(2);
+    replacement.set_id(engine.next_property_id());
+    replacement.set_engine(&engine);
+    replacement.bind([] { return 8; }, {});
+    engine.settle();
+    // assert the destructor did not queue the slot a second time, so one replacement reuses it (§7.3)
+    EXPECT_EQ(engine.binding_slot_count(), 1u);
+    EXPECT_EQ(engine.size(), 1u);
+    EXPECT_EQ(replacement.get(), 8);
+}
+
+TEST(Property, DestroyingAPropertyDuringSettleLeavesNoWorkBehind) {
+    // arrange
+    BindingEngine engine;
+    (void)engine.begin_component();
+    auto doomed = std::make_unique<Property<int>>(1);
+    doomed->set_id(engine.next_property_id());
+    doomed->set_engine(&engine);
+    Property<int> trigger(0);
+    trigger.set_id(engine.next_property_id());
+    trigger.set_engine(&engine);
+    doomed->bind([&trigger] { return trigger.get() * 2; }, {trigger.id()});
+    trigger.bind(
+        [&doomed] {
+            // the trigger destroys the consumer while the settle walk still holds its handle (§7.3)
+            doomed.reset();
+            return 7;
+        },
+        {});
+    // act
+    engine.settle();
+    // assert the dead handle was skipped and only the live trigger binding remains (§7.3)
+    EXPECT_EQ(doomed, nullptr);
+    EXPECT_EQ(engine.size(), 1u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_EQ(engine.evaluation_count(), 1u);
+    EXPECT_EQ(trigger.get(), 7);
+}
+
+TEST(Property, ADestroyedPropertyReturnsItsBindingSlotForReuse) {
+    // arrange
+    BindingEngine engine;
+    (void)engine.begin_component();
+    {
+        Property<int> property(1);
+        property.set_id(engine.next_property_id());
+        property.set_engine(&engine);
+        property.bind([] { return 4; }, {});
+        ASSERT_EQ(engine.binding_slot_count(), 1u);
+    }
+    Property<int> replacement(2);
+    replacement.set_id(engine.next_property_id());
+    replacement.set_engine(&engine);
+    // act
+    replacement.bind([] { return 8; }, {});
+    engine.settle();
+    // assert the slot was reused rather than grown, and the replacement settled (§7.3)
+    EXPECT_EQ(engine.binding_slot_count(), 1u);
+    EXPECT_EQ(engine.size(), 1u);
+    EXPECT_EQ(replacement.get(), 8);
+}
+
 TEST(Property, AnAnimationStartsInactive) {
     // arrange, act
     Property<int> property(1);

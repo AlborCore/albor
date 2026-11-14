@@ -1227,6 +1227,24 @@ TEST(Application, TheCloseHandlerMayVetoAWindowClose) {
     set_platform_window_factory(nullptr);
 }
 
+TEST(Application, AVetoedCloseDoesNotAnnounceTheWindowAsClosing) {
+    // arrange
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    application.set_close_handler([](WindowHandle) { return false; });
+    const WindowHandle handle = application.create_window(WindowOptions{});
+    Window* window = application.window(handle);
+    int closings = 0;
+    application.set_closing_handler([&closings](WindowHandle) { closings++; });
+    // act
+    const bool granted = window->on_platform_close_request();
+    // assert the veto left the window open, so no teardown notification was raised (§5.2)
+    EXPECT_FALSE(granted);
+    EXPECT_EQ(closings, 0);
+    set_platform_window_factory(nullptr);
+}
+
 TEST(Application, TheCloseHandlerMayGrantAWindowClose) {
     // arrange
     auto loop = std::make_unique<TestEventLoop>();

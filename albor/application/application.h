@@ -221,7 +221,10 @@ namespace albor
         // install the callback a native close request reaches, which may veto the close (§5.2)
         void set_close_handler(std::function<bool(WindowHandle)> handler);
 
-        // install the callback a Closed notification reaches, which is how an application hears a window is gone (§5.2)
+        // install the callback a window reaches before its tree is released, which is where a host detaches (§5.2)
+        void set_closing_handler(std::function<void(WindowHandle)> handler);
+
+        // install the callback a Closed notification reaches after the window and its tree are gone (§5.2)
         void set_closed_handler(std::function<void(WindowHandle)> handler);
 
         // install the callback a normalized input event reaches, which is how a window's input is driven (§8.3)
@@ -271,6 +274,9 @@ namespace albor
 
         // drop the stage of a closed window, since nothing may touch its surface afterwards (§6.1)
         void release_stage(WindowHandle handle);
+
+        // announce a live window before its stage is released, which runs at most once per window (§5.2)
+        void notify_closing(WindowHandle handle);
 
         // destroy the child windows a window owns, transients first and dialogs deepest first (§5.1)
         void destroy_owned_windows(WindowHandle owner);
@@ -353,6 +359,12 @@ namespace albor
 
         // the callback a native close request reaches, which may veto the close (§5.2)
         std::function<bool(WindowHandle)> m_close_handler;
+
+        // the callback a window reaches before its stage is released, which is where a host detaches (§5.2)
+        std::function<void(WindowHandle)> m_closing_handler;
+
+        // the windows already announced as closing, which keeps a reentrant teardown from repeating it (§5.2)
+        std::vector<std::uint64_t> m_closing_notified;
 
         // the callback a Closed notification reaches per window, which the bind window forwards (§5.2)
         std::function<void(WindowHandle)> m_closed_handler;

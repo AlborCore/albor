@@ -450,6 +450,8 @@ struct WindowOptions {
 `WindowHandle` is a lightweight, non-owning handle representing an open window.
 - Application code never holds owning raw pointers to `Window` instances.
 - Closing a window triggers a two-step sequence: an application `CloseRequest` event (which the application may veto to confirm unsaved changes), followed by clean resource teardown and `Closed` notification.
+- `Application::set_closing_handler` runs once per window immediately before its tree is released, while `Window` and `Application::root(handle)` are still valid; a host clears borrowed node and facade pointers there. `Closed` follows the teardown and must not touch the tree.
+- An ownership cascade announces each child before its owner. `shutdown()` announces every remaining window while its tree is valid, in creation order, and does not raise `Closed`.
 
 ### 5.3 Platform HAL Interface
 

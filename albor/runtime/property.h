@@ -52,7 +52,9 @@ namespace albor
         Property& operator=(const Property&) = delete;
         Property(Property&&) = delete;
         Property& operator=(Property&&) = delete;
-        ~Property() = default;
+
+        // destroy the property, which releases the engine binding it still holds, so the engine must outlive it (§7.3)
+        ~Property();
 
         // read the current value on the UI thread (§7.1)
         [[nodiscard]] const T& get() const;
@@ -120,6 +122,9 @@ namespace albor
         // run the plain binding function over its context and write the bound channel the engine receives (§13.3)
         static void evaluate_static(void* context);
 
+        // remove the engine binding without promoting the last bound value, which destruction uses (§7.3)
+        bool release_binding();
+
         // the value the property presents when no binding and no override apply (§7.1)
         T m_value{};
 
@@ -157,6 +162,11 @@ namespace albor
         bool m_has_binding = false;
     };
 
+    template <typename T>
+    Property<T>::~Property() {
+        // destruction releases the binding without reading the bound value, because that copy is wasted work (§7.3)
+        release_binding();
+    }
     template <typename T>
     const T& Property<T>::resolved() const {
         // an imperative write outranks everything, because it is the most recent decision of the caller (AD-24)
@@ -238,20 +248,27 @@ namespace albor
             self->write_bound(self->m_static_evaluator(self->m_static_context));
     }
     template <typename T>
-    void Property<T>::unbind() {
+    bool Property<T>::release_binding() {
         // a detached property has nothing to remove (§7.3)
         if (m_engine == nullptr || m_binding == 0)
-            return;
+            return false;
         // the engine forgets the evaluator, so a later change no longer reaches the property (§7.3)
         m_engine->unbind(m_binding);
         m_binding = 0;
         // the static evaluator and its context are dead with the binding, so they are cleared too (§13.3)
         m_static_evaluator = nullptr;
         m_static_context = nullptr;
+        // the property is a plain value again, which is what releasing the binding means (§7.3)
+        m_has_binding = false;
+        return true;
+    }
+    template <typename T>
+    void Property<T>::unbind() {
+        // a detached property has nothing to remove, so unbinding changes nothing (§7.3)
+        if (!release_binding())
+            return;
         // the last bound value is promoted to the presented value, so unbinding freezes rather than blanks (§7.3)
         m_value = m_bound_value;
-        // the property is a plain value again, which is what unbinding means (§7.3)
-        m_has_binding = false;
     }
     template <typename T>
     PropertyId Property<T>::id() const {
