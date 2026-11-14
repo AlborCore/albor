@@ -175,6 +175,135 @@ TEST(AlborRendererBackendChecks, APartialFramePreservesPixelsOutsideItsDamage) {
     EXPECT_EQ(pixels[untouched + 2u], 255u);
 }
 
+TEST(AlborRendererBackendChecks, ADamageScopedFrameRendersATranslatedPicture) {
+    // arrange a full frame that paints the whole target blue (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.0f, 0.0f, 1.0f)));
+    // arrange a picture whose local origin lies above the damage it is replayed inside (§6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(94u, recorder.commands());
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 4.0f}, Size{16.0f, 8.0f});
+    FrameScene partial_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    DrawCommand strip = DrawCommand::picture(picture, Transform::translation(0.0f, 4.0f));
+    strip.set_clip(full_rect);
+    partial_scene.add_command(std::move(strip));
+    // act
+    backend.execute_frame(*surface, partial_scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the picture landed inside its damage, while the untouched row above keeps the previous blue (§6.1, §6.4)
+    ASSERT_EQ(pixels.size(), 16u * 16u * 4u);
+    const std::size_t changed = (7u * 16u + 8u) * 4u;
+    EXPECT_EQ(pixels[changed], 255u);
+    EXPECT_EQ(pixels[changed + 1u], 255u);
+    EXPECT_EQ(pixels[changed + 2u], 255u);
+    const std::size_t untouched = (1u * 16u + 8u) * 4u;
+    EXPECT_EQ(pixels[untouched], 0u);
+    EXPECT_EQ(pixels[untouched + 1u], 0u);
+    EXPECT_EQ(pixels[untouched + 2u], 255u);
+}
+
+TEST(AlborRendererBackendChecks, ADamageScopedFrameMapsAPictureInnerClipThroughItsTranslation) {
+    // arrange a full frame that paints the whole target blue (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.0f, 0.0f, 1.0f)));
+    // arrange a picture whose fill is clipped in its own space, which a tab label records (§6.2, §6.4)
+    PictureRecorder recorder;
+    recorder.save();
+    recorder.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{8.0f, 4.0f}));
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    recorder.restore();
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(95u, recorder.commands());
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 4.0f}, Size{16.0f, 8.0f});
+    FrameScene partial_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    DrawCommand strip = DrawCommand::picture(picture, Transform::translation(0.0f, 4.0f));
+    strip.set_clip(full_rect);
+    partial_scene.add_command(std::move(strip));
+    // act
+    backend.execute_frame(*surface, partial_scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the picture's inner clip kept its ink and cut the fill beyond it (§6.2, §6.4)
+    ASSERT_EQ(pixels.size(), 16u * 16u * 4u);
+    const std::size_t inside = (7u * 16u + 4u) * 4u;
+    const std::size_t outside = (7u * 16u + 12u) * 4u;
+    EXPECT_EQ(pixels[inside], 255u);
+    EXPECT_EQ(pixels[inside + 1u], 255u);
+    EXPECT_EQ(pixels[inside + 2u], 255u);
+    EXPECT_EQ(pixels[outside], 0u);
+    EXPECT_EQ(pixels[outside + 1u], 0u);
+    EXPECT_EQ(pixels[outside + 2u], 0u);
+}
+
+TEST(AlborRendererBackendChecks, ADamageScopedFrameScalesAPictureInsideItsDamage) {
+    // arrange a full frame that paints the whole target blue (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.0f, 0.0f, 1.0f)));
+    // arrange a picture replayed at double scale inside the damage (§6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{8.0f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(96u, recorder.commands());
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 4.0f}, Size{16.0f, 8.0f});
+    FrameScene partial_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    const Transform placement = Transform::scaling(2.0f, 2.0f).then(Transform::translation(0.0f, 4.0f));
+    DrawCommand strip = DrawCommand::picture(picture, placement);
+    strip.set_clip(full_rect);
+    partial_scene.add_command(std::move(strip));
+    // act
+    backend.execute_frame(*surface, partial_scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the scaled picture landed inside its damage, while the row above keeps the previous blue (§6.1, §6.4)
+    ASSERT_EQ(pixels.size(), 16u * 16u * 4u);
+    const std::size_t changed = (7u * 16u + 8u) * 4u;
+    EXPECT_EQ(pixels[changed], 255u);
+    EXPECT_EQ(pixels[changed + 1u], 255u);
+    EXPECT_EQ(pixels[changed + 2u], 255u);
+    const std::size_t untouched = (1u * 16u + 8u) * 4u;
+    EXPECT_EQ(pixels[untouched + 2u], 255u);
+}
+
+TEST(AlborRendererBackendChecks, ADamageScopedFrameClipsAPictureAtAContainerClip) {
+    // arrange a full frame that paints the whole target blue (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.0f, 0.0f, 1.0f)));
+    // arrange a picture that crosses a container clip narrower than the damage (§6.2, §6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(97u, recorder.commands());
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f});
+    FrameScene partial_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    DrawCommand strip = DrawCommand::picture(picture, Transform::translation(0.0f, 4.0f));
+    strip.set_clip(Rect::from_origin_size(Point{0.0f, 8.0f}, Size{16.0f, 8.0f}));
+    partial_scene.add_command(std::move(strip));
+    // act
+    backend.execute_frame(*surface, partial_scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the container clip keeps its band and cuts the picture above it (§6.2)
+    ASSERT_EQ(pixels.size(), 16u * 16u * 4u);
+    const std::size_t inside = (10u * 16u + 8u) * 4u;
+    const std::size_t above = (6u * 16u + 8u) * 4u;
+    EXPECT_EQ(pixels[inside], 255u);
+    EXPECT_EQ(pixels[inside + 1u], 255u);
+    EXPECT_EQ(pixels[inside + 2u], 255u);
+    EXPECT_EQ(pixels[above], 0u);
+    EXPECT_EQ(pixels[above + 1u], 0u);
+    EXPECT_EQ(pixels[above + 2u], 0u);
+}
+
 TEST(AlborRendererBackendChecks, APartialFrameMapsItsDamageThroughTheDeviceScale) {
     // arrange a two-to-one surface, where logical damage and physical pixels differ (§6.1, AD-27)
     AlborRendererBackend backend;
@@ -1968,6 +2097,45 @@ TEST(AlborParityChecks, ARotatedPictureMatchesTheReference) {
     EXPECT_GT(expected_shot.pixels[before], 230u);
     // the replayed command follows the reference within its feather band, at the 35 measured on this host
     EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 40);
+}
+
+TEST(AlborParityChecks, ARotatedPictureInsideAContainerClipMatchesTheReference) {
+    // arrange a retained picture turned about the surface centre inside a narrow container clip (§6.2, §6.4)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{48.0f, 48.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    std::vector<DrawCommand> commands;
+    commands.push_back(DrawCommand::rectangle(Rect::from_origin_size(Point{6.0f, 20.0f}, Size{36.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)}));
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(98u, commands);
+    const Transform turn = Transform::translation(-24.0f, -24.0f).then(Transform{.scale_x = 0.70710678f, .skew_x = -0.70710678f, .skew_y = 0.70710678f, .scale_y = 0.70710678f}).then(Transform::translation(24.0f, 24.0f));
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    const Rect container = Rect::from_origin_size(Point{20.0f, 20.0f}, Size{8.0f, 8.0f});
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(full_rect, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.save();
+    expected.clip_rect(container);
+    expected.draw_picture(picture, turn);
+    expected.restore();
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(full_rect, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.save();
+    actual.clip_rect(container);
+    actual.draw_picture(picture, turn);
+    actual.restore();
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the container clip survives the rotated placement on both backends (§6.2, AD-26)
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
 }
 
 TEST(AlborParityChecks, AContextOpacityDimsThePixels) {

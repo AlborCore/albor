@@ -72,11 +72,14 @@ namespace albor::render
             // the scene space transform the draw lands under
             Transform transform;
 
-            // the scene space clip the draw is cut by, radius included
+            // the clip the draw is cut by, in the space its device transform names
             ClipState clip;
 
             // the device transform the clip was pushed under, which the scissor freezes (§6.2)
             Transform clip_device;
+
+            // whether the clip rect is in scene space, which a rotated picture placement switches to (§6.2)
+            bool clip_scene = false;
 
             // the opacity the draw is dimmed by
             float opacity = 1.0f;
@@ -133,11 +136,14 @@ namespace albor::render
         // the scene space transform the later draws land under (§6.2)
         Transform m_transform;
 
-        // the scene space clip the later draws are cut by, radius included (§6.2)
+        // the clip the later draws are cut by, in scene space or the space its device transform maps (§6.2)
         ClipState m_clip;
 
         // the device transform the clip was pushed under, which the scissor freezes (§6.2)
         Transform m_clip_device;
+
+        // whether the clip rect is in scene space rather than the local space its device transform maps (§6.2)
+        bool m_clip_scene = false;
 
         // the opacity the later draws are dimmed by, which starts fully opaque (§6.1)
         float m_opacity = 1.0f;

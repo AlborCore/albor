@@ -161,7 +161,7 @@ default selection, which preserves bold-only family selection. The long-run coun
 
 This remains the strongest part of the Windows port.
 
-- Both backends expose the same **82-test** corpus:
+- Both backends expose the same **87-test** corpus:
   - aligned and feathered geometry
   - clips and transforms
   - soft shadows, hard shadows, sheared casters
@@ -170,11 +170,16 @@ This remains the strongest part of the Windows port.
   - paths, holed/concave/even-odd fills
   - lines, pictures, images, fractional scaling, texture reuse
   - shaped, rotated, sheared, and embedded text runs
-- Metal test file: **82 tests**
-- Direct3D test file: **82 tests**
-- Both have 41 parity tests.
+- Metal test file: **87 tests**
+- Direct3D test file: **87 tests**
+- Both have 42 parity tests.
 - Both backends cover:
   - a partial damage frame that preserves pixels outside its region
+  - a damage-scoped frame that replays a translated picture inside a clip below its local origin
+  - a damage-scoped frame that maps a picture's inner clip through its placement
+  - a damage-scoped frame that scales a picture inside its damage
+  - a damage-scoped frame that cuts a picture at a container clip narrower than its damage
+  - a rotated picture inside a container clip matching the software reference
   - a retained-target report, and a culled scene refused on a fresh target
   - a culled scene that presents the same pixels as the whole list
   - canonical RGBA readback
@@ -304,7 +309,7 @@ job remains a tracked enhancement rather than a parity requirement.
 
 | Suite | macOS | Windows |
 | --- | ---: | ---: |
-| `render-albor` backend/parity | 82 | 82 |
+| `render-albor` backend/parity | 87 | 87 |
 | Window popup | 18 | 17 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
@@ -313,6 +318,13 @@ job remains a tracked enhancement rather than a parity requirement.
 
 ## 8. Changes in the Windows parity pass
 
+- Fixed picture replay under a clip in both `render-albor` and Blend2D: a picture's inner commands and clips live
+  in picture space, so the active clip is now rebased through the placement before the list replays. A damage
+  frame no longer scissors a translated picture by the placement twice, and a picture-local clip no longer
+  collapses against the scene clip. A rotated or sheared placement keeps the clip in scene space instead, so a
+  container clip stays exact while its inner clips stay conservative. The mirrored Metal and D3D suites cover the
+  translation, scale, container clip and rotated parity cases; the portable context and Blend2D suites cover the
+  batch scissor, the inner clip, the push-transform contract, the scene-mode restore and the singular placement.
 - Added damage-bounded partial frames to `render-albor`: the scene carries the region a redraw may touch, the
   backend clips the replay to it, and both Metal and Direct3D load the retained target instead of clearing it.
   The mirrored backend suites assert that pixels outside the damage survive the next frame.

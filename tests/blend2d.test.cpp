@@ -783,6 +783,56 @@ TEST(Blend2DRenderContextChecks, APictureReplaysItsCommandsIntoTheRaster) {
     EXPECT_EQ(screenshot.pixels[pixel + 3u], 255u);
 }
 
+TEST(Blend2DRenderContextChecks, ATranslatedPictureInsideANarrowClipKeepsItsInk) {
+    // arrange a picture whose local origin lies above the clip it is replayed inside, which a damage frame produces (§6.1)
+    ResourceFactory factory;
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{4.0f, 0.0f}, Size{20.0f, 30.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    ASSERT_NE(picture, nullptr);
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act the scene clip starts below the picture's local origin, while the placement puts the picture inside it (§6.4)
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 20.0f}, Size{SCENE_WIDTH, 20.0f}));
+    context.draw_picture(picture, Transform::translation(0.0f, 24.0f));
+    surface->end_frame();
+    // assert the picture landed inside the scene clip, which a clip translated by the placement would cut away (§6.2)
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    const std::size_t inside = (30u * 64u + 10u) * 4u;
+    EXPECT_EQ(screenshot.pixels[inside + 3u], 255u);
+    // the ink past the scene clip is cut away, which a dropped clip would leave visible (§6.2)
+    const std::size_t below = (44u * 64u + 10u) * 4u;
+    EXPECT_EQ(screenshot.pixels[below + 3u], 0u);
+}
+
+TEST(Blend2DRenderContextChecks, APictureInnerClipNarrowsInsideThePictureSpace) {
+    // arrange a picture whose fill is clipped in its own space, which a tab label records (§6.2, §6.4)
+    ResourceFactory factory;
+    PictureRecorder recorder;
+    recorder.save();
+    recorder.clip_rect(Rect::from_origin_size(Point{4.0f, 0.0f}, Size{20.0f, 12.0f}));
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    recorder.restore();
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    ASSERT_NE(picture, nullptr);
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act the scene clip and the picture's inner clip live in different spaces before the placement composes them (§6.2)
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 20.0f}, Size{SCENE_WIDTH, 20.0f}));
+    context.draw_picture(picture, Transform::translation(0.0f, 24.0f));
+    surface->end_frame();
+    // assert the inner clip left its own ink and cut the rest, instead of collapsing against the scene clip (§6.2)
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    const std::size_t inside = (30u * 64u + 10u) * 4u;
+    const std::size_t outside = (30u * 64u + 40u) * 4u;
+    EXPECT_EQ(screenshot.pixels[inside + 3u], 255u);
+    EXPECT_EQ(screenshot.pixels[outside + 3u], 0u);
+}
+
 TEST(Blend2DRenderContextChecks, AStrokedPathDrawsInk) {
     // arrange a triangle contour drawn with a stroke and no fill, which a chart line is (§6.4)
     ResourceFactory factory;
