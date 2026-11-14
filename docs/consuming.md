@@ -216,8 +216,12 @@ window style, the modality is a framework constraint enforced before any event r
 - A dialog created with `visible: false` is not activated when it is created, which is how a host
   seeds it before the first frame; `Window::show()` activates it afterwards.
 - `Application` installs every per-window handler when it creates a window, so an application
-  observes through `set_close_handler`, `set_closed_handler`, `set_input_handler` and the other
+  observes through `set_close_handler`, `set_closing_handler`, `set_closed_handler`, `set_input_handler` and the other
   application setters. Replacing a `Window`'s own handlers after creation disables routing.
+- `set_closing_handler` runs once per window immediately before its tree is released, while
+  `Application::root(handle)` is still valid, which is where a host clears a borrowed node or facade
+  pointer. `set_closed_handler` runs after the teardown. A popup teardown and `shutdown()` raise the
+  closing notification but not `Closed`.
 - `Application::request_close(handle)` is the close that consults the veto; `destroy_window` is the
   unconditional teardown the host uses on shutdown.
 

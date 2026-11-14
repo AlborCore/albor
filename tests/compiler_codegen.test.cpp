@@ -3823,6 +3823,288 @@ TEST(Codegen, IncludesAndConstructsAnImportedComponent) {
     EXPECT_TRUE(contains(cpp.content, "->set_on_dismissed("));
 }
 
+TEST(Codegen, APropertyAndItsUnderscoreTwinGetDistinctNames) {
+    // arrange a reserved property and its underscore twin, which sanitise to the same spelling (§14.1)
+    const std::string_view source = R"(
+component C {
+    in property<int> class;
+    in property<int> class_;
+    inout property<int> total: class + class_;
+
+    Column {}
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert each property keeps a distinct accessor, setter and member (§14.1)
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] int class_() const;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] int class__() const;"));
+    EXPECT_TRUE(contains(header.content, "void set_class_(int value);"));
+    EXPECT_TRUE(contains(header.content, "void set_class__(int value);"));
+    // the twin accessor is declared exactly once, so a later duplicate cannot hide behind the correct line (§14.1)
+    std::size_t accessors = 0;
+    for (std::size_t at = header.content.find("int class_() const;"); at != std::string::npos; at = header.content.find("int class_() const;", at + 1))
+        accessors++;
+    EXPECT_EQ(accessors, 1U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "Property<int> m_class_;"));
+    EXPECT_TRUE(contains(cpp.content, "Property<int> m_class__;"));
+    // assert the dependency list and the evaluator body both read the distinct members (§13.3)
+    EXPECT_TRUE(contains(cpp.content, "const PropertyId deps_total[] = {m_class_.id(), m_class__.id()};"));
+    EXPECT_TRUE(contains(cpp.content, "static int compute_total(void* raw);"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_class_.get() + self->m_class__.get())"));
+}
+
+TEST(Codegen, ASignalAndItsUnderscoreTwinGetDistinctSlotsAndHandlers) {
+    // arrange two signals that sanitise alike, plus parameters that do the same (§14.1)
+    const std::string_view source = R"(
+component Collide {
+    signal class();
+    signal class_();
+    signal mixed(int class, int class_);
+
+    Column {}
+}
+
+component Host {
+    inout property<int> total;
+
+    Column {
+        Collide {
+            on_class: { }
+            on_class_: { }
+            on_mixed: {
+                total = class + class_;
+            }
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the slots and their storage stay distinct (§8.3, §14.1)
+    const GeneratedFile& header = file_named(files, "collide.h");
+    EXPECT_TRUE(contains(header.content, "void set_on_class_(std::function<void()> handler);"));
+    EXPECT_TRUE(contains(header.content, "void set_on_class__(std::function<void()> handler);"));
+    const GeneratedFile& cpp = file_named(files, "collide.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::function<void()> m_on_class_;"));
+    EXPECT_TRUE(contains(cpp.content, "std::function<void()> m_on_class__;"));
+    // assert the host wires each slot and declares one handler per signal (§11.3)
+    const GeneratedFile& host = file_named(files, "host.cpp");
+    EXPECT_TRUE(contains(host.content, "->set_on_class_("));
+    EXPECT_TRUE(contains(host.content, "->set_on_class__("));
+    EXPECT_TRUE(contains(host.content, "void Host::Impl::handle_1_class_(void* raw) {"));
+    EXPECT_TRUE(contains(host.content, "void Host::Impl::handle_1_class__(void* raw) {"));
+    // assert a parameter pair that sanitises alike keeps distinct names in the handler (§11.3)
+    EXPECT_TRUE(contains(host.content, "void Host::Impl::handle_1_mixed(void* raw, [[maybe_unused]] int class_, [[maybe_unused]] int class__) {"));
+    EXPECT_TRUE(contains(host.content, "self->m_total.set((class_ + class__));"));
+}
+
+TEST(Codegen, ACommandAndItsUnderscoreTwinGetDistinctMembers) {
+    // arrange two commands that sanitise alike (§18, AD-15)
+    const std::string_view source = R"(
+component C {
+    command class "Class";
+    command class_ "Class twin";
+
+    Column {
+        Button { text: "A"; command: class; }
+        Button { text: "B"; command: class_; }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert each command keeps a distinct accessor, member and construction (§18.1, AD-15)
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] Command* command_class_() const;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] Command* command_class__() const;"));
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::unique_ptr<Command> m_command_class_;"));
+    EXPECT_TRUE(contains(cpp.content, "std::unique_ptr<Command> m_command_class__;"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Command>(std::string(\"C.class\"), std::string(\"Class\"))"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Command>(std::string(\"C.class_\"), std::string(\"Class twin\"))"));
+    EXPECT_TRUE(contains(cpp.content, "set_command(m_command_class_.get())"));
+    EXPECT_TRUE(contains(cpp.content, "set_command(m_command_class__.get())"));
+}
+
+TEST(Codegen, AnImportedPropertyAndItsUnderscoreTwinGetDistinctSetters) {
+    // arrange an imported interface with a reserved property pair (§11.1)
+    CheckedProperty reserved;
+    reserved.name = "class";
+    reserved.type = scalar(TypeKind::Int);
+    CheckedProperty twin;
+    twin.name = "class_";
+    twin.type = scalar(TypeKind::Int);
+    ImportedComponent panel;
+    panel.name = "SidePanel";
+    panel.header = "side_panel.h";
+    panel.properties.push_back(std::move(reserved));
+    panel.properties.push_back(std::move(twin));
+    DiagnosticList diagnostics;
+    // act the importer assigns both properties (§11.1)
+    const std::string_view source = R"(
+component C {
+    in property<int> first;
+    in property<int> second;
+
+    SidePanel {
+        class: first;
+        class_: second;
+    }
+}
+)";
+    const std::vector<GeneratedFile> files = generate_imported(source, {std::move(panel)}, diagnostics);
+    // assert the importer uses the exact setter spellings the imported facade declares (§11.3)
+    ASSERT_EQ(diagnostics.count(), 0U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "->set_class_(value)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_class__(value)"));
+    // assert the sink and evaluator suffixes follow the same mapping, so they stay distinct (§13.3)
+    EXPECT_TRUE(contains(cpp.content, "Property<int> m_sink_0_class_;"));
+    EXPECT_TRUE(contains(cpp.content, "Property<int> m_sink_0_class__;"));
+    EXPECT_TRUE(contains(cpp.content, "static int evaluate_0_class_(void* raw);"));
+    EXPECT_TRUE(contains(cpp.content, "static int evaluate_0_class__(void* raw);"));
+}
+
+TEST(Codegen, AnImportedSignalAndItsUnderscoreTwinGetDistinctSlots) {
+    // arrange an imported interface with a reserved signal pair (§11.1)
+    CheckedSignal reserved;
+    reserved.name = "class";
+    CheckedSignal twin;
+    twin.name = "class_";
+    ImportedComponent panel;
+    panel.name = "SidePanel";
+    panel.header = "side_panel.h";
+    panel.signals.push_back(std::move(reserved));
+    panel.signals.push_back(std::move(twin));
+    DiagnosticList diagnostics;
+    // act the importer wires both signals (§11.1)
+    const std::string_view source = R"(
+component C {
+    SidePanel {
+        on_class: { }
+        on_class_: { }
+    }
+}
+)";
+    const std::vector<GeneratedFile> files = generate_imported(source, {std::move(panel)}, diagnostics);
+    // assert the importer uses the exact slot spellings the imported facade declares (§11.3)
+    ASSERT_EQ(diagnostics.count(), 0U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "->set_on_class_("));
+    EXPECT_TRUE(contains(cpp.content, "->set_on_class__("));
+    // assert the handler declarations follow the imported signal names (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "void C::Impl::handle_0_class_(void* raw) {"));
+    EXPECT_TRUE(contains(cpp.content, "void C::Impl::handle_0_class__(void* raw) {"));
+}
+
+TEST(Codegen, AnInheritedPropertyAndItsUnderscoreTwinGetDistinctNames) {
+    // arrange a base and a derived component that each declare one half of the pair (§11.1)
+    const std::string_view source = R"(
+component Base {
+    in property<int> class;
+
+    Column { @children }
+}
+
+component Derived : Base {
+    in property<int> class_;
+
+    Label {}
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the base-first merge order keeps the derived facade distinct (§11.1, §14.1)
+    const GeneratedFile& header = file_named(files, "derived.h");
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] int class_() const;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] int class__() const;"));
+}
+
+TEST(Codegen, ACommandTakesASpellingTheDeclarationsLeftFree) {
+    // arrange a property and a command whose written names differ but sanitise alike (§14.1, §18)
+    const std::string_view source = R"(
+component C {
+    in property<int> class;
+    command class_ "Twin";
+
+    Column {
+        Button { command: class_; }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the property keeps class_ and the command takes class__, because commands come last (§14.1, §18.1)
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] int class_() const;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] Command* command_class__() const;"));
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "Property<int> m_class_;"));
+    EXPECT_TRUE(contains(cpp.content, "std::unique_ptr<Command> m_command_class__;"));
+}
+
+TEST(Codegen, ACommonPropertyAndADeclaredTwinKeepDistinctSinks) {
+    // arrange a declared property and the common visible property, which sanitise the same way (§8.2)
+    const std::string_view source = R"(
+component Twin {
+    in property<bool> visible_;
+
+    Column {}
+}
+
+component Host {
+    inout property<bool> shown;
+
+    Column {
+        Twin {
+            visible_: shown;
+            visible: shown;
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the declared property and the common one keep distinct sinks and setters (§8.2, §13.3)
+    const GeneratedFile& cpp = file_named(files, "host.cpp");
+    EXPECT_TRUE(contains(cpp.content, "Property<bool> m_sink_1_visible_;"));
+    EXPECT_TRUE(contains(cpp.content, "Property<bool> m_sink_1_visible__;"));
+    EXPECT_TRUE(contains(cpp.content, "->set_visible(value)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_visible_(value)"));
+}
+
+TEST(Codegen, ASignalParameterNamedRawKeepsTheContextDistinct) {
+    // arrange a signal parameter that would shadow the handler context parameter (§11.3)
+    const std::string_view source = R"(
+component Emitter {
+    signal changed(int raw);
+
+    Column {}
+}
+
+component Host {
+    inout property<int> total;
+
+    Column {
+        Emitter {
+            on_changed: {
+                total = raw;
+            }
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the parameter takes the first free spelling and the body reads it (§11.3)
+    const GeneratedFile& host = file_named(files, "host.cpp");
+    EXPECT_TRUE(contains(host.content, "void Host::Impl::handle_1_changed(void* raw, [[maybe_unused]] int raw_) {"));
+    EXPECT_TRUE(contains(host.content, "self->m_total.set(raw_);"));
+}
+
 TEST(Codegen, PanelAndCardPropertiesReachTheContainer) {
     // arrange a panel and a card with the surface properties a settings page writes (§8.2, §8.4)
     const std::string_view source = R"(

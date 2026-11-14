@@ -601,6 +601,135 @@ TEST(MainWindow, AWindowThatDrawsByHandStillOffersItsRoot) {
     EXPECT_EQ(recorder.released_root, recorder.bound_root);
 }
 
+TEST(MainWindow, TheClosingHandlerRunsBeforeTheTreeIsReleased) {
+    // arrange
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(handle.valid());
+    std::vector<int> phases;
+    int closings = 0;
+    bool closing_saw_tree = false;
+    bool closed_saw_tree = true;
+    application.set_closing_handler([&](albor::WindowHandle closing) {
+        closings++;
+        closing_saw_tree = application.root(closing) != nullptr;
+        phases.push_back(1);
+    });
+    application.set_closed_handler([&](albor::WindowHandle closed) {
+        closed_saw_tree = application.root(closed) != nullptr;
+        phases.push_back(2);
+    });
+    // act
+    EXPECT_TRUE(application.destroy_window(handle));
+    EXPECT_FALSE(application.destroy_window(handle));
+    application.set_closing_handler({});
+    application.set_closed_handler({});
+    // assert
+    EXPECT_EQ(closings, 1);
+    EXPECT_TRUE(closing_saw_tree);
+    EXPECT_FALSE(closed_saw_tree);
+    ASSERT_EQ(phases.size(), 2U);
+    EXPECT_EQ(phases.at(0), 1);
+    EXPECT_EQ(phases.at(1), 2);
+}
+
+TEST(MainWindow, TheClosingHandlerMayCloseTheWindowItIsAnnouncedFor) {
+    // arrange
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(handle.valid());
+    int closings = 0;
+    bool reentered = false;
+    application.set_closing_handler([&](albor::WindowHandle closing) {
+        closings++;
+        if (reentered)
+            return;
+        reentered = true;
+        // the handler closes the same window, which the once guard must not announce again (§5.2)
+        EXPECT_TRUE(application.destroy_window(closing));
+    });
+    // act
+    (void)application.destroy_window(handle);
+    application.set_closing_handler({});
+    // assert
+    EXPECT_EQ(closings, 1);
+    EXPECT_EQ(application.window(handle), nullptr);
+}
+
+TEST(MainWindow, TheClosingHandlerCoversADialogAndAPopup) {
+    // arrange
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle owner = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(owner.valid());
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = owner;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, empty_form());
+    ASSERT_TRUE(dialog.valid());
+    const albor::WindowHandle popup = application.open_popup(*application.root(owner), albor::Rect::from_origin_size(albor::Point{10.0f, 20.0f}, albor::Size{120.0f, 30.0f}), albor::Size{240.0f, 120.0f}, empty_form(), albor::Color::rgb(0.1f, 0.1f, 0.1f), [] {});
+    ASSERT_TRUE(popup.valid());
+    std::vector<albor::WindowHandle> closing;
+    std::vector<albor::WindowHandle> closed;
+    bool every_tree_alive = true;
+    bool every_closed_tree_gone = true;
+    application.set_closing_handler([&](albor::WindowHandle handle) {
+        // every window is announced while its own tree is still alive (§5.2)
+        closing.push_back(handle);
+        every_tree_alive = every_tree_alive && application.root(handle) != nullptr;
+    });
+    application.set_closed_handler([&](albor::WindowHandle handle) {
+        // a dialog and its owner are announced closed only after their trees are gone (§5.2)
+        closed.push_back(handle);
+        every_closed_tree_gone = every_closed_tree_gone && application.root(handle) == nullptr;
+    });
+    // act
+    EXPECT_TRUE(application.destroy_window(owner));
+    application.set_closing_handler({});
+    application.set_closed_handler({});
+    // assert
+    ASSERT_EQ(closing.size(), 3U);
+    EXPECT_EQ(closing.at(0), popup);
+    EXPECT_EQ(closing.at(1), dialog);
+    EXPECT_EQ(closing.at(2), owner);
+    EXPECT_TRUE(every_tree_alive);
+    ASSERT_EQ(closed.size(), 2U);
+    EXPECT_EQ(closed.at(0), dialog);
+    EXPECT_EQ(closed.at(1), owner);
+    EXPECT_TRUE(every_closed_tree_gone);
+    EXPECT_EQ(application.window_count(), 0u);
+}
+
+TEST(MainWindow, TheClosingHandlerRunsBeforeShutdownClearsTheStages) {
+    // arrange
+    InstalledScope scope;
+    albor::WindowHandle handle;
+    albor::WindowHandle popup;
+    std::vector<albor::WindowHandle> closing;
+    bool saw_tree = false;
+    {
+        albor::Application application;
+        handle = application.create_window(albor::WindowOptions{}, empty_form());
+        ASSERT_TRUE(handle.valid());
+        popup = application.open_popup(*application.root(handle), albor::Rect{}, albor::Size{100.0f, 80.0f}, empty_form(), albor::Color::rgb(0.1f, 0.1f, 0.1f), [] {});
+        ASSERT_TRUE(popup.valid());
+        application.set_closing_handler([&](albor::WindowHandle closing_handle) {
+            closing.push_back(closing_handle);
+            saw_tree = saw_tree || application.root(closing_handle) != nullptr;
+        });
+        // act
+    }
+    // assert
+    ASSERT_EQ(closing.size(), 2U);
+    EXPECT_EQ(closing.at(0), popup);
+    EXPECT_EQ(closing.at(1), handle);
+    EXPECT_TRUE(saw_tree);
+}
+
 TEST(MainWindow, AWindowOffersTheCaptureHandlesItsSurfaceNeeds) {
     // arrange the factories and a recording extension, which is what linking the dev runtime installs (§12.1, AD-02)
     InstalledScope scope;
@@ -1247,14 +1376,18 @@ TEST(MainWindow, AWindowClosedDuringAFrameIsTornDownAfterThePass) {
     albor::Application& application = albor::Application::instance();
     albor::WindowHandle self_closing;
     albor::RootBuilder builder = [&self_closing, &application](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<SelfClosingLeaf>(self_closing, application); };
+    bool closing_saw_tree = false;
+    application.set_closing_handler([&](albor::WindowHandle closing) { closing_saw_tree = closing_saw_tree || application.root(closing) != nullptr; });
     // act create the window and pump it, which asks for its own teardown from inside the pass (§4.2)
     self_closing = application.create_window(albor::WindowOptions{}, builder);
     ASSERT_TRUE(self_closing.valid());
     application.pump();
+    application.set_closing_handler({});
     // assert the window is gone, because the teardown was deferred to the end of the pass (§4.2)
     EXPECT_EQ(application.window(self_closing), nullptr);
     EXPECT_EQ(application.window_count(), 0u);
     EXPECT_EQ(application.stage(self_closing), nullptr);
+    EXPECT_TRUE(closing_saw_tree);
 }
 
 TEST(MainWindow, ANativePopupOpensOverItsOwnerAndReopens) {

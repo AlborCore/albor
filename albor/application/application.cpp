@@ -98,6 +98,8 @@ namespace albor
         }
         // the popup stages drop before their native windows, so each surface precedes its drawable (§5.1, §6.1)
         for (const WindowHandle popup : popups) {
+            // the pre-teardown notification runs while the popup tree is still alive, so a host can detach (§5.2)
+            notify_closing(popup);
             // the stage is released for the same reason an ordinary close releases it first (§5.1)
             release_stage(popup);
             // the owner entry goes with the surface, which keeps the map exact until the application dies (§5.1)
@@ -105,10 +107,16 @@ namespace albor
             // the native popup is closed without a notification, because the application is going away (§5.2)
             (void)m_windows.destroy(popup);
         }
+        // every remaining window is announced while its tree is alive, because the stages clear next (§5.2)
+        const std::vector<WindowHandle> remaining = m_windows.handles();
+        for (const WindowHandle window : remaining)
+            notify_closing(window);
         // the stages release their surfaces before their windows are dropped, so a layer outlives its drawable (§6.1)
         m_stages.clear();
         // every window closes before the native loop goes away, because a window raises events into the loop (§5.2)
         m_windows.destroy_all();
+        // every window is gone, so the once guard has nothing left to remember (§5.2)
+        m_closing_notified.clear();
         // the engines go after the surfaces that were drawn with them, so no frame outlives its context (§6.3, §9.1)
         m_text.reset();
         m_renderer.reset();
@@ -495,6 +503,8 @@ namespace albor
         const WindowHandle parent = dialog ? closing->options().parent : WindowHandle{};
         // the owner entry goes with the window, which keeps the map exact (§5.1)
         m_owned_windows.erase(handle.id());
+        // the pre-teardown notification runs while the tree is still alive, so a host can detach (§5.2)
+        notify_closing(handle);
         // the window's stage is dropped first, so its surface outlives no layer (§6.1)
         release_stage(handle);
         // the registry closes the native window before it drops the framework window (§5.2)
@@ -502,6 +512,8 @@ namespace albor
             m_teardown_depth--;
             return false;
         }
+        // the window is gone, so the once guard no longer needs its id (§5.2)
+        std::erase(m_closing_notified, handle.id());
         // a dialog gives activation and focus back only when its owner is not the window being closed (§5.1, §8.3)
         if (dialog && m_teardown_depth == 1) {
             restore_invoking_focus(handle, parent);
@@ -623,6 +635,11 @@ namespace albor
     void Application::set_close_handler(std::function<bool(WindowHandle)> handler) {
         // the handler may veto, so it is consulted on every close request (§5.2)
         m_close_handler = std::move(handler);
+    }
+
+    void Application::set_closing_handler(std::function<void(WindowHandle)> handler) {
+        // the handler is replaced rather than chained, so a teardown reaches exactly one owner (§5.2)
+        m_closing_handler = std::move(handler);
     }
 
     void Application::set_closed_handler(std::function<void(WindowHandle)> handler) {
@@ -824,6 +841,21 @@ namespace albor
     void Application::release_stage(WindowHandle handle) {
         // a stage whose window is closing is erased, because no handler may reach into dead wiring (§6.1)
         m_stages.erase(handle.id());
+    }
+
+    void Application::notify_closing(WindowHandle handle) {
+        // a stale handle has no tree to detach from, so nothing is announced (§5.2)
+        if (!handle.valid() || m_windows.find(handle) == nullptr)
+            return;
+        // a window already announced is not announced again, which a reentrant teardown would ask for (§5.2)
+        for (const std::uint64_t announced : m_closing_notified)
+            if (announced == handle.id())
+                return;
+        // the mark is placed before the call, so the handler may close the same window without repeating it (§5.2)
+        m_closing_notified.push_back(handle.id());
+        // the handler sees the window and its tree still alive, which is what lets a host detach its pointer (§5.2)
+        if (m_closing_handler)
+            m_closing_handler(handle);
     }
 
     void Application::end_run_when_no_windows() {

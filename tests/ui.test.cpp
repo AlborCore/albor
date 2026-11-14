@@ -1150,6 +1150,22 @@ TEST(Component, AComponentIsTransparentByDefault) {
     EXPECT_FLOAT_EQ(component.background().alpha, 0.0f);
 }
 
+TEST(Component, DestroyingAComponentReleasesTheBindingsOfItsProperties) {
+    // arrange
+    BindingEngine engine;
+    {
+        TestComponent component(&engine, "counter");
+        component.count.bind([] { return 4; }, {});
+        engine.settle();
+        ASSERT_EQ(engine.size(), 1u);
+    }
+    // act
+    engine.settle();
+    // assert every binding went with the component that owned the property (§7.3)
+    EXPECT_EQ(engine.size(), 0u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+}
+
 TEST(Component, AComponentIsAHitWhereItHasArea) {
     // arrange
     BindingEngine engine;
