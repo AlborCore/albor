@@ -23,12 +23,27 @@ cmake --preset debug          # configure (fetches vcpkg dependencies)
 cmake --build --preset debug  # build
 ```
 
-Other presets: `release`, `test`, `coverage`. Unit tests are a plain executable — run it
+Other presets: `release`, `test`, `coverage`, `asan`. Unit tests are a plain executable — run it
 directly rather than through `ctest`:
 
 ```sh
 ./.build-debug/tests/albor-tests
 ```
+
+### AddressSanitizer
+
+The `asan` preset is the Test configuration instrumented with AddressSanitizer. It builds the
+unit-test binary without the examples:
+
+```sh
+cmake --preset asan
+cmake --build --preset asan
+./.build-asan/tests/albor-tests --gtest_filter='BindingEngine.*:Property.*'
+```
+
+The filter covers the reactive property and binding lifetime suites, where a freed or out-of-scope
+write can still read as valid in a normal build. The option is `ALBOR_ASAN`; the preset carries the
+Clang/GCC sanitizer flags, and the MSVC toolchain keeps its normal presets.
 
 ## The target you link
 
