@@ -98,6 +98,48 @@ namespace albor::compiler
             return names;
         }
 
+        // the generated C++ names of one unit's file-level declarations, which its functions and values share (§11.1)
+        struct FileLevelNames
+        {
+            // the function names, which the declarations and their calls carry (§11.1)
+            std::unordered_map<std::string, std::string> functions;
+
+            // the global names, which the static definitions and their reads carry (§11.1)
+            std::unordered_map<std::string, std::string> globals;
+
+            // the parameter names of each function, in declaration order and aligned with the function list (§11.1)
+            std::vector<std::vector<std::string>> parameters;
+        };
+
+        // map the file-level declarations onto the C++ names their generated unit declares (§11.1)
+        FileLevelNames file_level_names(const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals) {
+            // the names are collected in emission order, which is what makes the mapping deterministic (§11.1)
+            FileLevelNames names;
+            // one set covers functions and globals, because both share the unit's namespace (§11.1)
+            std::unordered_set<std::string> used;
+            // each function takes the first free spelling of its name (§11.1)
+            if (functions != nullptr)
+                for (const CheckedFunction& function : *functions) {
+                    // the function joins the shared set before its parameters are named (§11.1)
+                    names.functions[function.name] = unique_name(function.name, used);
+                    // the parameters are uniqued within this signature, because they shadow only its body (§11.1)
+                    std::unordered_set<std::string> parameter_used;
+                    // the generated names are kept in declaration order, which the signature emits (§11.1)
+                    std::vector<std::string> parameters;
+                    parameters.reserve(function.parameters.size());
+                    // each parameter takes the first free spelling of its written name (§11.1)
+                    for (const std::pair<std::string, ValueType>& parameter : function.parameters)
+                        parameters.push_back(unique_name(parameter.first, parameter_used));
+                    // the signature's names join the function list in the same order (§11.1)
+                    names.parameters.push_back(std::move(parameters));
+                }
+            // each global takes the first free spelling after the functions (§11.1)
+            if (globals != nullptr)
+                for (const CheckedGlobal& global : *globals)
+                    names.globals[global.name] = unique_name(global.name, used);
+            return names;
+        }
+
         // render a colour as the constructor call, which scales the channels into the unit range (§11.3)
         std::string shortest_float(double value) {
             // the buffer is generous, because a long exponent still fits with room (§11.3)
@@ -701,10 +743,8 @@ namespace albor::compiler
             // build the emitter over the component and the shared problem list (§11.3)
             ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals, const std::vector<CheckedComponent>* file_components, const std::vector<ImportedComponent>* imported_components, AssetTable& assets) :
                 m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_globals(globals), m_catalog(catalog), m_assets(assets), m_modules(std::move(modules)), m_file_components(file_components), m_imported_components(imported_components) {
-                // the declared function names are collected, which tells a call apart from a colour op (§11.1)
-                if (m_functions != nullptr)
-                    for (const CheckedFunction& function : *m_functions)
-                        m_function_names.insert(function.name);
+                // the file-level names are allocated once, which every function and global emission reads (§11.1)
+                m_file_names = file_level_names(m_functions, m_globals);
             }
 
             // generate the two files of the component, which is empty when a problem blocked it (§11.3)
@@ -1009,11 +1049,14 @@ namespace albor::compiler
             // the module-scoped values the component reads, which a file-level static then holds (§11.1)
             const std::vector<CheckedGlobal>* m_globals = nullptr;
 
-            // the declared function names, which tell a function call apart from a colour operation (§11.1)
-            std::unordered_set<std::string> m_function_names;
+            // the file-level names, which the generated functions and globals carry (§11.1)
+            FileLevelNames m_file_names;
 
             // the parameters of the function body being emitted, which read the arguments by name and type (§11.1)
             std::vector<std::pair<std::string, ValueType>> m_function_parameters;
+
+            // the generated names of those parameters, keyed by the written names the body reads (§11.1)
+            std::unordered_map<std::string, std::string> m_function_parameter_names;
 
             // whether the body being emitted is a draw block, which is what exposes the canvas extent (§6.4)
             bool m_draw_extent = false;
@@ -2201,7 +2244,7 @@ namespace albor::compiler
             if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
                 return type_of(*grouping->inner);
             // a call to a declared function carries the declared return type (§11.1)
-            if (const auto* call = dynamic_cast<const CallExpression*>(&expression); call != nullptr && m_function_names.count(call->function) != 0 && m_functions != nullptr)
+            if (const auto* call = dynamic_cast<const CallExpression*>(&expression); call != nullptr && m_file_names.functions.contains(call->function) && m_functions != nullptr)
                 for (const CheckedFunction& function : *m_functions)
                     if (function.name == call->function)
                         return function.return_type;
@@ -2374,15 +2417,16 @@ namespace albor::compiler
             // the signature of each function is built once, which the forward declaration shares (§11.1)
             std::vector<std::string> signatures;
             signatures.reserve(m_functions->size());
-            for (const CheckedFunction& function : *m_functions) {
+            for (std::size_t index = 0; index < m_functions->size(); index++) {
+                const CheckedFunction& function = m_functions->at(index);
                 // the types are the resolved ones, which the record header already declares (§11.1)
-                std::string signature = cpp_type(function.return_type) + " " + function.name + "(";
-                for (std::size_t index = 0; index < function.parameters.size(); index++) {
+                std::string signature = cpp_type(function.return_type) + " " + m_file_names.functions.at(function.name) + "(";
+                for (std::size_t parameter = 0; parameter < function.parameters.size(); parameter++) {
                     // a comma joins the earlier parameters, which is how a C++ parameter list reads (§11.1)
-                    if (index != 0)
+                    if (parameter != 0)
                         signature += ", ";
-                    // the parameter name is sanitised, because the written name may be a keyword (§14.1)
-                    signature += cpp_type(function.parameters.at(index).second) + " " + sanitize(function.parameters.at(index).first);
+                    // the parameter name is the generated one, which the signature and the body share (§11.1)
+                    signature += cpp_type(function.parameters.at(parameter).second) + " " + m_file_names.parameters.at(index).at(parameter);
                 }
                 // the list is closed, which is what the forward declaration and the definition both need (§11.1)
                 signature += ")";
@@ -2400,8 +2444,13 @@ namespace albor::compiler
                 line(0, "#define ALBOR_GENERATED_FN_" + function.name);
                 // the parameters are published, so a reference inside the body reads the argument by name (§11.1)
                 m_function_parameters.clear();
-                for (const std::pair<std::string, ValueType>& parameter : function.parameters)
-                    m_function_parameters.push_back(parameter);
+                m_function_parameter_names.clear();
+                for (std::size_t parameter = 0; parameter < function.parameters.size(); parameter++) {
+                    // the written name and type let the body resolve the argument (§11.1)
+                    m_function_parameters.push_back(function.parameters.at(parameter));
+                    // the generated name is what the body emits for that argument (§11.1)
+                    m_function_parameter_names.emplace(function.parameters.at(parameter).first, m_file_names.parameters.at(index).at(parameter));
+                }
                 // the body is a single return, which is the whole of the computation in this form (§11.1)
                 line(0, "[[maybe_unused]] static " + signatures.at(index) + " {");
                 // a body with no return expression is empty, which the checker already allowed (§11.1)
@@ -2410,6 +2459,7 @@ namespace albor::compiler
                 line(0, "}");
                 // the parameters are cleared, because the next body binds its own (§11.1)
                 m_function_parameters.clear();
+                m_function_parameter_names.clear();
                 line(0, "#endif");
             }
         }
@@ -2424,7 +2474,7 @@ namespace albor::compiler
                 line(0, "#ifndef ALBOR_GENERATED_GLOBAL_" + global.name);
                 line(0, "#define ALBOR_GENERATED_GLOBAL_" + global.name);
                 // the value is a file-level static, because a component instance does not hold it (§11.1)
-                line(0, "[[maybe_unused]] static const " + cpp_type(global.type) + " " + sanitize(global.name) + " = " + emit_expression(*global.value) + ";");
+                line(0, "[[maybe_unused]] static const " + cpp_type(global.type) + " " + m_file_names.globals.at(global.name) + " = " + emit_expression(*global.value) + ";");
                 line(0, "#endif");
             }
         }
@@ -4281,14 +4331,14 @@ namespace albor::compiler
                 for (const std::pair<std::string, ValueType>& parameter : m_function_parameters) {
                     // the name decides, so a parameter resolves to the argument the call passed (§11.1)
                     if (parameter.first == reference->name)
-                        return sanitize(parameter.first);
+                        return m_function_parameter_names.at(parameter.first);
                 }
                 // a declared command is handed out as the pointer a widget binds, because the body owns it (§18, AD-15)
                 if (command_named(reference->name) != nullptr)
                     return m_object.empty() ? "m_command_" + command_name(reference->name) + ".get()" : m_object + "->m_command_" + command_name(reference->name) + ".get()";
                 // a name no property declares may still be a module-scoped value, which is the file-level static (§11.1)
                 if (global_named(reference->name) != nullptr)
-                    return sanitize(reference->name);
+                    return m_file_names.globals.at(reference->name);
                 return m_object.empty() ? "m_" + property_name(reference->name) + ".get()" : m_object + "->m_" + property_name(reference->name) + ".get()";
             }
             // a conversion renders through its operand, which the operand type decides (§11.3)
@@ -4373,9 +4423,9 @@ namespace albor::compiler
 
         std::string ComponentEmitter::emit_call(const CallExpression& call) {
             // a call to a declared function renders as a plain C++ call, which the static function above defines (§11.1)
-            if (m_function_names.count(call.function) != 0) {
+            if (m_file_names.functions.contains(call.function)) {
                 // the arguments render in written order, because the call reads them left to right (§11.1)
-                std::string out = call.function + "(";
+                std::string out = m_file_names.functions.at(call.function) + "(";
                 for (std::size_t index = 0; index < call.arguments.size(); index++) {
                     // a comma joins the earlier arguments, which is how a C++ argument list reads (§11.1)
                     if (index != 0)
