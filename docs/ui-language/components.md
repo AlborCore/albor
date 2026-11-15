@@ -1,8 +1,10 @@
 # Components
 
-A **component** is the unit a `.ui` file declares and the compiler turns into a concrete C++
-facade class. Every tree the language builds is a component tree: built-in widgets appear as
-elements, file-declared components appear as elements too, and the two are used the same way.
+A **component** is the unit the compiler turns into a concrete C++ facade class; a file exports
+one component and may declare further same-file bases for it
+([one exported component per file](#one-exported-component-per-file)). Every tree the language
+builds is a component tree: built-in widgets appear as elements, file-declared components appear
+as elements too, and the two are used the same way.
 
 ## Declaration
 
@@ -26,22 +28,65 @@ A component carries, in this order:
    ([Signals and handlers](handlers.md))
 3. **a root element** — exactly one; a component that declares none is rejected
 
-A file may declare any number of components. Each compiles to its own facade; the file name
-names the generated translation unit
+A file exports one component: the one whose name is its file stem in PascalCase. It may declare
+further components only as same-file bases for that export
+([one exported component per file](#one-exported-component-per-file)). The exported component's
+facade is the generated translation unit
 ([what the compiler produces](index.md#what-the-compiler-produces)).
+
+## One exported component per file
+
+`greeting_panel.ui` exports `GreetingPanel`: a saved file whose components include no name
+matching its stem is rejected with `E0805`, because the build could not name the pair it
+expects. The stem is what the build rule, the generated C++ facade and the preview all address,
+so one file exports one component.
+
+A file may declare more than one component in exactly one case: the exported component is a
+derived component and the others are the same-file bases it inherits from
+([inheritance](#inheritance)):
+
+```text
+// wide.ui — the exported component is Wide, because wide.ui names it
+component Panel {
+    Column {
+        @children
+    }
+}
+
+component Wide : Panel {
+    Label { text: "Wide"; }
+}
+```
+
+Only the exported component is built and reachable. The base beside it is flattened into the
+exported facade: the build compiles no separate pair for it, another file cannot instantiate it,
+and C++ sees only the exported facade. Declaration order does not decide the export — the name
+does — so the base may come first, as above.
+
+An imported file is stricter: it declares exactly one component (`E0804`) named after itself
+(`E0805`), because importing brings one facade into scope. A file that declares a base and its
+derived component is therefore a composition root and cannot be imported. If two independent
+components both need to be reused, give each its own file and import them; a further component
+that is not the exported component's base is not built, so split it into its own file.
 
 ## Using a component as an element
 
-A component the file declares is itself an element type — it can be instantiated anywhere an
-element can:
+The component a file exports is itself an element type — a file that imports it can instantiate
+it anywhere an element can:
 
 ```text
+// greeting.ui
 component Greeting {
     in property<string> title;
     signal dismissed();
 
     Column { Label { text: title; } }
 }
+```
+
+```text
+// app.ui
+import "greeting.ui";
 
 component App {
     in property<string> name;
@@ -59,6 +104,9 @@ The rules:
   elements named `Label` are *that* component, not the built-in one. Imported components resolve
   next, and the catalog is the last resort. The same shadow rule the type resolver follows
   applies to elements.
+- **A base is inherited, not instantiated.** A same-file base has no pair the build compiles,
+  so naming it as an element fails at link time. Use it after `:` in a component declaration
+  and instantiate the exported component instead.
 - **Composition may cross a file boundary.** A file imports another file's component with a
   quoted path, resolved relative to the importing file. The path uses `/` on every platform,
   because it names a portable source path:
@@ -72,8 +120,9 @@ The rules:
   }
   ```
 - **An imported file declares one component named after itself.** `side_panel.ui` declares
-  `SidePanel`, because that source generates one facade pair. A file that exports several
-  components exports them from several files.
+  `SidePanel`, because that source generates one facade pair. A root is allowed a base beside
+  its export; an imported file is not, so two independently reusable components live in two
+  files.
 - **Inheritance stays same-file.** An imported component may be instantiated but not used as a
   base, because the derived member set is flattened while its own file is checked.
 - **An instance takes no children.** A composed instance builds the component's own tree;
@@ -108,6 +157,7 @@ An element without an `id` still works, it is simply not addressable by name.
 A component may derive from one the same file declares:
 
 ```text
+// wide.ui — Wide is the exported component
 component Panel {
     in property<string> title;
 
@@ -122,17 +172,23 @@ component Wide : Panel {
 }
 ```
 
+`wide.ui` exports `Wide`, the derived component; `Panel` is the base declared beside it and is
+not exported itself ([one exported component per file](#one-exported-component-per-file)).
+
 The rules:
 
 - **One level deep.** The base must be a component this file declares and must itself derive
   from nothing. A deeper chain is refused rather than silently merged.
+- **The derived component is the export.** The file must be named after the derived component,
+  because that is the only component the build compiles. A file named after the base would
+  export the base and leave the derived component unusable.
 - **The derived body is content, not a tree.** It carries elements — not a root — and they
   are spliced into a *clone* of the base's tree at the `@children` marker, in the order the
   body wrote them. The base's own body is untouched.
 - **One slot.** A base declares at most one `@children`. A slot inside the derived content is
   refused: only a base declares the content point.
 - **A base used directly shows no content point.** The marker is stripped from every checked
-  tree, so instantiating the base as an ordinary element builds exactly what it declares.
+  tree, so a base that is itself the exported component builds exactly what it declares.
 - **A redeclaration narrows a default.** The derived body may redeclare an inherited property
   with its own default — same type, same direction — which replaces the default. Anything
   else is refused.

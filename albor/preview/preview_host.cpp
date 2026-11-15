@@ -703,8 +703,8 @@ namespace albor::preview
             // the bytes are the source the parser takes (§11.1)
             return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
         });
-        // the loader checks the root and every file it imports, which is what resolves a cross-file component (§11.1)
-        const std::optional<compiler::CheckedFile> checked = loader.check(root_path);
+        // the loader checks the root and every import, and an unsaved buffer has no stem to compare (§12.2)
+        const std::optional<compiler::CheckedFile> checked = loader.check(root_path, source_path.empty() ? compiler::RootNameCheck::Skipped : compiler::RootNameCheck::Required);
         // a file with errors builds nothing, because half a component would mislead a designer (§12.2)
         if (!checked.has_value()) {
             // the count is what the preview window shows when the source could not be read (§12.2)
@@ -729,8 +729,23 @@ namespace albor::preview
         // a file with errors builds nothing, because half a component would mislead a designer (§12.2)
         if (diagnostics.count() != 0 || checked->components.empty())
             return result;
-        // the first component is built, because a preview shows one component at a time (§12.2)
-        const compiler::CheckedComponent& component = checked->components.front();
+        // the exported component is built, because it is the one the build compiles (§11.3, §12.2)
+        const compiler::CheckedComponent* exported = nullptr;
+        // a saved file names its exported component after its stem, so the preview must show that one (§11.1)
+        if (!source_path.empty()) {
+            // the stem comparison is the loader's naming rule, shared here so the two cannot drift (§11.1)
+            const std::string exported_header = compiler::component_header_name(source_path.stem().string());
+            for (const compiler::CheckedComponent& candidate : checked->components)
+                if (compiler::component_header_name(candidate.name) == exported_header) {
+                    exported = &candidate;
+                    break;
+                }
+        }
+        // an unsaved buffer has no stem, so its first component is what a preview shows (§12.2)
+        if (exported == nullptr)
+            exported = &checked->components.front();
+        // the chosen component is built, because a preview shows one component at a time (§12.2)
+        const compiler::CheckedComponent& component = *exported;
         // a component with no root describes nothing (§12.2)
         if (component.root == nullptr)
             return result;

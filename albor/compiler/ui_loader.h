@@ -19,6 +19,15 @@ namespace albor::compiler
     // the source text a loader asks for, which a driver reads from disk and a test may answer in memory (§11.1)
     using UiFileReader = std::function<std::optional<std::string>(const std::filesystem::path&)>;
 
+    // whether a root file's stem must name its component, which an unsaved editor buffer cannot satisfy (§11.1, §12.2)
+    enum class RootNameCheck
+    {
+        // a saved file takes its stem from disk, which the build names one unit pair after (§11.1, §14.2)
+        Required,
+        // an unsaved buffer has no stem, so an editor may declare any component name (§12.2)
+        Skipped,
+    };
+
     // the loader that resolves ui imports into one checked file and the interfaces the file brings into scope (§11.1)
     class UiImportLoader
     {
@@ -27,7 +36,7 @@ namespace albor::compiler
         UiImportLoader(ElementCatalog& catalog, DiagnosticList& diagnostics, UiFileReader reader);
 
         // load one root and its imports from the built catalog, returning the tree even on diagnostics (§11.1)
-        [[nodiscard]] std::optional<CheckedFile> check(const std::filesystem::path& source);
+        [[nodiscard]] std::optional<CheckedFile> check(const std::filesystem::path& source, RootNameCheck root_name = RootNameCheck::Required);
 
         // hand out every file the last run read or tried to read, the root first and each import in load order (§14.2)
         [[nodiscard]] const std::vector<std::filesystem::path>& dependencies() const;
@@ -62,6 +71,9 @@ namespace albor::compiler
 
         // the files currently open on the import path, which is what makes a cycle detectable (§11.1)
         std::vector<std::filesystem::path> m_stack;
+
+        // whether the root's stem must name its component, which an unsaved editor buffer skips (§11.1, §12.2)
+        bool m_root_name_check = true;
 
         // every file the last run read or attempted, in load order, which the driver writes into its depfile (§14.2)
         std::vector<std::filesystem::path> m_dependencies;

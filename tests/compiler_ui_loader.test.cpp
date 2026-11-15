@@ -385,3 +385,144 @@ TEST(UiLoader, ReportsAnImportedComponentNotNamedAfterItsFile) {
             shape_errors++;
     EXPECT_EQ(shape_errors, 1U);
 }
+
+TEST(UiLoader, ReportsARootComponentNotNamedAfterItsFile) {
+    // arrange a root whose component has another name, which the build output cannot match (§11.1, §14.2)
+    std::map<std::string, std::string> files;
+    files["panel.ui"] = "component ConsumerPanel { Column {} }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act the root is checked, which cannot name the facade the build expects (§11.1)
+    (void)loader.check("panel.ui");
+    // assert the root reports the naming rule and the message no longer says imported (§11.1, §14.2)
+    std::size_t shape_errors = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.code == "E0805") {
+            shape_errors++;
+            EXPECT_EQ(diagnostic.path, "panel.ui");
+            EXPECT_EQ(diagnostic.message.find("imported"), std::string::npos);
+        }
+    EXPECT_EQ(shape_errors, 1U);
+}
+
+TEST(UiLoader, AcceptsARootThatDeclaresABaseAndItsExportedComponent) {
+    // arrange a root whose exported component follows the base it inherits, which stays one file (§11.1)
+    std::map<std::string, std::string> files;
+    files["wide.ui"] = "component Panel { Column { @children } } component Wide : Panel { Label { text: \"Wide\"; } }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act the root is checked, which accepts the base beside the exported component (§11.1, §14.2)
+    const std::optional<CheckedFile> checked = loader.check("wide.ui");
+    // assert the same-file inheritance checks clean, because E0804 is an import rule alone (§11.1)
+    EXPECT_EQ(diagnostics.count(), 0U);
+    ASSERT_TRUE(checked.has_value());
+    EXPECT_EQ(checked->components.size(), 2U);
+}
+
+TEST(UiLoader, ReportsARootWithNoComponentNamedAfterItsFile) {
+    // arrange a root whose components all miss the stem, so the build has no pair to compile (§11.1, §14.2)
+    std::map<std::string, std::string> files;
+    files["wide.ui"] = "component First { Column {} } component Second { Column {} }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act the root is checked, which reports the missing export before generation (§11.1)
+    (void)loader.check("wide.ui");
+    // assert the naming rule is reported once and the import shape rule is not (§11.1, §14.2)
+    std::size_t naming_errors = 0;
+    std::size_t shape_errors = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics()) {
+        if (diagnostic.code == "E0805") {
+            naming_errors++;
+            EXPECT_EQ(diagnostic.path, "wide.ui");
+            EXPECT_EQ(diagnostic.message.find("imported"), std::string::npos);
+        }
+        if (diagnostic.code == "E0804")
+            shape_errors++;
+    }
+    EXPECT_EQ(naming_errors, 1U);
+    EXPECT_EQ(shape_errors, 0U);
+}
+
+TEST(UiLoader, ReportsARootThatDeclaresNoComponent) {
+    // arrange a saved root with no component, which would leave the build without its pair (§11.1, §14.2)
+    std::map<std::string, std::string> files;
+    files["panel.ui"] = "";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act the empty file is checked, which cannot name the pair the build expects (§11.1)
+    (void)loader.check("panel.ui");
+    // assert the missing component is reported against the file, because no declaration carries the span (§11.1, §14.2)
+    std::size_t naming_errors = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.code == "E0805") {
+            naming_errors++;
+            EXPECT_EQ(diagnostic.path, "panel.ui");
+        }
+    EXPECT_EQ(naming_errors, 1U);
+}
+
+TEST(UiLoader, ReportsAnImportedCompositionRootAsTwoComponents) {
+    // arrange an imported file that carries a base and its derived export, which one import cannot name (§11.1)
+    std::map<std::string, std::string> files;
+    files["app.ui"] = "import \"wide.ui\"; component App { Column { Wide {} } }";
+    files["wide.ui"] = "component Panel { Column { @children } } component Wide : Panel { Label { text: \"Wide\"; } }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act the importing root is checked, which sees the composition root as an import (§11.1)
+    (void)loader.check("app.ui");
+    // assert the import shape rule alone fires, because a multi-component import has no single export to name (§11.1)
+    std::size_t shape_errors = 0;
+    std::size_t naming_errors = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics()) {
+        if (diagnostic.code == "E0804")
+            shape_errors++;
+        if (diagnostic.code == "E0805")
+            naming_errors++;
+    }
+    EXPECT_EQ(shape_errors, 1U);
+    EXPECT_EQ(naming_errors, 0U);
+}
+
+TEST(UiLoader, SkipsTheRootStemRuleForAnUnsavedBuffer) {
+    // arrange an unsaved buffer whose component cannot match the synthetic editor file name (§11.1, §12.2)
+    std::map<std::string, std::string> files;
+    files["preview.ui"] = "component Panel { Column {} }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act the buffer is checked with the file stem rule skipped (§12.2)
+    const std::optional<CheckedFile> checked = loader.check("preview.ui", RootNameCheck::Skipped);
+    // assert the buffer checked without a naming diagnostic, because it has no file stem (§12.2)
+    EXPECT_EQ(diagnostics.count(), 0U);
+    ASSERT_TRUE(checked.has_value());
+    EXPECT_EQ(checked->components.size(), 1U);
+}

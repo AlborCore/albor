@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -11,10 +12,8 @@
 
 #include "albor/compiler/codegen/codegen.h"
 #include "albor/compiler/diagnostic.h"
-#include "albor/compiler/lexer.h"
-#include "albor/compiler/parser.h"
 #include "albor/compiler/type_checker.h"
-#include "albor/compiler/value_type.h"
+#include "albor/compiler/ui_loader.h"
 #include "albor/core/json.h"
 #include "albor/language-server/lsp_server.h"
 
@@ -29,14 +28,20 @@ namespace
         compiler::DiagnosticList diagnostics;
         // the builtin catalog is what a ui file may use without a manifest (§11.1, §8)
         compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
-        // the whole pipeline runs, because a diagnostic may come from any stage (§11.1, §11.3)
-        const std::vector<compiler::Token> tokens = compiler::Lexer(text, diagnostics).tokenize();
-        // the parser builds the untyped tree (§11.1)
-        const compiler::SourceFile file = compiler::Parser(tokens, diagnostics).parse();
-        // the checker resolves it against the catalog (§11.1)
-        const compiler::CheckedFile checked = compiler::TypeChecker(catalog, diagnostics).check(file);
+        // the root buffer is answered by name, because a saved file is what a build compiles (§11.1)
+        const auto reader = [&text](const std::filesystem::path& path) -> std::optional<std::string> {
+            // the corpus has no imports, so only the root name answers (§11.1)
+            return path.generic_string() == "panel.ui" ? std::optional<std::string>(text) : std::nullopt;
+        };
+        // the loader applies the file shape and naming rules the build uses (§11.1, §14.2)
+        compiler::UiImportLoader loader(catalog, diagnostics, reader);
+        // the root is loaded as a saved file, because the agreement compares the build pipeline (§11.1)
+        const std::optional<compiler::CheckedFile> checked = loader.check("panel.ui");
+        // a root that could not be checked stops before generation, because there is no typed tree to generate (§11.3)
+        if (!checked.has_value())
+            return diagnostics.diagnostics();
         // the generator runs too, because codegen reports its own diagnostics (§11.3)
-        (void)compiler::CodeGenerator(diagnostics).generate(checked);
+        (void)compiler::CodeGenerator(diagnostics).generate(*checked);
         // the diagnostics are returned, which is what the agreement compares (§16)
         return diagnostics.diagnostics();
     }
@@ -135,12 +140,15 @@ TEST(LspServerChecks, AFileUriIsDecodedAndAnUnsavedDocumentIsRefused) {
     std::filesystem::remove_all(root, ignored);
     std::filesystem::create_directories(root);
     std::filesystem::copy_file(std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / "icon.png", root / "icon.png", std::filesystem::copy_options::overwrite_existing);
+    // the escaped directory holds its own icon, because the document resolves assets beside itself (§12.2)
+    std::filesystem::create_directories(root / "panel Jj");
+    std::filesystem::copy_file(std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / "icon.png", root / "panel Jj" / "icon.png", std::filesystem::copy_options::overwrite_existing);
     const std::string root_text = root.generic_string();
     const std::string root_uri = "file://" + std::string(root_text.starts_with('/') ? "" : "/") + root_text;
-    // act and assert a complete triplet, an upper case digit and a lower case digit all decode beside the document (§12.2)
+    // act and assert a complete triplet, an upper case digit and a lower case digit all decode in the path (§12.2)
     LspServer server;
     const std::string source = R"(component Panel { in property<image> icon: @image("icon.png"); Column {} })";
-    (void)did_open(server, source, root_uri + "/panel%20%4A%6a.ui");
+    (void)did_open(server, source, root_uri + "/panel%20%4A%6a/panel.ui");
     EXPECT_EQ(server.last_diagnostic_count(), 0U);
     // assert a localhost authority is the local path, because it names this machine (§12.2)
     (void)did_open(server, source, "file://localhost" + std::string(root_text.starts_with('/') ? "" : "/") + root_text + "/panel.ui");
@@ -151,6 +159,43 @@ TEST(LspServerChecks, AFileUriIsDecodedAndAnUnsavedDocumentIsRefused) {
     (void)did_open(server, source, "untitled:panel.ui");
     EXPECT_GT(server.last_diagnostic_count(), 0U);
     std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspServerChecks, ASavedDocumentPublishesTheFileStemRule) {
+    // arrange a saved file whose component does not match its stem, which the build cannot compile (§11.1, §14.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-stem";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the saved name is what the build derives its pair from, so the component must match it (§11.3)
+    const std::string text = R"(component ConsumerPanel { Column {} })";
+    std::ofstream(root / "panel.ui") << text;
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act
+    LspServer server;
+    const Exchange exchange = did_open(server, text, uri);
+    // assert the naming rule reaches the editor as a diagnostic, because it is what the build reports (§11.1)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_EQ(server.last_diagnostic_count(), 1U);
+    const core::Json payload = published(exchange);
+    const core::Json* entries = payload.member("diagnostics");
+    ASSERT_NE(entries, nullptr);
+    ASSERT_EQ(entries->as_array().size(), 1U);
+    const core::Json* code = entries->as_array().at(0).member("code");
+    ASSERT_NE(code, nullptr);
+    EXPECT_EQ(code->as_string(), "E0805");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspServerChecks, AnUnsavedDocumentSkipsTheFileStemRule) {
+    // arrange an unsaved buffer whose component cannot match the synthetic untitled file name (§11.1, §12.2)
+    LspServer server;
+    // act the editor opens a clean buffer with no saved path (§12.2)
+    const Exchange exchange = did_open(server, R"(component Panel { Column {} })", "untitled:panel.ui");
+    // assert the buffer publishes no diagnostics, because it has no file stem to compare (§12.2)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
 }
 
 TEST(LspServerChecks, OpeningADocumentPublishesItsDiagnostics) {
