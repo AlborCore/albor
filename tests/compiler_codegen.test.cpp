@@ -3206,10 +3206,11 @@ TEST(Codegen, EmitsAFunctionAsAGuardedStaticDefinition) {
     const GeneratedFile& cpp = file_named(files, "c.cpp");
     // the forward declaration and the guarded definition both land, because a chunk may share the unit (§11.1, AD-03b)
     EXPECT_TRUE(contains(cpp.content, "#ifndef ALBOR_GENERATED_FN_double"));
-    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static float double(float x);"));
+    // the reserved name takes an underscore, which keeps the generated C++ legal (§14.1)
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static float double_(float x);"));
     EXPECT_TRUE(contains(cpp.content, "return (x * 2.0f);"));
     // the call renders as a plain C++ call, which the static function above defines (§11.1)
-    EXPECT_TRUE(contains(cpp.content, "double(self->m_amount.get())"));
+    EXPECT_TRUE(contains(cpp.content, "double_(self->m_amount.get())"));
 }
 
 TEST(Codegen, AFunctionParameterConvertsByItsDeclaredType) {
@@ -4103,6 +4104,183 @@ component Host {
     const GeneratedFile& host = file_named(files, "host.cpp");
     EXPECT_TRUE(contains(host.content, "void Host::Impl::handle_1_changed(void* raw, [[maybe_unused]] int raw_) {"));
     EXPECT_TRUE(contains(host.content, "self->m_total.set(raw_);"));
+}
+
+TEST(Codegen, AGlobalAndItsUnderscoreTwinGetDistinctNames) {
+    // arrange a reserved global and its underscore twin, which sanitise to the same spelling (§11.1)
+    const std::string_view source = R"(
+global class: int = 1;
+global class_: int = 2;
+
+component C {
+    inout property<int> total: 0;
+
+    Button {
+        on_clicked: {
+            total = class + class_;
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert each global keeps a distinct static and the binding reads both (§11.1)
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const int class_ = 1;"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const int class__ = 2;"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_total.set((class_ + class__));"));
+}
+
+TEST(Codegen, AFunctionAndItsUnderscoreTwinGetDistinctNames) {
+    // arrange two functions that sanitise alike and a component that calls both (§11.1)
+    const std::string_view source = R"(
+fn class(): int {
+    return 1;
+}
+
+fn class_(): int {
+    return 2;
+}
+
+component C {
+    inout property<int> total: 0;
+
+    Button {
+        on_clicked: {
+            total = class() + class_();
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the declarations, definitions and calls all use the distinct spellings (§11.1)
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int class_();"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int class__();"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int class_() {"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int class__() {"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_total.set((class_() + class__()));"));
+}
+
+TEST(Codegen, AFunctionParameterAndItsUnderscoreTwinGetDistinctNames) {
+    // arrange a function whose parameters sanitise alike (§11.1)
+    const std::string_view source = R"(
+fn mix(class: int, class_: int): int {
+    return class + class_;
+}
+
+component C {
+    Label { text: string(mix(1, 2)); }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the signature and the body keep both parameters distinct (§11.1)
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int mix(int class_, int class__);"));
+    EXPECT_TRUE(contains(cpp.content, "return (class_ + class__);"));
+}
+
+TEST(Codegen, AFileLevelFunctionAndAGlobalShareOneNameSet) {
+    // arrange a function and a global whose written names sanitise onto each other (§11.1)
+    const std::string_view source = R"(
+global class_: int = 2;
+
+fn class(): int {
+    return 1;
+}
+
+component C {
+    inout property<int> total: 0;
+
+    Button {
+        on_clicked: {
+            total = class_ + class();
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the function takes the first spelling and the global grows past it (§11.1)
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int class_();"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const int class__ = 2;"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_total.set((class__ + class_()));"));
+}
+
+TEST(Codegen, AGlobalInitializerCallsAFunctionItMustRename) {
+    // arrange a global whose initializer calls a function whose name is a keyword (§11.1)
+    const std::string_view source = R"(
+fn class(): int {
+    return 1;
+}
+
+global total: int = class();
+
+component C {
+    Label { text: string(total); }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the initializer calls the generated spelling, not the written one (§11.1)
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int class_();"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const int total = class_();"));
+}
+
+TEST(Codegen, AThirdTwinGrowsPastTwoUnderscores) {
+    // arrange three globals that sanitise onto one spelling, which the set must grow past twice (§11.1)
+    const std::string_view source = R"(
+global class_: int = 1;
+global class__: int = 2;
+global class: int = 3;
+
+component C {
+    inout property<int> total: 0;
+
+    Button {
+        on_clicked: {
+            total = class_ + class__ + class;
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert each twin appends another underscore and the binding reads all three (§11.1)
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const int class_ = 1;"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const int class__ = 2;"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const int class___ = 3;"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_total.set(((class_ + class__) + class___));"));
+}
+
+TEST(Codegen, TwoSignaturesEachNameTheirReservedParameter) {
+    // arrange two functions that each declare a keyword parameter, which is unique per signature (§11.1)
+    const std::string_view source = R"(
+fn first(class: int): int {
+    return class;
+}
+
+fn second(class: int): int {
+    return class;
+}
+
+component C {
+    Label { text: string(first(1) + second(2)); }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert each signature takes its own first spelling, so the second does not grow (§11.1)
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int first(int class_);"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int second(int class_);"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int first(int class_) {"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static int second(int class_) {"));
 }
 
 TEST(Codegen, PanelAndCardPropertiesReachTheContainer) {
