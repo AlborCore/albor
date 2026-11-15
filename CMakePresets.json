@@ -58,6 +58,16 @@
       }
     },
     {
+      "name": "asan",
+      "inherits": "test",
+      "displayName": "AddressSanitizer (Test configuration lifetime suites)",
+      "cacheVariables": {
+        "ALBOR_ASAN": "ON",
+        "ALBOR_EXAMPLES": "OFF",
+        "ALBOR_TESTS": "ON"
+      }
+    },
+    {
       "name": "coverage",
       "inherits": "base",
       "displayName": "Coverage (instrumented unit tests, dev runtime linked)",
@@ -83,6 +93,11 @@
     {
       "name": "test",
       "configurePreset": "test"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "targets": ["albor-tests"]
     },
     {
       "name": "coverage",
