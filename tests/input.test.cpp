@@ -140,6 +140,12 @@ namespace
         // how many times the manager told this node about the cue (§8.3)
         std::size_t cue_told = 0;
 
+        // whether the window holds key status, which the manager reports (§8.3)
+        bool window_active = true;
+
+        // how many times the manager told this node about the key status (§8.3)
+        std::size_t window_told = 0;
+
         void set_focused(bool value) override {
             // the state is stored, because that is what the assertion reads (§8.3)
             this->focused = value;
@@ -154,6 +160,13 @@ namespace
             cue_visible = visible;
             // the count rises on every report, so a test can see it happened at all (§8.3)
             cue_told++;
+        }
+
+        void set_window_active(bool active) override {
+            // the key status is stored, because that is what the assertion reads (§8.3)
+            window_active = active;
+            // the count rises on every report, so a test can see it happened at all (§8.3)
+            window_told++;
         }
 
         void measure(const SizeConstraints& constraints, Size& out_size) override {
@@ -809,6 +822,26 @@ TEST(FocusManagerChecks, ReturningTheKeyStatusRestoresTheCue) {
     EXPECT_EQ(manager.focused(), &node);
     EXPECT_TRUE(node.cue_visible);
     EXPECT_TRUE(manager.focus_visible());
+}
+
+TEST(FocusManagerChecks, LosingTheKeyStatusTellsTheFocusedTarget) {
+    // arrange a keyboard focused node in a key window (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&node, FocusReason::Keyboard);
+    ASSERT_TRUE(node.window_active);
+    // act the window loses key status
+    manager.set_window_active(false);
+    // assert the owner learned the status, because a caret is suspended by it (§8.3)
+    EXPECT_FALSE(node.window_active);
+    EXPECT_EQ(manager.focused(), &node);
+    // act the window regains it
+    manager.set_window_active(true);
+    // assert the owner learned the return without a focus move (§8.3)
+    EXPECT_TRUE(node.window_active);
+    EXPECT_EQ(manager.change_count(), 1u);
+    EXPECT_EQ(node.window_told, 3u);
 }
 
 TEST(FocusManagerChecks, AKeyStatusReturnDoesNotShowAPointerCue) {

@@ -16,5 +16,11 @@ namespace albor
             // a target that paints no cue has nothing to change, which keeps an older target compiling (§8.3)
             (void)visible;
         }
+
+        // tell the target whether the window holds key status, which suspends a caret without dropping the focus (§8.3)
+        virtual void set_window_active(bool active) {
+            // a target with no timed state has nothing to suspend, which keeps an older target compiling (§8.3)
+            (void)active;
+        }
     };
 } // namespace albor

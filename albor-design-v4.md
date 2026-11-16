@@ -944,6 +944,14 @@ provides.
 - **Focus Management:** A central `FocusManager` per window controls tab key traversal, focus scopes, focus restoration on window reactivation, and accessible keyboard navigation.
 - **IME Architecture:** Text input supports active IME pre-edit composition strings, candidate windows, and cursor positioning as distinct events from physical key strokes.
 
+**The Caret Blink Is a Deadline Toggle and Stops With Key Status (settled during implementation):**
+
+A focused text field toggles its caret every 530 ms, so one full blink cycle is 1060 ms. The toggle
+is a discrete periodic animation: the engine runs its tick only when the period elapses, and a tick
+that changes the caret invalidates the bar rather than requesting a frame on every intervening frame.
+The caret is hidden and the toggle suspended while the window does not hold key status; regaining it
+shows the caret and restarts the period, so an inactive window does not keep waking for the caret.
+
 **Hover Transitions Are Synthesized, Not Delivered (settled during implementation):**
 
 A platform delivers pointer moves. A widget needs to know when the pointer *entered* and *left*

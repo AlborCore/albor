@@ -302,17 +302,95 @@ TEST(AnimationEngineChecks, SchedulingRequestsTheFirstFrame) {
     EXPECT_EQ(requests, 1u);
 }
 
-TEST(AnimationEngineChecks, AStillRunningAnimationRequestsAnotherFrame) {
-    // arrange
+TEST(AnimationEngineChecks, AStillRunningAnimationRequestsNoFrameWithoutAnInvalidation) {
+    // arrange a live animation whose tick changes nothing on this frame (§6.1, §7.3)
     AnimationEngine engine;
     std::size_t requests = 0;
     engine.set_invalidation_handler([&requests] { requests++; });
     (void)engine.schedule([](float) { return true; }, std::chrono::milliseconds(1000));
     requests = 0;
-    // act
+    // act a frame advances the tick
     engine.advance(0.1f);
-    // assert
-    EXPECT_EQ(requests, 1u);
+    // assert the engine asked for no frame, because only the tick's invalidation can produce one (§6.1)
+    EXPECT_EQ(requests, 0u);
+}
+
+TEST(AnimationEngineChecks, APeriodicAnimationWaitsForItsPeriod) {
+    // arrange a discrete animation whose period has not elapsed (§7.3)
+    AnimationEngine engine;
+    std::size_t ticks = 0;
+    (void)engine.schedule_periodic(
+        [&ticks] {
+            ticks++;
+            return true;
+        },
+        std::chrono::milliseconds(530));
+    // act a frame shorter than the period passes
+    const std::size_t ticked = engine.advance(0.5f);
+    // assert the clock moved but the tick did not run, because the deadline is 530 ms (§7.3)
+    EXPECT_EQ(ticks, 0u);
+    EXPECT_EQ(ticked, 0u);
+}
+
+TEST(AnimationEngineChecks, APeriodicAnimationRunsOneTickPerPeriod) {
+    // arrange a discrete animation over a known period (§7.3)
+    AnimationEngine engine;
+    std::size_t ticks = 0;
+    (void)engine.schedule_periodic(
+        [&ticks] {
+            ticks++;
+            return true;
+        },
+        std::chrono::milliseconds(100));
+    // act a frame covers three whole periods
+    const std::size_t ticked = engine.advance(0.35f);
+    // assert every whole period ran its own tick, so a late frame does not skip a toggle (§7.3)
+    EXPECT_EQ(ticks, 3u);
+    EXPECT_EQ(ticked, 3u);
+}
+
+TEST(AnimationEngineChecks, APeriodicAnimationRequestsNoFrame) {
+    // arrange a discrete animation whose tick changes the caret it owns (§6.1, §7.3)
+    AnimationEngine engine;
+    std::size_t requests = 0;
+    engine.set_invalidation_handler([&requests] { requests++; });
+    (void)engine.schedule_periodic([] { return true; }, std::chrono::milliseconds(100));
+    requests = 0;
+    // act a period elapses and the tick runs
+    engine.advance(0.11f);
+    // assert the engine asked for no frame, because the tick's invalidation is the frame signal (§6.1)
+    EXPECT_EQ(requests, 0u);
+}
+
+TEST(AnimationEngineChecks, APeriodicAnimationStopsWhenItsTickRefuses) {
+    // arrange a discrete animation whose first deadline ends it (§7.3)
+    AnimationEngine engine;
+    const AnimationHandle handle = engine.schedule_periodic([] { return false; }, std::chrono::milliseconds(100));
+    // act the period elapses
+    engine.advance(0.11f);
+    // assert the refused tick dropped the animation, so no further frame can reach it (§7.3)
+    EXPECT_EQ(engine.active_count(), 0u);
+    EXPECT_FALSE(engine.running(handle));
+}
+
+TEST(AnimationEngineChecks, PeriodicScheduleRefusesATicklessAnimation) {
+    // arrange an engine with no work to tick (§7.3)
+    AnimationEngine engine;
+    // act a periodic registration names no callback
+    const AnimationHandle handle = engine.schedule_periodic(AnimationPeriodicTick{}, std::chrono::milliseconds(100));
+    // assert the registration is refused rather than stored (§7.3)
+    EXPECT_EQ(handle, 0u);
+    EXPECT_EQ(engine.active_count(), 0u);
+}
+
+TEST(AnimationEngineChecks, PeriodicScheduleRefusesAZeroPeriod) {
+    // arrange an engine with a callback but no deadline (§7.3)
+    AnimationEngine engine;
+    // act a periodic registration names a zero period
+    const AnimationHandle handle = engine.schedule_periodic([] { return true; }, std::chrono::milliseconds(0));
+    // assert the registration is refused, because a zero period would tick every frame (§7.3)
+    EXPECT_EQ(handle, 0u);
+    EXPECT_EQ(engine.active_count(), 0u);
 }
 
 TEST(AnimationEngineChecks, CancelRequestsARedrawOfTheFinalValue) {
@@ -448,6 +526,26 @@ TEST(FramePipelineAnimationChecks, AdvancesTheAttachedAnimations) {
     // assert
     ASSERT_EQ(seen.size(), 1u);
     EXPECT_FLOAT_EQ(seen.front(), 0.25f);
+}
+
+TEST(FramePipelineAnimationChecks, ATickThatInvalidatesTheRootRequestsOneFrame) {
+    // arrange a pipeline over a root and an animation that invalidates it (§6.1, §7.3)
+    BindingEngine engine;
+    FramePipeline pipeline(engine, std::make_unique<AnimationTestNode>());
+    AnimationEngine animations;
+    pipeline.set_animation_engine(&animations);
+    (void)animations.schedule(
+        [&pipeline](float) {
+            // the tick changes the frame, so it invalidates the root it draws through (§6.1)
+            pipeline.root().invalidate();
+            return true;
+        },
+        std::chrono::milliseconds(1000));
+    const std::uint64_t requests = pipeline.request_count();
+    // act a frame advances the tick
+    animations.advance(0.1f);
+    // assert the invalidation is the one frame request, because the engine itself asks for none (§6.1)
+    EXPECT_EQ(pipeline.request_count(), requests + 1u);
 }
 
 TEST(FramePipelineAnimationChecks, AdvancesWithoutAnEngine) {
@@ -642,17 +740,17 @@ TEST(RepeatingAnimationChecks, ARefusingTickEndsARepeatingAnimation) {
     EXPECT_FALSE(engine.running(handle));
 }
 
-TEST(RepeatingAnimationChecks, ARunningBlinkKeepsAskingForFrames) {
-    // arrange
+TEST(RepeatingAnimationChecks, ARepeatingAnimationDoesNotKeepTheFrameLoopAwake) {
+    // arrange a repeating animation with no invalidation of its own (§6.1, §7.3)
     AnimationEngine engine;
     std::size_t requests = 0;
     engine.set_invalidation_handler([&requests] { requests++; });
     (void)engine.schedule_repeating([](float) { return true; }, std::chrono::milliseconds(100));
     const std::size_t after_scheduling = requests;
-    // act
+    // act a frame advances several passes
     engine.advance(0.5f);
-    // assert a repeating animation never empties the engine, so the frame loop keeps ticking (§6.1, §7.3)
-    EXPECT_GT(requests, after_scheduling);
+    // assert the engine asked for no further frame, because only a tick that changes something invalidates (§6.1)
+    EXPECT_EQ(requests, after_scheduling);
 }
 
 TEST(RepeatingAnimationChecks, ALongFrameAccountsForEveryPassItCovered) {

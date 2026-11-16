@@ -189,6 +189,9 @@ namespace albor
         // override: take or drop the focus, which starts or ends the blink a caret is (§8.3)
         void set_focused(bool focused) override;
 
+        // override: suspend the caret while the window does not hold key status, which keeps the focus (§8.3)
+        void set_window_active(bool active) override;
+
         // override: hand out the selection in utf16 units, which is what an input method replaces by range (§8.3)
         [[nodiscard]] TextInputRange selection_range() const override;
 
@@ -388,6 +391,9 @@ namespace albor
         // hand out the thumb colour for the current state, which is null without a theme (§6.1)
         [[nodiscard]] const Color* thumb_colors() const;
 
+        // report whether the caret can paint at all, which the blink tick reads without its phase (§8.3)
+        [[nodiscard]] bool caret_paints() const;
+
         // schedule the blink on the engine the tree was handed, because time is the engine's to advance (§7.3)
         void start_blink();
 
@@ -522,6 +528,9 @@ namespace albor
 
         // whether the field refuses edits but still takes focus (§8.3)
         bool m_read_only = false;
+
+        // whether the window holds key status, which suspends the caret without dropping the focus (§8.3)
+        bool m_window_active = true;
 
         // whether the caret is in its visible blink phase, which a focused field alternates (§8.3)
         bool m_caret_visible = false;
