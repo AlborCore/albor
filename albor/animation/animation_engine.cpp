@@ -32,6 +32,23 @@ namespace albor
         return register_animation(std::move(tick), duration, repeats);
     }
 
+    AnimationHandle AnimationEngine::schedule_periodic(AnimationPeriodicTick tick, AnimationDuration period) {
+        // a discrete animation with no work cannot be ticked, so the registration is refused (§7.3)
+        if (!tick)
+            return 0;
+        // a zero period would tick on every frame without a deadline, so it is refused (§7.3)
+        if (period <= AnimationDuration::zero())
+            return 0;
+        // the handle is taken before the entry is stored, because the entry records its own handle (§7.3)
+        const AnimationHandle handle = m_next_handle++;
+        // the entry starts at zero elapsed and active, which is what a just scheduled animation is (§7.3)
+        m_animations.push_back(Running{.handle = handle, .periodic_tick = std::move(tick), .duration = period, .elapsed = 0.0f, .repeats = ANIMATION_FOREVER, .periodic = true, .active = true});
+        // the first frame is requested, because the schedule is a change the next frame presents (§6.1, §7.3)
+        if (m_invalidation)
+            m_invalidation();
+        return handle;
+    }
+
     AnimationHandle AnimationEngine::register_animation(AnimationTick tick, AnimationDuration duration, AnimationRepeats repeats) {
         // the handle is taken before the entry is stored, because the entry records its own handle (§7.3)
         const AnimationHandle handle = m_next_handle++;
@@ -89,6 +106,27 @@ namespace albor
             running.elapsed += delta_seconds;
             // the duration is read per entry because each animation may have its own (§7.3)
             const float span = static_cast<float>(std::chrono::duration<float>(running.duration).count());
+            // a discrete animation runs one tick per whole period, which is the deadline a caret blink meets (§7.3)
+            if (running.periodic) {
+                // every period the delta covered runs its own tick, so a long frame does not skip a toggle (§7.3)
+                for (std::size_t period = 0; period < MAX_PASSES_PER_FRAME; period++) {
+                    // a period the delta did not reach changes nothing (§7.3)
+                    if (running.elapsed < span)
+                        break;
+                    // the elapsed time rewinds by that period, which is the deadline just met (§7.3)
+                    running.elapsed -= span;
+                    // the discrete work runs, which is the toggle a caret blink is (§7.3)
+                    if (!running.periodic_tick()) {
+                        // a discrete tick that refuses ends the animation immediately (§7.3)
+                        running.active = false;
+                        break;
+                    }
+                    // the period counts as one advanced tick, which is what the loop reports (§7.3)
+                    ticked++;
+                }
+                // a discrete animation asks for no frame here, because its tick invalidates what changed (§6.1, §7.3)
+                continue;
+            }
             // every whole pass the delta covered is accounted for before the tick (§7.3)
             for (std::size_t pass = 0; pass < MAX_PASSES_PER_FRAME; pass++) {
                 // a pass that is not yet over changes nothing (§7.3)
@@ -119,9 +157,7 @@ namespace albor
         }
         // the finished entries are dropped immediately, so active_count never reports a finished animation (§7.3)
         m_animations.erase(std::remove_if(m_animations.begin(), m_animations.end(), [](const Running& running) { return !running.active; }), m_animations.end());
-        // the frame is requested, because an animation that is still running needs another one (§6.1, §7.3)
-        if (!m_animations.empty() && m_invalidation)
-            m_invalidation();
+        // no frame is requested here, because a tick that changed something invalidated its node (§6.1, §7.3)
         return ticked;
     }
 

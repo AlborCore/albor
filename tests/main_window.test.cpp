@@ -2372,3 +2372,51 @@ TEST(MainWindow, AKeyStatusLossHidesTheCueWithoutDroppingTheFocus) {
     // cleanup the window, which owns the tree the button lives in (§8.1)
     EXPECT_TRUE(application.destroy_window(handle));
 }
+
+TEST(MainWindow, AKeyStatusLossSuspendsTheTextFieldCaret) {
+    // arrange a window whose text field is focused by the keyboard (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::TextField* field = nullptr;
+    albor::RootBuilder form = [&field](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns one identifiable field, which is the caret owner under test (§8.1)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the field is the control whose caret the key status changes (§8.3)
+        auto control = std::make_unique<albor::TextField>(&engine, &text, "Albor");
+        // the identity is how the test finds the field after the frame (§18.1)
+        control->set_explicit_id("name");
+        // the pointer is kept for the assertions the test makes (§8.3)
+        field = control.get();
+        // the field joins the column, which is the window tree (§8.1)
+        column->add_child(std::move(control));
+        return column;
+    };
+    albor::WindowOptions options;
+    options.size = albor::Size{600.0f, 400.0f};
+    const albor::WindowHandle handle = application.create_window(options, form);
+    ASSERT_TRUE(handle.valid());
+    // the frame arranges the tree, which gives the field bounds to accept the caret (§8.2)
+    application.pump();
+    ASSERT_NE(field, nullptr);
+    albor::WindowStage* stage = application.stage(handle);
+    ASSERT_NE(stage, nullptr);
+    stage->focus().request_focus(field, albor::FocusReason::Keyboard);
+    ASSERT_TRUE(field->focused());
+    ASSERT_TRUE(field->shows_caret());
+    ASSERT_EQ(stage->animations().active_count(), 1u);
+    // act the platform reports the window lost key status
+    application.window(handle)->on_platform_focus_lost();
+    // assert the owner survived while the caret and its blink were suspended (§8.3)
+    EXPECT_EQ(stage->focus().focused(), field);
+    EXPECT_TRUE(field->focused());
+    EXPECT_FALSE(field->shows_caret());
+    EXPECT_EQ(stage->animations().active_count(), 0u);
+    // act the platform reports the window regained key status
+    application.window(handle)->on_platform_focus_gained();
+    // assert the caret and its blink returned without a new focus change (§8.3)
+    EXPECT_EQ(stage->focus().focused(), field);
+    EXPECT_TRUE(field->shows_caret());
+    EXPECT_EQ(stage->animations().active_count(), 1u);
+    // cleanup the window, which owns the tree the field lives in (§8.1)
+    EXPECT_TRUE(application.destroy_window(handle));
+}

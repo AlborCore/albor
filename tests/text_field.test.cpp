@@ -2562,31 +2562,35 @@ TEST(TextFieldChecks, AFocusedFieldWithAnEngineStartsABlinkThatTheEngineRuns) {
     // assert a blink is running, because a caret that never blinks is a bar (§7.3, §8.3)
     EXPECT_EQ(animations.active_count(), 1u);
     EXPECT_TRUE(field.shows_caret());
-    // act the first half of the pass goes by
+    // act most of the visible half goes by
     (void)animations.advance(0.26f);
-    // assert the caret is still shown, because the visible half runs to the middle (§8.3)
+    // assert the caret is still shown, because the first tick is at 530 ms (§8.3)
     EXPECT_TRUE(field.shows_caret());
-    // act the middle goes by
-    (void)animations.advance(0.02f);
-    // assert the caret is hidden, which is the other half of the rhythm (§8.3)
+    // act the visible half ends
+    (void)animations.advance(0.271f);
+    // assert the caret is hidden, which is the other half of the 1060 ms cycle (§8.3)
     EXPECT_FALSE(field.shows_caret());
-    // act the pass ends
-    (void)animations.advance(0.25f);
-    (void)animations.advance(0.001f);
-    // assert the caret is back, because the blink repeats rather than ending (§7.3)
+    // act the hidden half ends
+    (void)animations.advance(0.53f);
+    // assert the caret is back, because the next deadline toggles it again (§7.3)
     EXPECT_TRUE(field.shows_caret());
 }
 
 TEST(TextFieldChecks, ACaretBlinkDoesNotToggleOncePerFrame) {
-    // arrange a blinking field, counting both its visibility changes and the frames it asked for (§8.3)
+    // arrange a blinking field, counting its visibility changes, its node requests and its engine requests (§8.3)
     EditingTextEngine text;
     AnimationEngine animations;
     TextField field(nullptr, &text, "Albor");
     field.set_animation_engine(&animations);
+    field.set_caret(2);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
     std::size_t frames_asked = 0;
+    std::size_t engine_requests = 0;
     field.set_invalidation_handler([&frames_asked] { frames_asked++; });
+    animations.set_invalidation_handler([&engine_requests] { engine_requests++; });
     field.set_focused(true);
     frames_asked = 0;
+    engine_requests = 0;
     std::size_t turnovers = 0;
     // the state the caret starts in, which a strobe would change on the very first frame (§8.3)
     bool previous = field.shows_caret();
@@ -2600,11 +2604,142 @@ TEST(TextFieldChecks, ACaretBlinkDoesNotToggleOncePerFrame) {
             turnovers++;
         previous = now;
     }
-    // assert the caret turned over about twice in a second rather than sixty times, which is the strobe (§8.3)
-    EXPECT_GE(turnovers, 1u);
-    EXPECT_LE(turnovers, 3u);
-    // assert the frames asked for match the turnovers, because a frame that changes nothing asks for nothing (§6.1)
-    EXPECT_LE(frames_asked, 3u);
+    // assert the caret turned over once in a second, because the half-period is 530 ms (§8.3)
+    EXPECT_EQ(turnovers, 1u);
+    // assert every turnover is the only frame the field asked for, because a quiet tick asks for nothing (§6.1)
+    EXPECT_EQ(frames_asked, 1u);
+    // assert the animation engine asked for no frame, because the tick owns the invalidation (§6.1, §7.3)
+    EXPECT_EQ(engine_requests, 0u);
+}
+
+TEST(TextFieldChecks, ACaretBlinkTurnsOverAboutFourTimesInTwoSeconds) {
+    // arrange a focused field with a caret and a frame counter (§8.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    TextField field(nullptr, &text, "Albor");
+    field.set_animation_engine(&animations);
+    field.set_caret(2);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_focused(true);
+    std::size_t frames_asked = 0;
+    field.set_invalidation_handler([&frames_asked] { frames_asked++; });
+    std::size_t turnovers = 0;
+    // the state the caret starts in, which the first deadline changes (§8.3)
+    bool previous = field.shows_caret();
+    // act two seconds of frames at sixty hertz, which is the window the rhythm is measured in (§6.1)
+    for (int frame = 0; frame < 120; frame++) {
+        (void)animations.advance(1.0f / 60.0f);
+        // the visibility is sampled per frame, because a toggle is only visible on the frame it lands on (§8.3)
+        const bool now = field.shows_caret();
+        // a change is counted rather than asserted per frame, because the deadline decides when one happens (§8.3)
+        if (now != previous)
+            turnovers++;
+        previous = now;
+    }
+    // assert the 1060 ms cycle crosses three transition points inside two seconds, and four at most (§8.3)
+    EXPECT_GE(turnovers, 3u);
+    EXPECT_LE(turnovers, 4u);
+    // assert every transition is the only frame the field asked for, because the periods between ask for none (§6.1)
+    EXPECT_EQ(frames_asked, turnovers);
+}
+
+TEST(TextFieldChecks, ACaretBlinkStopsWhileTheWindowIsInactive) {
+    // arrange a focused field with a running blink (§8.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    TextField field(nullptr, &text, "Albor");
+    field.set_animation_engine(&animations);
+    field.set_caret(2);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_focused(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    ASSERT_TRUE(field.shows_caret());
+    std::size_t frames_asked = 0;
+    std::size_t engine_requests = 0;
+    field.set_invalidation_handler([&frames_asked] { frames_asked++; });
+    animations.set_invalidation_handler([&engine_requests] { engine_requests++; });
+    // act the window loses key status
+    field.set_window_active(false);
+    // assert the blink ended and the visible caret was repainted away (§8.3)
+    EXPECT_EQ(animations.active_count(), 0u);
+    EXPECT_FALSE(field.shows_caret());
+    EXPECT_EQ(frames_asked, 1u);
+    // act two seconds of frames pass while the window is inactive
+    frames_asked = 0;
+    engine_requests = 0;
+    for (int frame = 0; frame < 120; frame++)
+        (void)animations.advance(1.0f / 60.0f);
+    // assert nothing asks for a frame, because no caret is blinking (§6.1, §8.3)
+    EXPECT_EQ(frames_asked, 0u);
+    EXPECT_EQ(engine_requests, 0u);
+    // act the window regains key status
+    field.set_window_active(true);
+    // assert the caret returns visible and the blink runs again (§8.3)
+    EXPECT_TRUE(field.shows_caret());
+    EXPECT_EQ(animations.active_count(), 1u);
+}
+
+TEST(TextFieldChecks, ACaretBlinkLeavesAReadOnlyFieldAlone) {
+    // arrange a focused read only field, which paints no caret (§8.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    TextField field(nullptr, &text, "Albor");
+    field.set_animation_engine(&animations);
+    field.set_caret(2);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_read_only(true);
+    field.set_focused(true);
+    std::size_t frames_asked = 0;
+    field.set_invalidation_handler([&frames_asked] { frames_asked++; });
+    // act two seconds of blink deadlines pass
+    for (int frame = 0; frame < 120; frame++)
+        (void)animations.advance(1.0f / 60.0f);
+    // assert the field asked for no frame, because no caret is painted to change (§6.1, §8.3)
+    EXPECT_EQ(frames_asked, 0u);
+    EXPECT_FALSE(field.shows_caret());
+}
+
+TEST(TextFieldChecks, ACaretBlinkLeavesASelectionAlone) {
+    // arrange a focused field with a selection, which paints the highlight instead of a bar (§8.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    TextField field(nullptr, &text, "Albor");
+    field.set_animation_engine(&animations);
+    field.set_caret(2);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_selection(1, 3);
+    field.set_focused(true);
+    std::size_t frames_asked = 0;
+    field.set_invalidation_handler([&frames_asked] { frames_asked++; });
+    // act two seconds of blink deadlines pass
+    for (int frame = 0; frame < 120; frame++)
+        (void)animations.advance(1.0f / 60.0f);
+    // assert the field asked for no frame, because the selection suppresses the caret (§6.1, §8.3)
+    EXPECT_EQ(frames_asked, 0u);
+    EXPECT_FALSE(field.shows_caret());
+}
+
+TEST(TextFieldChecks, ACaretDoesNotBlinkWhenFocusedWhileTheWindowIsInactive) {
+    // arrange an inactive window and a field with an engine (§8.3, §7.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    TextField field(nullptr, &text, "Albor");
+    field.set_animation_engine(&animations);
+    field.set_caret(2);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    FocusManager manager;
+    manager.set_window_active(false);
+    // act the focus arrives while the window is inactive
+    manager.request_focus(&field, FocusReason::Keyboard);
+    // assert the field holds the focus but runs no blink and shows no caret (§8.3)
+    EXPECT_TRUE(field.focused());
+    EXPECT_EQ(animations.active_count(), 0u);
+    EXPECT_FALSE(field.shows_caret());
+    // act the window regains key status
+    manager.set_window_active(true);
+    // assert the caret and its blink return on activation (§8.3)
+    EXPECT_TRUE(field.shows_caret());
+    EXPECT_EQ(animations.active_count(), 1u);
 }
 
 TEST(TextFieldChecks, AFieldDestroyedWhileBlinkingLeavesNoAnimationBehind) {

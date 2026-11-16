@@ -6169,8 +6169,8 @@ TEST(TextFieldBlinkChecks, ACaretBlinkDamagesOnlyTheCaret) {
     field.arrange(bounds);
     field.set_focused(true);
     field.clear_damage_region();
-    // act the first half turns over, which hides the caret (§7.3)
-    animations.advance(0.4f);
+    // act the first half-period elapses, which hides the caret (§7.3)
+    animations.advance(0.53f);
     // assert the damage is the caret bar rather than the whole plate, because nothing else changed (§6.1, §8.3)
     ASSERT_TRUE(field.damage_region().has_value());
     EXPECT_LT(field.damage_region()->width, bounds.width * 0.5f);

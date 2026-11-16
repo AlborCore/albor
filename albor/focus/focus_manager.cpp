@@ -83,6 +83,9 @@ namespace albor
         // a window with no owner has no cue to hide, which leaves the status alone (§8.3)
         if (m_focused == nullptr)
             return;
+        // the owner is told the key status, because a caret it runs is suspended by the same status (§8.3)
+        if (auto* target = dynamic_cast<FocusTarget*>(m_focused))
+            target->set_window_active(active);
         // the owner repaints through the effective cue, which is now the desired one or clear (§8.3)
         apply_focus_visibility();
         // the frame request reaches the tree, because the cue is a visual change (§6.1, §8.3)
@@ -206,9 +209,12 @@ namespace albor
             // the node knows its focus changed, because that is what its semantic state reports (§8.3, §10.1)
             m_focused->invalidate();
         }
-        // a node that tracks the focus is told it took it, which is what starts a caret (§8.3)
-        if (auto* target = dynamic_cast<FocusTarget*>(node))
+        // a node that tracks the focus learns the key status first, because a caret starts only in a key window (§8.3)
+        if (auto* target = dynamic_cast<FocusTarget*>(node)) {
+            target->set_window_active(m_window_active);
+            // the node learns it took the focus, which is what starts a caret when the window is key (§8.3)
             target->set_focused(true);
+        }
         // the new holder is stored, so the keyboard path routes to it (§8.3)
         m_focused = node;
         // the origin decides the cue the new owner asked for, which a pointer press hides (§8.3)

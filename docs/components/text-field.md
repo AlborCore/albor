@@ -248,3 +248,6 @@ field->clear_decorations();
   follows. A multi-line field inserts the break and claims the key instead.
 - `read_only` keeps the text selectable and focusable while refusing edits; `disabled`
   refuses everything and drops out of focus traversal.
+- The caret blinks with 530 ms on and 530 ms off, a 1060 ms cycle. The blink is suspended and the
+  caret hidden while the window does not hold key status; the caret returns visible when the window
+  becomes key again.

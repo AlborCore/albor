@@ -12,7 +12,7 @@ namespace albor
 {
     namespace
     {
-        // how long one half of a caret blink lasts, which is the platform rhythm (§8.3)
+        // how long one half of a caret blink lasts, which is the period of its toggle (§8.3)
         constexpr long CARET_BLINK_MS = 530;
 
         // a run this short is cheaper to paint whole than to split into a visible subset (§6.2)
@@ -147,18 +147,20 @@ namespace albor
             m_undo_owner->revoke();
     }
 
-    bool TextField::shows_caret() const {
-        // a hidden or disabled field is not edited, so it shows no caret (§8.3)
-        if (disabled() || !visible())
-            return false;
-        // a read only field takes a caret for navigation but edits nothing, so it shows none (§8.3)
-        if (m_read_only)
+    bool TextField::caret_paints() const {
+        // a hidden, disabled or read only field paints no caret, because it is not edited here (§8.3)
+        if (disabled() || !visible() || m_read_only)
             return false;
         // a field with a selection shows the highlight rather than a bar (§8.3)
         if (has_selection())
             return false;
-        // a field the focus has not reached shows no caret, because that is where a caret means something (§8.3)
-        if (!focused())
+        // a caret belongs to the focused field of a key window, which is where editing happens (§8.3)
+        return focused() && m_window_active;
+    }
+
+    bool TextField::shows_caret() const {
+        // the caret shows only where the blink can paint, which is the state the tick reads (§8.3)
+        if (!caret_paints())
             return false;
         // a blink that is in its hidden phase shows nothing this frame (§8.3)
         return m_caret_visible;
@@ -179,38 +181,69 @@ namespace albor
             invalidate();
             return;
         }
-        // taking the focus shows the caret at once, because a caret that appears a frame later reads as absent (§8.3)
-        m_caret_visible = true;
+        // taking the focus shows the caret at once while the window is key, because a late caret reads as absent (§8.3)
+        m_caret_visible = m_window_active;
         // the blink starts on the engine the tree was handed, because time is its to advance (§7.3)
         start_blink();
+        invalidate();
+    }
+
+    void TextField::set_window_active(bool active) {
+        // an unchanged key status changes nothing, so the blink is left alone (§8.3)
+        if (m_window_active == active)
+            return;
+        // the status is stored first, because the caret state reads it (§8.3)
+        m_window_active = active;
+        // losing key status ends the blink and hides the caret, because nothing is editing any more (§8.3)
+        if (!active) {
+            // the caret is read before the blink clears it, so only a visible one asks for a repaint (§6.1)
+            const bool was_visible = m_caret_visible;
+            // the blink ends with the key status, because no clock should run in an inactive window (§7.3)
+            stop_blink();
+            // the caret hides with the blink, because a window without key status shows none (§8.3)
+            m_caret_visible = false;
+            // a hidden caret leaves nothing to repaint, so an already hidden one asks for no frame (§6.1)
+            if (was_visible)
+                invalidate();
+            return;
+        }
+        // an unfocused field has no caret to restore, because the focus owns it (§8.3)
+        if (!focused())
+            return;
+        // the caret returns at once on activation, because one that appears a frame later reads as absent (§8.3)
+        m_caret_visible = true;
+        // the blink resumes on the engine the tree hands down, because the window is key again (§7.3)
+        start_blink();
+        // the restored caret is a visual change, so it asks for one frame (§6.1)
         invalidate();
     }
 
     void TextField::start_blink() {
         // the blink is stopped first, because a fresh phase owns the old handle (§7.3)
         stop_blink();
+        // a window without key status shows no caret, so no clock runs until it returns (§8.3)
+        if (!m_window_active)
+            return;
         // a field with no engine has no clock to run against, so the caret stays solid (§7.3)
         AnimationEngine* engine = animation_engine();
         if (engine == nullptr)
             return;
         // the engine that issues the handle is remembered, because a later tree move may hand another one (§7.3)
         m_blink_engine = engine;
-        // the blink runs for as long as the field holds the focus, which is a repeating animation (§7.3)
-        m_blink = engine->schedule_repeating(
-            [this](float phase) {
-                // the caret is shown for the first half of every pass, which reads the phase (§8.3)
-                const bool visible = phase < 0.5f;
-                // a frame inside the same half changes nothing, so it invalidates nothing (§6.1)
-                if (visible == m_caret_visible)
+        // the blink toggles once per half-period for as long as the field holds the focus (§7.3)
+        m_blink = engine->schedule_periodic(
+            [this] {
+                // each deadline flips the half, which is the whole of a caret blink (§8.3)
+                m_caret_visible = !m_caret_visible;
+                // a caret no state can paint leaves the frame alone, because only a visible bar changes one (§6.1)
+                if (!caret_paints())
                     return true;
-                // the half turned over, so the caret is where the phase says (§6.1)
-                m_caret_visible = visible;
                 // the field clips the bar, so only the visible part of it can change a pixel (§6.2)
                 const Rect bar = caret_rect().intersect(bounds());
-                // a caret scrolled out of the field changes nothing, so the half asks for no frame (§6.1)
+                // a caret scrolled out of the field changes nothing, so the tick asks for no frame (§6.1)
                 if (bar.empty())
                     return true;
-                // the bar is the only pixel the half changes, so the frame is bounded to it (§6.1, §8.3)
+                // the bar is the only pixel the tick changes, so the frame is bounded to it (§6.1, §8.3)
                 invalidate(bar);
                 // the blink keeps running until the focus leaves, which cancel is for (§7.3)
                 return true;
@@ -241,8 +274,8 @@ namespace albor
     }
 
     void TextField::restart_blink() {
-        // the caret shows again, because a move or an edit brings it back (§8.3)
-        m_caret_visible = true;
+        // the caret shows again while the window is key, because a move or an edit brings it back (§8.3)
+        m_caret_visible = m_window_active;
         // a field that holds no focus is not blinking at all (§8.3)
         if (!focused())
             return;
