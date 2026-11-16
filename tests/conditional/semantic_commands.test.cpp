@@ -1,11 +1,13 @@
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <gtest/gtest.h>
 
 #include "albor/automation/automation_session.h"
 #include "albor/automation/semantic_commands.h"
+#include "albor/core/json.h"
 #include "albor/semantics/semantic_provider.h"
 
 using namespace albor;
@@ -192,6 +194,95 @@ namespace
             // the commands are registered over the snapshot, which is what a host wires (§10.3, AD-20)
             register_semantic_commands(registry, [this] { return &tree; });
             // every command is permitted, because the allow list is tested in the automation suite (§10.3, AD-10)
+            for (const std::string& name : semantic_command_names())
+                registry.allow(name);
+            // the session is built, which mints the token this test presents (§10.3, AD-10)
+            session = std::make_unique<AutomationSession>(registry);
+        }
+
+        // run one line as an authenticated client, which is how every assertion below reaches a command (§10.3)
+        AutomationResult run(const std::string& line) {
+            // the handshake happens once, because a command before it would be refused (§10.3, AD-10)
+            (void)session->handle(encode_handshake(session->token()));
+            // the line is sent, which is the whole of the client's part (§10.3)
+            return session->handle(line);
+        }
+    };
+
+    // the fixture that publishes one node of each scalar shape, which the typed reads assert against (§10.1)
+    struct ScalarFixture
+    {
+        // the tree the commands read, which the fixture fills before the session exists (§10.3)
+        SemanticTree tree;
+
+        // the registry under test, which permits every semantic command (§10.3, AD-10)
+        AutomationRegistry registry;
+
+        // the session, which authenticates the way a real client does (§10.3)
+        std::unique_ptr<AutomationSession> session;
+
+        ScalarFixture() {
+            // the slider publishes a bounded number, which the value command reads as a number (§10.1)
+            SemanticNode slider{SemanticRole::Slider};
+            // the id is the only selector automation offers (§18.1, AD-11)
+            slider.set_explicit_id("level");
+            // the name is what a reader announces for the control (§10.1)
+            slider.set_name("Level");
+            // the range is the numeric value and the bounds a client reads, with a write that carries it (§10.1)
+            slider.set_range(SemanticRange{.value = 0.5, .minimum = 0.0, .maximum = 1.0, .step = 0.1}, [](double) {});
+            // the slider joins the tree under its own index (§10.1)
+            tree.add(std::move(slider));
+            // the unchecked box publishes the false half of a boolean (§10.1)
+            SemanticNode check{SemanticRole::Checkbox};
+            // the id is what the value query selects (§18.1, AD-11)
+            check.set_explicit_id("armed");
+            // the name is the accessible label a reader speaks (§10.1)
+            check.set_name("Armed");
+            // the unchecked state is the boolean false the query reports (§10.1)
+            check.set_check(CheckState::Unchecked);
+            // the box joins the tree beside the slider (§10.1)
+            tree.add(std::move(check));
+            // the mixed box publishes the third state, which has no boolean answer (§10.1)
+            SemanticNode mixed{SemanticRole::Checkbox};
+            // the id is what the value query selects (§18.1, AD-11)
+            mixed.set_explicit_id("mixed");
+            // the name is the accessible label a reader speaks (§10.1)
+            mixed.set_name("Mixed");
+            // the indeterminate state is the third answer the value command names (§10.1)
+            mixed.set_check(CheckState::Indeterminate);
+            // the box joins the tree beside the other two (§10.1)
+            tree.add(std::move(mixed));
+            // the field publishes text, which a form test reads back (§10.1)
+            SemanticNode field{SemanticRole::TextField};
+            // the id is what the value query selects (§18.1, AD-11)
+            field.set_explicit_id("name");
+            // the name is the accessible label a reader speaks (§10.1)
+            field.set_name("Name");
+            // the value is the text the field edits (§10.1)
+            field.set_value("alpha");
+            // the field joins the tree with the other scalar nodes (§10.1)
+            tree.add(std::move(field));
+            // the button publishes no value at all, which the query refuses (§10.1)
+            SemanticNode button{SemanticRole::Button};
+            // the id is what the refusal names (§18.1, AD-11)
+            button.set_explicit_id("press");
+            // the name is the accessible label a reader speaks (§10.1)
+            button.set_name("Press");
+            // the button joins the tree with the other scalar nodes (§10.1)
+            tree.add(std::move(button));
+            // the rect node publishes the arranged area, which the bounds query answers (§10.1)
+            SemanticNode panel{SemanticRole::Group};
+            // the id is what the bounds query selects (§18.1, AD-11)
+            panel.set_explicit_id("panel");
+            // the name is the accessible label a reader speaks (§10.1)
+            panel.set_name("Panel");
+            // the rect is the logical window area the layout assigned (§8.2)
+            panel.set_bounds(Rect::from_origin_size(Point{16.0f, 24.0f}, Size{120.0f, 40.0f}));
+            // the panel joins the tree with the other scalar nodes (§10.1)
+            tree.add(std::move(panel));
+            // the commands are registered over the snapshot, which is what a host wires (§10.3, AD-20)
+            register_semantic_commands(registry, [this] { return &tree; });
+            // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
             for (const std::string& name : semantic_command_names())
                 registry.allow(name);
             // the session is built, which mints the token this test presents (§10.3, AD-10)
@@ -847,4 +938,144 @@ TEST(SemanticCommands, TheSelectionStatesCarryNoTokenWhenTheyDoNotHold) {
     EXPECT_EQ(result.payload.find(" disabled"), std::string::npos);
     EXPECT_EQ(result.payload.find(" selected"), std::string::npos);
     EXPECT_EQ(result.payload.find(" focused"), std::string::npos);
+}
+
+TEST(SemanticCommands, AValueQueryAnswersANumber) {
+    // arrange a tree whose slider publishes a bounded number (§10.1)
+    ScalarFixture fixture;
+    // act the value query names the node by identity (§10.3, AD-11)
+    const AutomationResult result = fixture.run("semantic.value level");
+    // assert the answer is a number rather than text, which is what removes the dump parsing (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.kind, ValueKind::Number);
+    EXPECT_DOUBLE_EQ(std::stod(result.payload), 0.5);
+}
+
+TEST(SemanticCommands, AValueQueryAnswersABoolean) {
+    // arrange a tree whose box publishes the false half of a boolean (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.value armed");
+    // assert the answer is a boolean, which a form test reads without a parser (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.kind, ValueKind::Boolean);
+    EXPECT_EQ(result.payload, "no");
+}
+
+TEST(SemanticCommands, AValueQueryNamesAnIndeterminateCheck) {
+    // arrange a tree whose box publishes the third check state (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.value mixed");
+    // assert the third state is named rather than forced into a boolean (§10.1, §10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.kind, ValueKind::Text);
+    EXPECT_EQ(result.payload, "indeterminate");
+}
+
+TEST(SemanticCommands, AValueQueryAnswersText) {
+    // arrange a tree whose field publishes a string (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.value name");
+    // assert the field value is answered as text, which an edit test reads back (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.kind, ValueKind::Text);
+    EXPECT_EQ(result.payload, "alpha");
+}
+
+TEST(SemanticCommands, AValueQueryRefusesANodeWithNoValue) {
+    // arrange a tree whose button publishes no value (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.value press");
+    // assert the refusal names the node, because an empty answer would read as an empty value (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("no value on node: press"), std::string::npos);
+}
+
+TEST(SemanticCommands, AValueQueryNeedsAnId) {
+    // arrange a tree of scalar nodes (§10.1)
+    ScalarFixture fixture;
+    // act the query names no node
+    const AutomationResult result = fixture.run("semantic.value");
+    // assert a query with no selector is refused rather than defaulted (§10.3, AD-11)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("needs an id"), std::string::npos);
+}
+
+TEST(SemanticCommands, ABoundsQueryAnswersTheLogicalRect) {
+    // arrange a tree whose panel publishes the arranged area (§8.2, §10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.bounds panel");
+    // assert the answer is json, because a client reads the four fields as one rect (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.kind, ValueKind::Json);
+    // the payload is parsed, because a client reads it the same way (§10.3)
+    const std::optional<core::Json> bounds = core::Json::parse(result.payload);
+    ASSERT_TRUE(bounds.has_value());
+    // each field is the logical coordinate the layout assigned (§8.2)
+    ASSERT_NE(bounds->member("x"), nullptr);
+    ASSERT_NE(bounds->member("y"), nullptr);
+    ASSERT_NE(bounds->member("width"), nullptr);
+    ASSERT_NE(bounds->member("height"), nullptr);
+    EXPECT_DOUBLE_EQ(bounds->member("x")->as_number(), 16.0);
+    EXPECT_DOUBLE_EQ(bounds->member("y")->as_number(), 24.0);
+    EXPECT_DOUBLE_EQ(bounds->member("width")->as_number(), 120.0);
+    EXPECT_DOUBLE_EQ(bounds->member("height")->as_number(), 40.0);
+}
+
+TEST(SemanticCommands, ABoundsQueryRefusesAnUnknownId) {
+    // arrange a tree of scalar nodes (§10.1)
+    ScalarFixture fixture;
+    // act the query names no node
+    const AutomationResult result = fixture.run("semantic.bounds absent");
+    // assert the refusal names the selector, because a missing rect must not answer as zero (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("no node with id: absent"), std::string::npos);
+}
+
+TEST(SemanticCommands, AValueQueryAnswersTheCheckedHalf) {
+    // arrange a tree whose armed box is moved to the checked half (§10.1)
+    ScalarFixture fixture;
+    fixture.tree.mutable_at(1)->set_check(CheckState::Checked);
+    // act
+    const AutomationResult result = fixture.run("semantic.value armed");
+    // assert the checked half is the boolean true, which the unchecked test does not cover (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.kind, ValueKind::Boolean);
+    EXPECT_EQ(result.payload, "yes");
+}
+
+TEST(SemanticCommands, AValueQueryTakesOneId) {
+    // arrange a tree of scalar nodes (§10.1)
+    ScalarFixture fixture;
+    // act the query names a second argument, which the command does not take
+    const AutomationResult result = fixture.run("semantic.value level extra");
+    // assert the excess argument is refused rather than ignored, because the wire is positional (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("takes an id"), std::string::npos);
+}
+
+TEST(SemanticCommands, ABoundsQueryTakesOneId) {
+    // arrange a tree of scalar nodes (§10.1)
+    ScalarFixture fixture;
+    // act the query names a second argument, which the command does not take
+    const AutomationResult result = fixture.run("semantic.bounds panel extra");
+    // assert the excess argument is refused rather than ignored, because the wire is positional (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("takes an id"), std::string::npos);
+}
+
+TEST(SemanticCommands, TheTreeDumpCarriesNoRectToken) {
+    // arrange a tree whose panel has a rect, which the dump must still not carry (§10.1, §10.3)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.tree");
+    // assert the dump stays the state surface, because a rect token would duplicate the bounds query (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.payload.find("bounds="), std::string::npos);
+    EXPECT_EQ(result.payload.find(" x="), std::string::npos);
+    EXPECT_EQ(result.payload.find(" width="), std::string::npos);
 }

@@ -61,6 +61,21 @@ namespace albor::automation
             // a client names its arguments while the wire is positional, so the order comes from here (§10.3)
             if (command == "semantic.find")
                 return {"id"};
+            // a value read names the node it reads (§10.3)
+            if (command == "semantic.value")
+                return {"id"};
+            // a bounds read names the node it measures (§10.3)
+            if (command == "semantic.bounds")
+                return {"id"};
+            // a click names the control it presses (§10.3)
+            if (command == "input.click")
+                return {"id"};
+            // a raw pointer event names the node, the action and its optional point (§10.3)
+            if (command == "input.pointer")
+                return {"id", "action", "x", "y"};
+            // a key press names the key and its optional modifiers (§10.3)
+            if (command == "input.key")
+                return {"key", "modifiers"};
             // an invocation names both the node and the action it runs (§10.3)
             if (command == "semantic.actions")
                 return {"id"};
@@ -272,6 +287,9 @@ namespace albor::automation
                     // the capture formats are the two this build carries, which a client picks by name (§6.3)
                     if (name == SCREENSHOT_COMMAND && parameter == "format")
                         property.set("enum", core::Json(std::vector<core::Json>{core::Json(std::string(PNG_FORMAT)), core::Json(std::string(RAW_FORMAT))}));
+                    // the pointer actions are the four events the command delivers, which a client picks by name (§10.3)
+                    if (name == "input.pointer" && parameter == "action")
+                        property.set("enum", core::Json(std::vector<core::Json>{core::Json(std::string("press")), core::Json(std::string("move")), core::Json(std::string("release")), core::Json(std::string("cancel"))}));
                     // the description states what the parameter means for this command (§10.3)
                     property.set("description", core::Json("the " + parameter + " this command takes"));
                     // the property joins the schema (§10.3)

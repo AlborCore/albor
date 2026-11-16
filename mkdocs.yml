@@ -74,4 +74,5 @@ nav:
       - TabView: components/tab-view.md
       - TextField: components/text-field.md
   - Tooling: tooling.md
+  - Automation and MCP: automation.md
   - Status and platforms: status.md

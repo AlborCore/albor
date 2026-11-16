@@ -67,7 +67,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Manifest, glue generator and C++ codegen | Full | generated facades build on Windows |
 | Dev runtime and hot swap | Dev/Test | excluded from Release at link time |
 | LSP, preview host and inspector | Dev/Test | excluded from Release at link time |
-| Automation core and MCP server | Dev/Test | named-pipe transport; 10 transport tests and a host MCP exchange test |
+| Automation core and MCP server | Dev/Test | named-pipe transport; 10 transport tests and a host MCP exchange test; layout bounds, pointer/key input and typed value reads |
 | Accessibility | Full with gaps | UI Automation; 21 role tests and 1 client test; range and text writes and expand/collapse patterns exposed; radio-group selection is not exposed |
 | Examples (`hello-world`, `form`, `vertical-slice`) | Full | all build on macOS; the vertical slice is driven end to end through the MCP automation host and captures PNG frames |
 
@@ -98,7 +98,7 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 | C++ code generator, facade emission | `compiler/` | shipped |
 | Dev runtime extension, IR loader, hot swap | `devrt/` | Dev only |
 | LSP, preview host, inspector | `language-server/`, `preview/`, `inspector/` | Dev/Test only |
-| Automation core, MCP server | `automation/`, `inspector/` | Dev/Test only — unix socket on macOS, named pipe on Windows |
+| Automation core, MCP server | `automation/` | Dev/Test only — unix socket on macOS, named pipe on Windows; layout bounds, pointer/key input and typed value reads |
 | Platform accessibility adapters | `accessibility/` | shipped on macOS and Windows — NSAccessibility and UI Automation; AT-SPI planned |
 
 ## Language coverage
@@ -124,5 +124,5 @@ component composition and inheritance with `@children` — see
 The suite is self-contained — Google Test for C++, no external fixtures. Beyond per-file
 tests the architecture defines cross-cutting suites
 ([Tooling](tooling.md#what-the-test-suite-covers)): dual-engine conformance, GPU/software
-parity, LSP/compiler agreement, manifest consistency, and build-scope checks. The software
-renderer is the screenshot reference.
+parity, LSP/compiler agreement, manifest consistency, build-scope checks, and the automation
+reference test against the form sample. The software renderer is the screenshot reference.
