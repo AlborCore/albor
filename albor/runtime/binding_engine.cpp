@@ -248,6 +248,8 @@ namespace albor
 
     std::size_t BindingEngine::settle() {
         std::size_t passes = 0;
+        // the diagnostic belongs to this settle, so a previous cycle does not leak into it (§7.3)
+        m_cycle_detected = false;
         std::vector<BindingId> order;
         // a nested settle restores the outer order when it returns (§7.3)
         std::vector<BindingId>* const previous_order = m_settle_order;
@@ -296,8 +298,9 @@ namespace albor
         }
         // the order pointer belongs to this call, so a later write does not touch a dead vector (§7.3)
         m_settle_order = previous_order;
-        // spending the whole budget while work remains is the dynamic cycle diagnostic (§7.3)
-        m_cycle_detected = dirty_count() > 0;
+        // a visited cycle survives, and work left after the whole budget is the other signal (§7.3, AD-04c)
+        const bool budget_spent_with_work = passes == EVALUATION_BUDGET && dirty_count() > 0;
+        m_cycle_detected = m_cycle_detected || budget_spent_with_work;
         return passes;
     }
 

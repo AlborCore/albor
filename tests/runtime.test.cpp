@@ -982,6 +982,68 @@ TEST(BindingEngine, ACycleLeavesWorkBehindAfterTheBudget) {
     EXPECT_TRUE(engine.bound(second_binding));
 }
 
+TEST(BindingEngine, AVisitedCycleIsFlaggedEvenWhenItLeavesNoWork) {
+    // arrange two bindings that read each other and write nothing, which is a visited cycle (§7.3)
+    BindingEngine engine;
+    const std::uint32_t base = engine.begin_component();
+    const PropertyId first{.base = base, .slot = 0};
+    const PropertyId second{.base = base, .slot = 1};
+    // the first binding reads the second, which closes the cycle when the second is bound (§7.3)
+    const BindingId first_binding = engine.bind(first, {second}, [] {});
+    // the second binding reads the first, and neither evaluator leaves dirty work (§7.3)
+    const BindingId second_binding = engine.bind(second, {first}, [] {});
+    // act
+    const std::size_t passes = engine.settle();
+    // assert the walk found the cycle even though the pass ended clean (§7.3, AD-04c)
+    EXPECT_EQ(passes, 1u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_TRUE(engine.cycle_detected());
+    EXPECT_TRUE(engine.bound(first_binding));
+    EXPECT_TRUE(engine.bound(second_binding));
+}
+
+TEST(BindingEngine, AConvergingSettleAtTheBudgetBoundaryIsNotFlagged) {
+    // arrange a binding that asks for another pass for exactly the whole budget, then stops (§7.3)
+    BindingEngine engine;
+    const std::uint32_t base = engine.begin_component();
+    const PropertyId loop{.base = base, .slot = 0};
+    std::size_t runs = 0;
+    // the self dependency is skipped by the walk, so this is a converging settle, not a visited cycle (§7.3)
+    const BindingId binding = engine.bind(loop, {loop}, [&engine, &runs, loop] {
+        // each evaluation is counted, because the budget boundary is the number of runs (§7.3)
+        runs++;
+        // the last evaluation leaves nothing dirty, which is the convergence the diagnostic must accept (§7.3, AD-04c)
+        if (runs < BindingEngine::EVALUATION_BUDGET)
+            engine.notify_changed(loop);
+    });
+    // act
+    const std::size_t passes = engine.settle();
+    // assert the settle spent the budget but converged, so the cycle flag stays false (§7.3, AD-04c)
+    EXPECT_EQ(passes, BindingEngine::EVALUATION_BUDGET);
+    EXPECT_EQ(runs, BindingEngine::EVALUATION_BUDGET);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+    EXPECT_TRUE(engine.bound(binding));
+}
+
+TEST(BindingEngine, ACleanSettleClearsThePreviousCycle) {
+    // arrange a visited cycle that leaves no work, which the first settle flags (§7.3)
+    BindingEngine engine;
+    const std::uint32_t base = engine.begin_component();
+    const PropertyId first{.base = base, .slot = 0};
+    const PropertyId second{.base = base, .slot = 1};
+    (void)engine.bind(first, {second}, [] {});
+    (void)engine.bind(second, {first}, [] {});
+    engine.settle();
+    ASSERT_TRUE(engine.cycle_detected());
+    // act the same graph settles again with nothing dirty, so the walk does not run (§7.3)
+    const std::size_t passes = engine.settle();
+    // assert the diagnostic belongs to the settle that ran, not to the previous one (§7.3)
+    EXPECT_EQ(passes, 0u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
 TEST(BindingEngine, AnAcyclicSettleIsNotFlaggedAsACycle) {
     // arrange
     BindingEngine engine;

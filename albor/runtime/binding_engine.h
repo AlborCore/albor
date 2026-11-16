@@ -88,10 +88,10 @@ namespace albor
         // hand out how many evaluations the engine has performed, which a test asserts on
         [[nodiscard]] std::size_t evaluation_count() const;
 
-        // report whether a settle spent its whole budget, which is the dynamic cycle diagnostic (§7.3)
+        // report whether the last settle found a cycle or spent its whole budget with work remaining (§7.3, AD-04c)
         [[nodiscard]] bool cycle_detected() const;
 
-        // forget the cycle diagnostic, which a test clears between cases
+        // forget the cycle diagnostic without running a settle, which a test clears a case with (§7.3)
         void clear_cycle();
 
     private:
@@ -168,7 +168,7 @@ namespace albor
         // how many evaluations the engine has performed
         std::size_t m_evaluations = 0;
 
-        // whether a settle spent its whole budget without converging (§7.3)
+        // whether the last settle found a cycle or spent its budget with work remaining (§7.3, AD-04c)
         bool m_cycle_detected = false;
     };
 } // namespace albor
