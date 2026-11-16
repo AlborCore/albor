@@ -17,6 +17,7 @@
 #include "albor/render/glyph_outline.h"
 #include "albor/render/image_resource.h"
 #include "albor/render/line_batch.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/path_resource.h"
 #include "albor/render/picture_resource.h"
 #include "albor/render/render_context.h"
@@ -127,6 +128,15 @@ namespace
 
         // the destination of every drawn image, parallel to the images
         std::vector<Rect> drawn_image_destinations;
+
+        // the retained meshes the surface was asked to draw, in order
+        std::vector<std::shared_ptr<const MeshResource>> drawn_meshes;
+
+        // the texture of every drawn mesh, parallel to the meshes
+        std::vector<std::shared_ptr<const ImageResource>> drawn_mesh_textures;
+
+        // the paint of every drawn mesh, parallel to the meshes
+        std::vector<Paint> drawn_mesh_paints;
 
         void save() override {
             save_count++;
@@ -239,6 +249,13 @@ namespace
             drawn_images.push_back(image);
             drawn_image_destinations.push_back(destination);
             draw_log.emplace_back("image");
+        }
+
+        void draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) override {
+            drawn_meshes.push_back(mesh);
+            drawn_mesh_textures.push_back(texture);
+            drawn_mesh_paints.push_back(paint);
+            draw_log.emplace_back("mesh");
         }
 
     private:
@@ -3002,4 +3019,213 @@ TEST(GlyphOutlineCacheChecks, DropsEverythingItIsAskedToDrop) {
     cache.clear();
     // assert nothing is held, because the clear dropped every entry (§2.2)
     EXPECT_EQ(cache.count(), 0u);
+}
+
+TEST(MeshResource, AFactoryMeshCarriesItsIdVerticesAndIndices) {
+    // arrange a triangle whose vertices carry their own colour and texture coordinate (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}, .uv = Point{.x = 0.0f, .y = 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 10.0f, .y = 0.0f}, .uv = Point{.x = 1.0f, .y = 0.0f}, .color = Color::rgb(0.0f, 1.0f, 0.0f)}, {.position = Point{.x = 0.0f, .y = 10.0f}, .uv = Point{.x = 0.0f, .y = 1.0f}, .color = Color::rgb(0.0f, 0.0f, 1.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    // act
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    // assert the factory stamped a fresh identifier and kept the geometry (§6.4, AD-06)
+    ASSERT_NE(mesh, nullptr);
+    EXPECT_GE(mesh->id(), 1u);
+    ASSERT_EQ(mesh->vertices().size(), 3u);
+    EXPECT_EQ(mesh->vertices()[0], vertices[0]);
+    ASSERT_EQ(mesh->indices().size(), 3u);
+    EXPECT_EQ(mesh->indices()[1], 1u);
+    EXPECT_EQ(mesh->triangle_count(), 1u);
+    EXPECT_FALSE(mesh->empty());
+}
+
+TEST(MeshResource, AnEmptyVertexListIsRefused) {
+    // arrange, act
+    ResourceFactory factory;
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    // assert a triangle with nowhere to place its vertices is refused (§6.4)
+    EXPECT_EQ(factory.create_mesh(std::span<const MeshVertex>(), indices), nullptr);
+}
+
+TEST(MeshResource, AnEmptyIndexListIsRefused) {
+    // arrange a mesh whose vertices carry no triangle (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    // act, assert
+    EXPECT_EQ(factory.create_mesh(vertices, std::span<const std::uint32_t>()), nullptr);
+}
+
+TEST(MeshResource, AnIndexListThatIsNotAWholeTriangleListIsRefused) {
+    // arrange a triangle followed by a dangling index, which is not another triangle (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[4] = {0u, 1u, 2u, 0u};
+    // act, assert
+    EXPECT_EQ(factory.create_mesh(vertices, indices), nullptr);
+}
+
+TEST(MeshResource, AnOutOfRangeIndexIsRefused) {
+    // arrange a triangle whose last index names a vertex the list does not hold (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 3u};
+    // act, assert
+    EXPECT_EQ(factory.create_mesh(vertices, indices), nullptr);
+}
+
+TEST(MeshResource, TheFactoryCopiesTheSpans) {
+    // arrange a mesh whose source arrays are changed after the factory answers (§6.4, AD-06)
+    ResourceFactory factory;
+    MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    ASSERT_NE(mesh, nullptr);
+    // act the source geometry is overwritten after the resource was built (§6.4)
+    vertices[0].position = Point{.x = 99.0f, .y = 99.0f};
+    indices[0] = 2u;
+    // assert the resource kept its own copy, because it is immutable (§6.4, AD-06)
+    EXPECT_EQ(mesh->vertices()[0].position, (Point{.x = 0.0f, .y = 0.0f}));
+    EXPECT_EQ(mesh->indices()[0], 0u);
+}
+
+TEST(MeshCommandChecks, ACommandCarriesItsMeshTextureAndPaint) {
+    // arrange a retained triangle and the texture it samples (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    const std::uint8_t pixels[4] = {255u, 255u, 255u, 255u};
+    const std::shared_ptr<const ImageResource> texture = factory.create_image(1u, 1u, ImageFormat::RGBA8, pixels);
+    const Paint paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f)};
+    // act
+    const DrawCommand command = DrawCommand::mesh(mesh, texture, paint);
+    // assert the one command carries the retained geometry, the texture and the paint (§6.4)
+    EXPECT_EQ(command.kind(), DrawCommandKind::Mesh);
+    EXPECT_EQ(command.mesh_geometry().mesh, mesh);
+    EXPECT_EQ(command.mesh_geometry().texture, texture);
+    EXPECT_EQ(command.paint(), paint);
+}
+
+TEST(MeshCommandChecks, ABoundFollowsTheTransform) {
+    // arrange a triangle whose vertices sit in its own space (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    DrawCommand command = DrawCommand::mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act the command is placed by a translation, which the bound must follow (§6.4)
+    command.set_transform(Transform::translation(5.0f, 6.0f));
+    // assert the bound covers the placed vertices (§6.2, §6.4)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 5.0f, .y = 6.0f, .width = 10.0f, .height = 10.0f}));
+}
+
+TEST(MeshCommandChecks, ADamageBoundAddsTheFringe) {
+    // arrange a triangle placed under a translation (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    DrawCommand command = DrawCommand::mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_transform(Transform::translation(5.0f, 6.0f));
+    // act, assert the one pixel fringe grows every edge, as it does for an image (§6.1)
+    EXPECT_EQ(command.damage_bounds(), (Rect{.x = 4.0f, .y = 5.0f, .width = 12.0f, .height = 12.0f}));
+}
+
+TEST(MeshCommandChecks, ANullOrEmptyMeshDrawsNothing) {
+    // arrange a mesh with no triangle, which a hand-built resource can carry (§6.4)
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const MeshResource empty(1u, vertices, std::span<const std::uint32_t>());
+    // act
+    const DrawCommand missing = DrawCommand::mesh(nullptr, nullptr, Paint{});
+    const DrawCommand blank = DrawCommand::mesh(std::make_shared<const MeshResource>(2u, vertices, std::span<const std::uint32_t>()), nullptr, Paint{});
+    // assert neither command puts ink down, whatever the paint (§6.4)
+    EXPECT_TRUE(missing.draws_nothing());
+    EXPECT_TRUE(blank.draws_nothing());
+    EXPECT_TRUE(empty.empty());
+}
+
+TEST(MeshCommandChecks, ACommandReplaysUnderItsTransform) {
+    // arrange a triangle placed under a translation, which a recorded scene command carries (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    const std::uint8_t pixels[4] = {255u, 0u, 0u, 255u};
+    const std::shared_ptr<const ImageResource> texture = factory.create_image(1u, 1u, ImageFormat::RGBA8, pixels);
+    DrawCommand command = DrawCommand::mesh(mesh, texture, Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f)});
+    command.set_transform(Transform::translation(7.0f, 8.0f));
+    TestRenderContext context;
+    // act the command draws itself, which is what stage two does (§6.1)
+    command.replay(context);
+    // assert the mesh and its texture reached the context once (§6.4)
+    ASSERT_EQ(context.drawn_meshes.size(), 1u);
+    EXPECT_EQ(context.drawn_meshes.front(), mesh);
+    EXPECT_EQ(context.drawn_mesh_textures.front(), texture);
+    EXPECT_EQ(context.drawn_mesh_paints.front().fill, Color::rgba(1.0f, 1.0f, 1.0f, 0.5f));
+    // assert the context adopted the transform around the draw and stood where it did afterwards (§6.4)
+    ASSERT_EQ(context.transforms.size(), 1u);
+    EXPECT_EQ(context.transforms.front(), Transform::translation(7.0f, 8.0f));
+    EXPECT_EQ(context.save_count, 1u);
+    EXPECT_EQ(context.restore_count, 1u);
+    EXPECT_EQ(context.depth(), 0u);
+}
+
+TEST(PictureRecorder, AMeshCommandCarriesItsRetainedMesh) {
+    // arrange a retained triangle and its texture (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    const std::uint8_t pixels[4] = {255u, 255u, 255u, 255u};
+    const std::shared_ptr<const ImageResource> texture = factory.create_image(1u, 1u, ImageFormat::RGBA8, pixels);
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(3.0f, 4.0f));
+    // act
+    recorder.draw_mesh(mesh, texture, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert the command kept the mesh and the texture, and the recorder transform travelled with it (§6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].kind(), DrawCommandKind::Mesh);
+    EXPECT_EQ(recorder.commands()[0].mesh_geometry().mesh, mesh);
+    EXPECT_EQ(recorder.commands()[0].mesh_geometry().texture, texture);
+    EXPECT_EQ(recorder.commands()[0].transform(), Transform::translation(3.0f, 4.0f));
+}
+
+TEST(PictureRecorder, AnEmptyMeshDoesNotRecord) {
+    // arrange
+    PictureRecorder recorder;
+    // act a missing mesh draws nothing, so the recorder refuses it (§6.4)
+    recorder.draw_mesh(nullptr, nullptr, Paint{});
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(PictureResource, AMeshReplaysFromTheRecordedList) {
+    // arrange a picture of one retained triangle (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    PictureRecorder recorder;
+    recorder.draw_mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    ASSERT_NE(picture, nullptr);
+    TestRenderContext context;
+    // act the recorded list replays into the context, as a frame or a nested picture does (§6.4)
+    replay_commands(picture->commands(), context, DrawCommand::unclipped());
+    // assert the retained mesh reached the context once (§6.4, AD-06)
+    ASSERT_EQ(context.drawn_meshes.size(), 1u);
+    EXPECT_EQ(context.drawn_meshes.front(), mesh);
+}
+
+TEST(MeshCommandChecks, ATransparentPaintDrawsNothing) {
+    // arrange a valid triangle whose paint has no visible channel (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    ASSERT_NE(mesh, nullptr);
+    // act
+    const DrawCommand command = DrawCommand::mesh(mesh, nullptr, Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    // assert the command is culled, because a paint that neither fills nor strokes puts no ink down (§6.1)
+    EXPECT_TRUE(command.draws_nothing());
 }

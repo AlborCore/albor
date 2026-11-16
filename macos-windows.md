@@ -161,7 +161,7 @@ default selection, which preserves bold-only family selection. The long-run coun
 
 This remains the strongest part of the Windows port.
 
-- Both backends expose the same **87-test** corpus:
+- Both backends expose the same **93-test** corpus:
   - aligned and feathered geometry
   - clips and transforms
   - soft shadows, hard shadows, sheared casters
@@ -169,10 +169,11 @@ This remains the strongest part of the Windows port.
   - layers, transparency, nested layers
   - paths, holed/concave/even-odd fills
   - lines, pictures, images, fractional scaling, texture reuse
+  - textured and vertex-coloured triangle meshes, including a picture mesh and a copy-composition mesh
   - shaped, rotated, sheared, and embedded text runs
-- Metal test file: **87 tests**
-- Direct3D test file: **87 tests**
-- Both have 42 parity tests.
+- Metal test file: **93 tests**
+- Direct3D test file: **93 tests**
+- Both have 48 parity tests.
 - Both backends cover:
   - a partial damage frame that preserves pixels outside its region
   - a damage-scoped frame that replays a translated picture inside a clip below its local origin
@@ -309,7 +310,7 @@ job remains a tracked enhancement rather than a parity requirement.
 
 | Suite | macOS | Windows |
 | --- | ---: | ---: |
-| `render-albor` backend/parity | 87 | 87 |
+| `render-albor` backend/parity | 93 | 93 |
 | Window popup | 18 | 17 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
@@ -318,6 +319,7 @@ job remains a tracked enhancement rather than a parity requirement.
 
 ## 8. Changes in the Windows parity pass
 
+- Added the retained triangle mesh primitive `draw_mesh` (#211): `MeshResource` and `ResourceFactory::create_mesh`, `DrawCommandKind::Mesh`, both recorders, the `render-albor` per-frame batch expansion with a packed premultiplied vertex colour, and the Blend2D barycentric reference rasterizer. The Metal and Direct3D suites carry six mirrored mesh parity tests, and the committed DXBC artifact and stamp were regenerated with `bash build/shaders.sh --d3d --write` on a Windows runner. A backend cache for the retained geometry is filed as #232.
 - Fixed picture replay under a clip in both `render-albor` and Blend2D: a picture's inner commands and clips live
   in picture space, so the active clip is now rebased through the placement before the list replays. A damage
   frame no longer scissors a translated picture by the placement twice, and a picture-local clip no longer

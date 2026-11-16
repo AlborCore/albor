@@ -122,7 +122,7 @@ namespace albor::render
         static_assert(sizeof(ShadowUniforms) == 80, "the shadow uniforms must match the hlsl layout");
 
         // the structured vertex stride is the one the shader indexes, so the two layouts cannot drift (§6.3)
-        static_assert(sizeof(BatchVertex) == 24, "the batch vertex must stay the stride the shader indexes");
+        static_assert(sizeof(BatchVertex) == 32, "the batch vertex must stay the stride the shader indexes");
 
         // the two blend factors one composition mode applies, which the fixed function blender evaluates (§6.2)
         struct BlendFactors

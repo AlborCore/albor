@@ -12,6 +12,7 @@
 #include "albor/render/frame_scene.h"
 #include "albor/render/image_resource.h"
 #include "albor/render/line_batch.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/path_resource.h"
 #include "albor/render/picture_resource.h"
 #include "albor/render/render_context.h"
@@ -257,6 +258,7 @@ namespace
         void draw_path(const std::shared_ptr<const PathResource>&, const Transform&, const Paint&) override {}
         void draw_picture(const std::shared_ptr<const PictureResource>&, const Transform&) override {}
         void draw_image(const std::shared_ptr<const ImageResource>&, const Rect&, const Paint&) override {}
+        void draw_mesh(const std::shared_ptr<const MeshResource>&, const std::shared_ptr<const ImageResource>&, const Paint&) override {}
 
     private:
         // the transform the context reports, which a test does not change (§6.2)
@@ -1432,6 +1434,44 @@ TEST(SceneRecorder, ATransformMovesTheRecordedRectangle) {
     // assert
     ASSERT_EQ(recorder.scene()->command_count(), 1u);
     EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].rect_geometry().rect.x, 110.0f);
+}
+
+TEST(SceneRecorder, AMeshKeepsItsVerticesAndCarriesTheTransform) {
+    // arrange a retained triangle whose vertices are in its own space (§6.4)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    ASSERT_NE(mesh, nullptr);
+    ASSERT_FALSE(mesh->empty());
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.set_transform(Transform::translation(100.0f, 50.0f));
+    // act
+    recorder.draw_mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert the vertices were not copied into scene space, because the retained mesh stays shared (§6.4)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+    const DrawCommand& command = scene->commands().front();
+    EXPECT_EQ(command.kind(), DrawCommandKind::Mesh);
+    EXPECT_EQ(command.mesh_geometry().mesh, mesh);
+    EXPECT_EQ(command.mesh_geometry().mesh->vertices()[0].position, (Point{.x = 0.0f, .y = 0.0f}));
+    // assert the recorder transform travelled with the command, which places the vertices at replay (§6.4)
+    EXPECT_EQ(command.transform(), Transform::translation(100.0f, 50.0f));
+    EXPECT_EQ(command.bounds(), (Rect{.x = 100.0f, .y = 50.0f, .width = 10.0f, .height = 10.0f}));
+}
+
+TEST(SceneRecorder, AMeshOutsideTheDamageFilterIsCulled) {
+    // arrange a retained triangle far from the region a damage frame redraws (§6.1)
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.set_damage_filter(Rect::from_origin_size(Point{100.0f, 100.0f}, Size{50.0f, 50.0f}));
+    // act
+    recorder.draw_mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert the mesh cannot reach the damage region, so the cull drops it (§6.1)
+    EXPECT_TRUE(recorder.scene()->empty());
 }
 
 TEST(SceneRecorder, ARoundedRectangleIsRecordedAsARectangle) {

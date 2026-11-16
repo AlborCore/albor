@@ -12,6 +12,7 @@
 #include "albor/render/glyph_outline.h"
 #include "albor/render/image_resource.h"
 #include "albor/render/line_batch.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/path_resource.h"
 #include "albor/render/text_layout.h"
 
@@ -49,6 +50,9 @@ namespace albor
 
         // a retained image into a destination rectangle (§6.4, AD-06)
         Image,
+
+        // a retained triangle mesh with per-vertex colour and an optional texture (§6.4, AD-06)
+        Mesh,
 
         // one glyph of an embedded font, drawn as its tessellated outline (§6.4, AD-06, AD-34)
         GlyphOutline,
@@ -151,6 +155,19 @@ namespace albor
         friend bool operator==(const ImageGeometry& lhs, const ImageGeometry& rhs) = default;
     };
 
+    // the geometry a mesh command carries, which is the retained triangles and their optional texture (§6.4)
+    struct MeshGeometry
+    {
+        // the immutable triangles the command replays (§6.4, AD-06)
+        std::shared_ptr<const MeshResource> mesh;
+
+        // the texture the triangles sample, which is null for a solid vertex-coloured mesh (§6.4)
+        std::shared_ptr<const ImageResource> texture;
+
+        // compare two meshes component wise, which a command comparison needs (§6.4)
+        friend bool operator==(const MeshGeometry& lhs, const MeshGeometry& rhs) = default;
+    };
+
     // the geometry a glyph outline command carries, which is the outline and where it lands (§6.4)
     struct GlyphOutlineGeometry
     {
@@ -198,7 +215,7 @@ namespace albor
         };
 
         // the geometry a command carries, where the alternative index is the kind (§6.2)
-        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry, ShadowGeometry, PolylineGeometry, LayerGeometry>;
+        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry, ShadowGeometry, PolylineGeometry, LayerGeometry, MeshGeometry>;
 
         // the clip that stands for no clip at all, which is what a command carries until a recorder stamps one (§6.2)
         [[nodiscard]] static const Rect& unclipped();
@@ -226,6 +243,9 @@ namespace albor
 
         // build a retained image command (§6.4, AD-06)
         [[nodiscard]] static DrawCommand image(std::shared_ptr<const ImageResource> image, Rect destination, Paint paint);
+
+        // build a retained triangle mesh command under an optional texture (§6.4, AD-06)
+        [[nodiscard]] static DrawCommand mesh(std::shared_ptr<const MeshResource> mesh, std::shared_ptr<const ImageResource> texture, Paint paint);
 
         // report whether a kind's primitive takes no transform, so its command has to compose one (§6.4)
         [[nodiscard]] static bool uses_the_context_transform(DrawCommandKind kind);
@@ -283,6 +303,9 @@ namespace albor
 
         // the pixels and the destination of an image command (§6.4)
         [[nodiscard]] const ImageGeometry& image_geometry() const;
+
+        // the triangles and the texture of a mesh command (§6.4)
+        [[nodiscard]] const MeshGeometry& mesh_geometry() const;
 
         // the outline and the position of a glyph outline command (§6.4, AD-34)
         [[nodiscard]] const GlyphOutlineGeometry& glyph_outline_geometry() const;

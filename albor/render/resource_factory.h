@@ -8,6 +8,7 @@
 #include "albor/core/geometry.h"
 #include "albor/render/image_resource.h"
 #include "albor/render/line_batch.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/path_resource.h"
 #include "albor/render/picture_resource.h"
 
@@ -34,6 +35,9 @@ namespace albor
 
         // build a validated immutable image, or nothing for a bad extent or pixel buffer (§6.4, AD-06)
         [[nodiscard]] std::shared_ptr<const ImageResource> create_image(std::size_t width, std::size_t height, ImageFormat format, std::span<const std::uint8_t> pixels) const;
+
+        // build a validated immutable triangle mesh, or nothing for empty or malformed geometry (§6.4, AD-06)
+        [[nodiscard]] std::shared_ptr<const MeshResource> create_mesh(std::span<const MeshVertex> vertices, std::span<const std::uint32_t> indices) const;
 
         // freeze a recorder's commands into an immutable picture, or nothing for an empty recording (§6.4, AD-06)
         [[nodiscard]] std::shared_ptr<const PictureResource> create_picture(const PictureRecorder& recorder) const;

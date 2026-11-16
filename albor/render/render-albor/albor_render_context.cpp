@@ -7,6 +7,7 @@
 #include "albor/render/draw_command.h"
 #include "albor/render/image_resource.h"
 #include "albor/render/line_batch.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/picture_resource.h"
 #include "albor/render/render-albor/albor_fill.h"
 #include "albor/render/render-albor/albor_geometry.h"
@@ -705,5 +706,66 @@ namespace albor::render
             m_batch.uploads.push_back(BatchUpload{.id = image->id(), .image = image});
         // the texture the backend caches is keyed on the resource identifier, which never repeats (AD-06)
         emit_image(destination, tint, image->id(), paint.composition);
+    }
+
+    void AlborRenderContext::draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) {
+        // a context the frame does not draw through, or a mesh with no triangle, records nothing (§6.4)
+        if (!drawable() || !mesh || mesh->empty())
+            return;
+        // a paint that neither fills nor strokes puts no ink down, which a zero opacity leaves (§6.1, §6.4)
+        if (!paint.fills() && !paint.strokes())
+            return;
+        // the paint dims the mesh through its visible channel alone, which the reference does too (§6.4, AD-26)
+        const float alpha = paint.fills() ? paint.fill.alpha : paint.stroke.alpha;
+        // the tint is white with the paint alpha, because the vertex colour carries the mesh colour (§6.4)
+        const Color tint = Color::rgba(1.0f, 1.0f, 1.0f, alpha);
+        // the texture identifier starts at zero, which the backend reads as no texture at all (§6.4)
+        std::uint64_t texture_id = 0;
+        // a texture with pixels is uploaded once per frame, which the backend then caches by its identifier (AD-06)
+        if (texture && !texture->pixels().empty()) {
+            // the identifier keys the cache, which never repeats (§6.4, AD-06)
+            texture_id = texture->id();
+            // a texture the frame already carries needs no second upload (AD-06)
+            const bool uploaded = std::any_of(m_batch.uploads.begin(), m_batch.uploads.end(), [&texture](const BatchUpload& upload) { return upload.id == texture->id(); });
+            // a texture the frame has not uploaded yet joins the upload list, which the backend copies before the draw
+            if (!uploaded)
+                m_batch.uploads.push_back(BatchUpload{.id = texture->id(), .image = texture});
+        }
+        // the mesh vertices land in device space under the device transform (§6.3, AD-27)
+        const Transform device = device_transform();
+        // the vertex run starts at the count the batch already holds, which the draw's base vertex names (§6.3)
+        const std::uint32_t vertex_begin = static_cast<std::uint32_t>(m_batch.vertices.size());
+        // every vertex is copied with its device position, its texture coordinate and its packed colour (§6.4)
+        for (const MeshVertex& vertex : mesh->vertices()) {
+            // the device transform maps the user space position onto the physical raster (§6.3, AD-27)
+            const Point position = device.apply(vertex.position);
+            // the vertex carries the seeds a plain draw holds at one, which leaves the coverage full (§6.3)
+            BatchVertex vertex_out;
+            vertex_out.x = position.x;
+            vertex_out.y = position.y;
+            vertex_out.lateral = 1.0f;
+            vertex_out.longitudinal = 1.0f;
+            vertex_out.u = vertex.uv.x;
+            vertex_out.v = vertex.uv.y;
+            // the colour premultiplies into the byte order the shader unpacks (§6.3, §6.4)
+            vertex_out.color = pack_color(vertex.color);
+            m_batch.vertices.push_back(vertex_out);
+        }
+        // the indices stay zero based, and the draw's base vertex shifts them into this run (§6.3, AD-06)
+        const std::uint32_t index_begin = static_cast<std::uint32_t>(m_batch.indices.size());
+        // every whole triangle is copied, because a partial one is not a triangle (§6.4)
+        for (std::size_t first = 0; first + 2 < mesh->indices().size(); first += 3) {
+            // the three indices are read together, because a triangle needs all of them (§6.4)
+            const std::uint32_t triangle[3] = {mesh->indices()[first], mesh->indices()[first + 1], mesh->indices()[first + 2]};
+            // a triangle that names no vertex is skipped, so a hand-built mesh cannot read past the run (§6.4)
+            if (triangle[0] >= mesh->vertices().size() || triangle[1] >= mesh->vertices().size() || triangle[2] >= mesh->vertices().size())
+                continue;
+            // the three indices join the batch in drawing order (§6.4)
+            m_batch.indices.push_back(triangle[0]);
+            m_batch.indices.push_back(triangle[1]);
+            m_batch.indices.push_back(triangle[2]);
+        }
+        // the mesh is one draw over the range it appended, dimmed by the context opacity (§6.4)
+        record(EmittedRange{.index_begin = index_begin, .index_count = static_cast<std::uint32_t>(m_batch.indices.size()) - index_begin}, CoverageKind::Plain, 1.0f, tint.with_alpha(m_opacity), texture_id, false, paint.composition, vertex_begin);
     }
 } // namespace albor::render

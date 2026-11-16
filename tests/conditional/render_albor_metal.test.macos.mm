@@ -14,6 +14,7 @@
 #include "albor/core/paint.h"
 #include "albor/render/draw_command.h"
 #include "albor/render/frame_scene.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/picture_resource.h"
 #include "albor/render/render-albor/albor_glyph_path.h"
 #include "albor/render/render-albor/albor_render_context.h"
@@ -23,6 +24,7 @@
 #include "albor/render/render_context.h"
 #include "albor/render/render_executor.h"
 #include "albor/render/renderer_backend.h"
+#include "albor/render/resource_factory.h"
 #include "albor/render/screenshot.h"
 #include "albor/render/text_layout.h"
 #include "albor/resources/embedded_font.h"
@@ -807,6 +809,7 @@ namespace
         void draw_path(const std::shared_ptr<const PathResource>&, const albor::Transform&, const albor::Paint&) override {}
         void draw_picture(const std::shared_ptr<const PictureResource>&, const albor::Transform&) override {}
         void draw_image(const std::shared_ptr<const ImageResource>&, const AlborRect&, const albor::Paint&) override {}
+        void draw_mesh(const std::shared_ptr<const MeshResource>&, const std::shared_ptr<const ImageResource>&, const albor::Paint&) override {}
 
     private:
         // the transform the context last adopted
@@ -2678,4 +2681,180 @@ TEST(AlborParityChecks, ATranslucentDestinationInMatchesTheReference) {
     EXPECT_LT(expected_shot.pixels[covered], 150u);
     // the whole overlay follows the reference, its feathered boundary included
     EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
+}
+TEST(AlborParityChecks, ASolidVertexColourQuadMatchesTheReferenceExactly) {
+    // arrange a red quad covering the whole target, which both engines must fill identically (§6.4)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const MeshVertex vertices[4] = {{.position = AlborPoint{0.0f, 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{16.0f, 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{0.0f, 16.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{16.0f, 16.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[6] = {0u, 1u, 3u, 0u, 3u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = std::make_shared<const MeshResource>(1101u, vertices, indices);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture_surface(*expected_surface);
+    const Screenshot actual = capture_surface(*actual_surface);
+    // assert the whole target agrees, because the quad covers every pixel centre (§6.4, AD-26)
+    ASSERT_FALSE(expected.empty());
+    ASSERT_FALSE(actual.empty());
+    ASSERT_EQ(expected.pixels.size(), actual.pixels.size());
+    EXPECT_EQ(expected.max_channel_difference(actual), 0);
+}
+
+TEST(AlborParityChecks, ATexturedMeshQuadMatchesTheReference) {
+    // arrange a two by two texture on a two by two quad, which samples one texel per pixel (§6.4)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const std::uint8_t pixels[16] = {255u, 0u, 0u, 255u, 0u, 255u, 0u, 255u, 0u, 0u, 255u, 255u, 255u, 255u, 255u, 255u};
+    const std::shared_ptr<const ImageResource> texture = std::make_shared<const ImageResource>(1102u, 2u, 2u, ImageFormat::RGBA8, pixels);
+    const MeshVertex vertices[4] = {{.position = AlborPoint{4.0f, 4.0f}, .uv = AlborPoint{0.0f, 0.0f}}, {.position = AlborPoint{6.0f, 4.0f}, .uv = AlborPoint{1.0f, 0.0f}}, {.position = AlborPoint{4.0f, 6.0f}, .uv = AlborPoint{0.0f, 1.0f}}, {.position = AlborPoint{6.0f, 6.0f}, .uv = AlborPoint{1.0f, 1.0f}}};
+    const std::uint32_t indices[6] = {0u, 1u, 2u, 2u, 1u, 3u};
+    const std::shared_ptr<const MeshResource> mesh = std::make_shared<const MeshResource>(1103u, vertices, indices);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::mesh(mesh, texture, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture_surface(*expected_surface);
+    const Screenshot actual = capture_surface(*actual_surface);
+    // assert the two samplers read the same four texels, within the upload's byte rounding (§6.4, AD-26)
+    ASSERT_FALSE(expected.empty());
+    ASSERT_FALSE(actual.empty());
+    ASSERT_EQ(expected.pixels.size(), actual.pixels.size());
+    EXPECT_LE(expected.max_channel_difference(actual), 1);
+}
+
+TEST(AlborParityChecks, APerVertexColourMeshMatchesTheReference) {
+    // arrange a four colour quad, whose corners both engines interpolate across two triangles (§6.4)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const MeshVertex vertices[4] = {{.position = AlborPoint{4.0f, 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{12.0f, 4.0f}, .color = Color::rgb(0.0f, 1.0f, 0.0f)}, {.position = AlborPoint{4.0f, 12.0f}, .color = Color::rgb(0.0f, 0.0f, 1.0f)}, {.position = AlborPoint{12.0f, 12.0f}, .color = Color::rgb(1.0f, 1.0f, 1.0f)}};
+    const std::uint32_t indices[6] = {0u, 1u, 3u, 0u, 2u, 3u};
+    const std::shared_ptr<const MeshResource> mesh = std::make_shared<const MeshResource>(1104u, vertices, indices);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture_surface(*expected_surface);
+    const Screenshot actual = capture_surface(*actual_surface);
+    // assert the interpolated colours agree, within the one byte the two interpolators round apart (§6.4)
+    ASSERT_FALSE(expected.empty());
+    ASSERT_FALSE(actual.empty());
+    ASSERT_EQ(expected.pixels.size(), actual.pixels.size());
+    EXPECT_LE(expected.max_channel_difference(actual), 2);
+}
+
+TEST(AlborParityChecks, APlacedAndClippedMeshMatchesTheReference) {
+    // arrange a mesh under a scaled translation and a clip, which both engines place alike (§6.4, AD-27)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const MeshVertex vertices[4] = {{.position = AlborPoint{0.0f, 0.0f}, .color = Color::rgb(0.0f, 1.0f, 0.0f)}, {.position = AlborPoint{8.0f, 0.0f}, .color = Color::rgb(0.0f, 1.0f, 0.0f)}, {.position = AlborPoint{0.0f, 8.0f}, .color = Color::rgb(0.0f, 1.0f, 0.0f)}, {.position = AlborPoint{8.0f, 8.0f}, .color = Color::rgb(0.0f, 1.0f, 0.0f)}};
+    const std::uint32_t indices[6] = {0u, 1u, 3u, 0u, 3u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = std::make_shared<const MeshResource>(1105u, vertices, indices);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_transform(Transform{.scale_x = 1.5f, .translate_x = 1.0f, .scale_y = 1.5f, .translate_y = 2.0f});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{2.0f, 2.0f}, AlborSize{12.0f, 12.0f}));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture_surface(*expected_surface);
+    const Screenshot actual = capture_surface(*actual_surface);
+    // assert the placed and clipped mesh agrees, within one byte at the clip edge (§6.2, §6.4)
+    ASSERT_FALSE(expected.empty());
+    ASSERT_FALSE(actual.empty());
+    ASSERT_EQ(expected.pixels.size(), actual.pixels.size());
+    EXPECT_LE(expected.max_channel_difference(actual), 2);
+}
+
+TEST(AlborParityChecks, AMeshCopyCompositionMatchesTheReference) {
+    // arrange a blue target and a red mesh drawn with copy, which must replace only its own pixels (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const MeshVertex vertices[4] = {{.position = AlborPoint{4.0f, 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{12.0f, 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{4.0f, 12.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{12.0f, 12.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[6] = {0u, 1u, 3u, 0u, 3u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = std::make_shared<const MeshResource>(1106u, vertices, indices);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 1.0f));
+    DrawCommand command = DrawCommand::mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f), .composition = CompositionMode::Copy});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture_surface(*expected_surface);
+    const Screenshot actual = capture_surface(*actual_surface);
+    // assert the copy stayed inside the mesh, within one byte at its edge (§6.2)
+    ASSERT_FALSE(expected.empty());
+    ASSERT_FALSE(actual.empty());
+    ASSERT_EQ(expected.pixels.size(), actual.pixels.size());
+    EXPECT_LE(expected.max_channel_difference(actual), 1);
+}
+
+TEST(AlborParityChecks, APictureMeshMatchesTheReference) {
+    // arrange a picture of one red quad, placed under a translation (§6.4)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    ResourceFactory factory;
+    const MeshVertex vertices[4] = {{.position = AlborPoint{0.0f, 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{8.0f, 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{0.0f, 8.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = AlborPoint{8.0f, 8.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[6] = {0u, 1u, 3u, 0u, 3u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    ASSERT_NE(mesh, nullptr);
+    PictureRecorder recorder;
+    recorder.draw_mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    ASSERT_NE(picture, nullptr);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::picture(picture, Transform::translation(4.0f, 4.0f));
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture_surface(*expected_surface);
+    const Screenshot actual = capture_surface(*actual_surface);
+    // assert the mesh inside the picture landed at its placed position, within one byte (§6.4)
+    ASSERT_FALSE(expected.empty());
+    ASSERT_FALSE(actual.empty());
+    ASSERT_EQ(expected.pixels.size(), actual.pixels.size());
+    EXPECT_LE(expected.max_channel_difference(actual), 1);
 }

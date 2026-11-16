@@ -36,6 +36,14 @@ namespace albor
         return std::make_shared<const ImageResource>(next_id(), width, height, format, pixels);
     }
 
+    std::shared_ptr<const MeshResource> ResourceFactory::create_mesh(std::span<const MeshVertex> vertices, std::span<const std::uint32_t> indices) const {
+        // empty or out of range geometry cannot be drawn, so it is refused (§6.4, AD-06)
+        if (!MeshResource::valid(vertices, indices))
+            return nullptr;
+        // the identifier advances atomically, so concurrent workers never collide (§6.4, AD-06)
+        return std::make_shared<const MeshResource>(next_id(), vertices, indices);
+    }
+
     std::shared_ptr<const PictureResource> ResourceFactory::create_picture(const PictureRecorder& recorder) const {
         // a picture with no command draws nothing, so it is refused (§6.4, AD-06)
         if (recorder.empty())

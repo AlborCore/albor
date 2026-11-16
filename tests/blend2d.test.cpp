@@ -13,6 +13,7 @@
 #include "albor/core/paint.h"
 #include "albor/render/draw_command.h"
 #include "albor/render/frame_scene.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/render-blend2d/blend2d_render_context.h"
 #include "albor/render/render-blend2d/blend2d_render_surface.h"
 #include "albor/render/render-blend2d/blend2d_renderer_backend.h"
@@ -445,6 +446,9 @@ TEST(Blend2DRenderContextChecks, AContextWithNoRasterSurvivesEveryDraw) {
     context.draw_line_batch(batch, Transform{}, StrokeStyle{});
     context.draw_path(path, Transform{}, Paint{});
     context.draw_image(image, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f}), Paint{});
+    const MeshVertex mesh_vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 4.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 4.0f}}};
+    const std::uint32_t mesh_indices[3] = {0u, 1u, 2u};
+    context.draw_mesh(std::make_shared<const MeshResource>(41u, mesh_vertices, mesh_indices), nullptr, Paint{});
     context.draw_text(layout, Point{0.0f, 0.0f}, Paint{});
     // assert the state machine stayed usable, because a null raster is a refusal rather than a crash (§6.2)
     EXPECT_EQ(context.depth(), 1u);
@@ -1127,4 +1131,316 @@ TEST(Blend2DTextChecks, AnUnresolvedRunDrawsNothing) {
             ink++;
     }
     EXPECT_EQ(ink, 0u);
+}
+
+TEST(Blend2DMeshChecks, ASolidTrianglePaintsItsInterior) {
+    // arrange a red triangle whose hypotenuse runs from the top right to the bottom left (§6.4)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const MeshVertex vertices[3] = {{.position = Point{.x = 4.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 44.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 4.0f, .y = 44.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(101u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    // assert the interior is the vertex colour, which the paint leaves alone (§6.4)
+    ASSERT_FALSE(screenshot.empty());
+    const std::size_t inside = (10u * 64u + 10u) * 4u;
+    EXPECT_EQ(screenshot.pixels[inside], 255u);
+    EXPECT_EQ(screenshot.pixels[inside + 1u], 0u);
+    EXPECT_EQ(screenshot.pixels[inside + 2u], 0u);
+    EXPECT_EQ(screenshot.pixels[inside + 3u], 255u);
+    // assert a pixel beyond the hypotenuse stayed transparent, because the triangle does not cover it (§6.4)
+    const std::size_t outside = (40u * 64u + 40u) * 4u;
+    EXPECT_EQ(screenshot.pixels[outside + 3u], 0u);
+}
+
+TEST(Blend2DMeshChecks, ATexturedQuadReadsEachTexelAtOneToOne) {
+    // arrange a two by two texture whose four texels are distinct premultiplied colours (§6.4, AD-26)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const std::uint8_t pixels[16] = {255u, 0u, 0u, 255u, 0u, 255u, 0u, 255u, 0u, 0u, 255u, 255u, 255u, 255u, 255u, 255u};
+    const std::shared_ptr<const ImageResource> texture = std::make_shared<const ImageResource>(102u, 2u, 2u, ImageFormat::RGBA8, pixels);
+    const MeshVertex vertices[4] = {{.position = Point{.x = 4.0f, .y = 4.0f}, .uv = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 6.0f, .y = 4.0f}, .uv = Point{.x = 1.0f, .y = 0.0f}}, {.position = Point{.x = 4.0f, .y = 6.0f}, .uv = Point{.x = 0.0f, .y = 1.0f}}, {.position = Point{.x = 6.0f, .y = 6.0f}, .uv = Point{.x = 1.0f, .y = 1.0f}}};
+    const std::uint32_t indices[6] = {0u, 1u, 2u, 2u, 1u, 3u};
+    // act the quad lands on exactly two by two pixels, so every pixel centre reads one texel (§6.4)
+    context.draw_mesh(std::make_shared<const MeshResource>(103u, vertices, indices), texture, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert each pixel is the texel its uv names, which pins the sampling (§6.4)
+    const std::size_t red = (4u * 64u + 4u) * 4u;
+    EXPECT_EQ(screenshot.pixels[red], 255u);
+    EXPECT_EQ(screenshot.pixels[red + 1u], 0u);
+    EXPECT_EQ(screenshot.pixels[red + 2u], 0u);
+    const std::size_t green = (4u * 64u + 5u) * 4u;
+    EXPECT_EQ(screenshot.pixels[green], 0u);
+    EXPECT_EQ(screenshot.pixels[green + 1u], 255u);
+    const std::size_t blue = (5u * 64u + 4u) * 4u;
+    EXPECT_EQ(screenshot.pixels[blue + 2u], 255u);
+    const std::size_t white = (5u * 64u + 5u) * 4u;
+    EXPECT_EQ(screenshot.pixels[white], 255u);
+    EXPECT_EQ(screenshot.pixels[white + 1u], 255u);
+    EXPECT_EQ(screenshot.pixels[white + 2u], 255u);
+}
+
+TEST(Blend2DMeshChecks, AFourColourQuadInterpolatesItsCorners) {
+    // arrange a red, green, blue and white corner quad over two by two pixels (§6.4)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const MeshVertex vertices[4] = {{.position = Point{.x = 4.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 6.0f, .y = 4.0f}, .color = Color::rgb(0.0f, 1.0f, 0.0f)}, {.position = Point{.x = 4.0f, .y = 6.0f}, .color = Color::rgb(0.0f, 0.0f, 1.0f)}, {.position = Point{.x = 6.0f, .y = 6.0f}, .color = Color::rgb(1.0f, 1.0f, 1.0f)}};
+    const std::uint32_t indices[6] = {0u, 1u, 3u, 0u, 2u, 3u};
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(104u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert the diagonal pixel blends three quarters red with one quarter white (§6.4)
+    const std::size_t first = (4u * 64u + 4u) * 4u;
+    EXPECT_EQ(screenshot.pixels[first], 255u);
+    EXPECT_EQ(screenshot.pixels[first + 1u], 64u);
+    EXPECT_EQ(screenshot.pixels[first + 2u], 64u);
+    // assert the lower right pixel blends the green edge with the white corner (§6.4)
+    const std::size_t second = (4u * 64u + 5u) * 4u;
+    EXPECT_EQ(screenshot.pixels[second], 128u);
+    EXPECT_EQ(screenshot.pixels[second + 1u], 191u);
+    EXPECT_EQ(screenshot.pixels[second + 2u], 64u);
+    // assert the upper left pixel blends the blue edge with the white corner (§6.4)
+    const std::size_t third = (5u * 64u + 4u) * 4u;
+    EXPECT_EQ(screenshot.pixels[third], 128u);
+    EXPECT_EQ(screenshot.pixels[third + 1u], 64u);
+    EXPECT_EQ(screenshot.pixels[third + 2u], 191u);
+    // assert the far corner is three quarters white with one quarter red (§6.4)
+    const std::size_t fourth = (5u * 64u + 5u) * 4u;
+    EXPECT_EQ(screenshot.pixels[fourth], 255u);
+    EXPECT_EQ(screenshot.pixels[fourth + 1u], 191u);
+    EXPECT_EQ(screenshot.pixels[fourth + 2u], 191u);
+}
+
+TEST(Blend2DMeshChecks, AClipCutsTheMesh) {
+    // arrange a red triangle and a clip that covers only its upper right corner (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const MeshVertex vertices[3] = {{.position = Point{.x = 4.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 44.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 4.0f, .y = 44.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    context.clip_rect(Rect::from_origin_size(Point{.x = 20.0f, .y = 0.0f}, Size{.width = 10.0f, .height = 10.0f}));
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(105u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert the pixel inside the clip and the triangle is painted (§6.2)
+    const std::size_t inside = (5u * 64u + 25u) * 4u;
+    EXPECT_EQ(screenshot.pixels[inside], 255u);
+    // assert the pixel inside the triangle but outside the clip stayed transparent (§6.2)
+    const std::size_t outside = (10u * 64u + 10u) * 4u;
+    EXPECT_EQ(screenshot.pixels[outside + 3u], 0u);
+}
+
+TEST(Blend2DMeshChecks, ADeviceScaleAndTransformPlaceTheMesh) {
+    // arrange a red triangle at double density under a translation (§6.4, AD-27)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(2.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 5.0f, .y = 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 0.0f, .y = 5.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    context.set_transform(Transform::translation(1.0f, 2.0f));
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(106u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert the translated and scaled triangle covers the expected device pixel (§6.3)
+    const std::size_t inside = (6u * 128u + 4u) * 4u;
+    EXPECT_EQ(screenshot.pixels[inside], 255u);
+    // assert a pixel outside the placed triangle stayed transparent (§6.4)
+    EXPECT_EQ(screenshot.pixels[3], 0u);
+}
+
+TEST(Blend2DMeshChecks, AnOpacityDimsTheMesh) {
+    // arrange a red triangle under a half opaque context (§6.1)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const MeshVertex vertices[3] = {{.position = Point{.x = 4.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 44.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 4.0f, .y = 44.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    context.set_opacity(0.5f);
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(107u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert the premultiplied red and its alpha halved, which the opacity folds into the modulation (§6.1)
+    const std::size_t inside = (10u * 64u + 10u) * 4u;
+    EXPECT_EQ(screenshot.pixels[inside], 128u);
+    EXPECT_EQ(screenshot.pixels[inside + 1u], 0u);
+    EXPECT_EQ(screenshot.pixels[inside + 2u], 0u);
+    EXPECT_EQ(screenshot.pixels[inside + 3u], 128u);
+}
+
+TEST(Blend2DMeshChecks, ACopyCompositionReplacesOnlyTheMeshInterior) {
+    // arrange a blue surface and a red triangle drawn with copy (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{.x = 0.0f, .y = 0.0f}, Size{.width = 64.0f, .height = 48.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    const MeshVertex vertices[3] = {{.position = Point{.x = 4.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 44.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 4.0f, .y = 44.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(108u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f), .composition = CompositionMode::Copy});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert the triangle interior was replaced by red (§6.2)
+    const std::size_t inside = (10u * 64u + 10u) * 4u;
+    EXPECT_EQ(screenshot.pixels[inside], 255u);
+    EXPECT_EQ(screenshot.pixels[inside + 1u], 0u);
+    EXPECT_EQ(screenshot.pixels[inside + 2u], 0u);
+    // assert the pixel inside the mesh bounding box but outside the triangle stayed blue (§6.2)
+    const std::size_t outside = (40u * 64u + 40u) * 4u;
+    EXPECT_EQ(screenshot.pixels[outside], 0u);
+    EXPECT_EQ(screenshot.pixels[outside + 1u], 0u);
+    EXPECT_EQ(screenshot.pixels[outside + 2u], 255u);
+    // assert a pixel outside the mesh bounds stayed blue as well (§6.2)
+    const std::size_t far = (10u * 64u + 50u) * 4u;
+    EXPECT_EQ(screenshot.pixels[far + 2u], 255u);
+}
+
+TEST(Blend2DMeshChecks, APictureMeshReplaysThroughTheSurface) {
+    // arrange a picture of one red triangle, placed under a translation (§6.4)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 10.0f, .y = 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 0.0f, .y = 10.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    PictureRecorder recorder;
+    recorder.draw_mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    ASSERT_NE(picture, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act
+    context.draw_picture(picture, Transform::translation(10.0f, 20.0f));
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert the mesh inside the picture landed at its placed position (§6.4)
+    const std::size_t inside = (22u * 64u + 12u) * 4u;
+    EXPECT_EQ(screenshot.pixels[inside], 255u);
+    // assert a pixel the mesh never covered stayed transparent (§6.4)
+    EXPECT_EQ(screenshot.pixels[3], 0u);
+}
+
+TEST(Blend2DMeshChecks, AnInvalidMeshDrawsNothing) {
+    // arrange a surface and three meshes a hand-built resource can carry (§6.4)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const MeshVertex vertices[3] = {{.position = Point{.x = 4.0f, .y = 4.0f}}, {.position = Point{.x = 44.0f, .y = 4.0f}}, {.position = Point{.x = 4.0f, .y = 44.0f}}};
+    const std::uint32_t out_of_range[3] = {0u, 1u, 9u};
+    // act every mesh is refused or skipped, so the surface keeps its clear colour (§6.4)
+    context.draw_mesh(nullptr, nullptr, Paint{});
+    context.draw_mesh(std::make_shared<const MeshResource>(109u, vertices, std::span<const std::uint32_t>()), nullptr, Paint{});
+    context.draw_mesh(std::make_shared<const MeshResource>(110u, vertices, out_of_range), nullptr, Paint{});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert no pixel carried ink, because no valid triangle reached the raster (§6.4)
+    for (std::size_t index = 3; index < screenshot.pixels.size(); index += 4)
+        EXPECT_EQ(screenshot.pixels[index], 0u);
+}
+
+TEST(Blend2DMeshChecks, ATransparentPaintDrawsNothing) {
+    // arrange a valid triangle and a surface cleared to transparent (§6.4)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const MeshVertex vertices[3] = {{.position = Point{.x = 4.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 44.0f, .y = 4.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 4.0f, .y = 44.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    // act a paint with no visible channel and a zero opacity both leave the target alone (§6.1)
+    context.draw_mesh(std::make_shared<const MeshResource>(111u, vertices, indices), nullptr, Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    context.set_opacity(0.0f);
+    context.draw_mesh(std::make_shared<const MeshResource>(112u, vertices, indices), nullptr, Paint{});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert no pixel carried ink, because neither draw reached the raster (§6.1)
+    for (std::size_t index = 3; index < screenshot.pixels.size(); index += 4)
+        EXPECT_EQ(screenshot.pixels[index], 0u);
+}
+
+TEST(Blend2DMeshChecks, ARoundedClipMasksTheMesh) {
+    // arrange a red quad covering the surface under a rounded clip (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const MeshVertex vertices[4] = {{.position = Point{.x = 0.0f, .y = 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 64.0f, .y = 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 0.0f, .y = 48.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 64.0f, .y = 48.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[6] = {0u, 1u, 3u, 0u, 3u, 2u};
+    context.clip_rounded_rect(Rect::from_origin_size(Point{.x = 4.0f, .y = 4.0f}, Size{.width = 56.0f, .height = 40.0f}), 12.0f);
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(113u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert the corner outside the rounded mask stayed transparent (§6.2)
+    const std::size_t corner = (5u * 64u + 5u) * 4u;
+    EXPECT_EQ(screenshot.pixels[corner + 3u], 0u);
+    // assert the centre of the clip is painted red, which proves the mask did not cut everything (§6.2)
+    const std::size_t centre = (24u * 64u + 32u) * 4u;
+    EXPECT_EQ(screenshot.pixels[centre], 255u);
+    EXPECT_EQ(screenshot.pixels[centre + 3u], 255u);
+}
+
+TEST(Blend2DMeshChecks, ASceneRecordedMeshLandsAtItsTransform) {
+    // arrange a retained triangle recorded under a translation, which the scene replay must apply once (§6.4)
+    const WindowMetrics metrics = scene_metrics(1.0f);
+    ResourceFactory factory;
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 10.0f, .y = 0.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}, {.position = Point{.x = 0.0f, .y = 10.0f}, .color = Color::rgb(1.0f, 0.0f, 0.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::shared_ptr<const MeshResource> mesh = factory.create_mesh(vertices, indices);
+    ASSERT_NE(mesh, nullptr);
+    SceneRecorder recorder(metrics);
+    recorder.set_background(Color::rgb(0.0f, 0.0f, 0.0f));
+    recorder.set_transform(Transform::translation(10.0f, 20.0f));
+    recorder.draw_mesh(mesh, nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    Blend2DRendererBackend backend;
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    // act
+    backend.execute_frame(*surface, *scene);
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert the triangle landed at the recorded translation (§6.4)
+    const std::size_t inside = (22u * 64u + 12u) * 4u;
+    EXPECT_EQ(screenshot.pixels[inside], 255u);
+    // assert the doubly translated position stayed background, which a transform applied twice would paint (§6.4)
+    const std::size_t doubled = (32u * 64u + 22u) * 4u;
+    EXPECT_EQ(screenshot.pixels[doubled], 0u);
+}
+
+TEST(Blend2DMeshChecks, ATranslucentQuadSharesItsDiagonalOnce) {
+    // arrange a half transparent quad whose main diagonal passes through the corner pixel centres (§6.4)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const MeshVertex vertices[4] = {{.position = Point{.x = 4.0f, .y = 4.0f}, .color = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f)}, {.position = Point{.x = 6.0f, .y = 4.0f}, .color = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f)}, {.position = Point{.x = 4.0f, .y = 6.0f}, .color = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f)}, {.position = Point{.x = 6.0f, .y = 6.0f}, .color = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f)}};
+    const std::uint32_t indices[6] = {0u, 1u, 3u, 0u, 3u, 2u};
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(114u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const Screenshot screenshot = capture_surface(*surface);
+    ASSERT_FALSE(screenshot.empty());
+    // assert the diagonal pixel is covered once, so its alpha is half rather than three quarters (§6.4)
+    const std::size_t diagonal = (4u * 64u + 4u) * 4u;
+    EXPECT_EQ(screenshot.pixels[diagonal], 128u);
+    EXPECT_EQ(screenshot.pixels[diagonal + 3u], 128u);
+    // assert an off diagonal pixel of the same quad is covered once too (§6.4)
+    const std::size_t off = (4u * 64u + 5u) * 4u;
+    EXPECT_EQ(screenshot.pixels[off], 128u);
+    EXPECT_EQ(screenshot.pixels[off + 3u], 128u);
 }

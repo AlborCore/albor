@@ -12,6 +12,7 @@
 #include "albor/render/frame_scene.h"
 #include "albor/render/image_resource.h"
 #include "albor/render/line_batch.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/path_resource.h"
 #include "albor/render/picture_resource.h"
 #include "albor/render/render-albor/albor_batch.h"
@@ -2339,6 +2340,7 @@ namespace
         void draw_path(const std::shared_ptr<const PathResource>&, const Transform&, const Paint&) override {}
         void draw_picture(const std::shared_ptr<const PictureResource>&, const Transform&) override {}
         void draw_image(const std::shared_ptr<const ImageResource>&, const Rect&, const Paint&) override {}
+        void draw_mesh(const std::shared_ptr<const MeshResource>&, const std::shared_ptr<const ImageResource>&, const Paint&) override {}
 
     private:
         // the transform the context last adopted
@@ -3433,4 +3435,127 @@ TEST(ExpandFillGroupChecks, FillsAStarburstWhoseEdgesMeetInsideOneSlab) {
         const float ca = (a.x - c.x) * (outside.y - c.y) - (a.y - c.y) * (outside.x - c.x);
         EXPECT_FALSE((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f));
     }
+}
+
+TEST(AlborRenderContextChecks, ExpandsARetainedMeshIntoOneDraw) {
+    // arrange a triangle whose vertices carry a colour and a texture coordinate (§6.4)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}, .uv = Point{.x = 0.0f, .y = 0.0f}, .color = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f)}, {.position = Point{.x = 10.0f, .y = 0.0f}, .uv = Point{.x = 1.0f, .y = 0.0f}, .color = Color::rgb(0.0f, 1.0f, 0.0f)}, {.position = Point{.x = 0.0f, .y = 10.0f}, .uv = Point{.x = 0.0f, .y = 1.0f}, .color = Color::rgb(0.0f, 0.0f, 1.0f)}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    const std::uint8_t pixels[4] = {255u, 255u, 255u, 255u};
+    const std::shared_ptr<const ImageResource> texture = std::make_shared<const ImageResource>(31u, 1u, 1u, ImageFormat::RGBA8, pixels);
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(32u, vertices, indices), texture, Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f)});
+    // assert the mesh appended three vertices and three zero based indices as one draw (§6.4, AD-06)
+    ASSERT_EQ(batch.draws.size(), 1u);
+    ASSERT_EQ(batch.vertices.size(), 3u);
+    ASSERT_EQ(batch.indices.size(), 3u);
+    EXPECT_EQ(batch.indices, (std::vector<std::uint32_t>{0u, 1u, 2u}));
+    EXPECT_EQ(batch.draws[0].texture, 31u);
+    EXPECT_EQ(batch.draws[0].index_begin, 0u);
+    EXPECT_EQ(batch.draws[0].index_count, 3u);
+    EXPECT_EQ(batch.draws[0].base_vertex, 0u);
+    EXPECT_EQ(batch.draws[0].coverage, CoverageKind::Plain);
+    // assert the paint alpha alone tints the mesh, which the reference does too (§6.4)
+    EXPECT_EQ(batch.draws[0].color, 0x80808080u);
+    // assert every vertex packed its premultiplied colour, which the shader multiplies through (§6.4)
+    EXPECT_EQ(batch.vertices[0].color, 0x80000080u);
+    EXPECT_EQ(batch.vertices[1].color, 0xFF00FF00u);
+    EXPECT_EQ(batch.vertices[2].color, 0xFFFF0000u);
+    // assert the uv reached the vertex, which the backend samples the texture with (§6.4)
+    EXPECT_FLOAT_EQ(batch.vertices[1].u, 1.0f);
+    EXPECT_FLOAT_EQ(batch.vertices[2].v, 1.0f);
+    EXPECT_FLOAT_EQ(batch.vertices[0].lateral, 1.0f);
+    EXPECT_FLOAT_EQ(batch.vertices[0].longitudinal, 1.0f);
+}
+
+TEST(AlborRenderContextChecks, PlacesMeshVerticesUnderTheDeviceTransform) {
+    // arrange a mesh drawn at double density under a translation (§6.4, AD-27)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 2.0f);
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    context.set_transform(Transform::translation(5.0f, 6.0f));
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(33u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert every vertex landed in device pixels, which the rasterizer reads (§6.3)
+    ASSERT_EQ(batch.vertices.size(), 3u);
+    EXPECT_FLOAT_EQ(batch.vertices[0].x, 10.0f);
+    EXPECT_FLOAT_EQ(batch.vertices[0].y, 12.0f);
+    EXPECT_FLOAT_EQ(batch.vertices[1].x, 30.0f);
+    EXPECT_FLOAT_EQ(batch.vertices[1].y, 12.0f);
+    EXPECT_FLOAT_EQ(batch.vertices[2].x, 10.0f);
+    EXPECT_FLOAT_EQ(batch.vertices[2].y, 32.0f);
+}
+
+TEST(AlborRenderContextChecks, SharesAMeshTextureWithAnImageUpload) {
+    // arrange a texture the frame draws as an image first (§6.4)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const std::uint8_t pixels[4] = {255u, 0u, 0u, 255u};
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(34u, 1u, 1u, ImageFormat::RGBA8, pixels);
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    // act
+    context.draw_image(image, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    context.draw_mesh(std::make_shared<const MeshResource>(35u, vertices, indices), image, Paint{});
+    // assert the frame uploads the texture once, because both draws share its identifier (§6.4, AD-06)
+    ASSERT_EQ(batch.uploads.size(), 1u);
+    EXPECT_EQ(batch.uploads[0].id, 34u);
+    ASSERT_EQ(batch.draws.size(), 2u);
+    EXPECT_EQ(batch.draws[1].texture, 34u);
+}
+
+TEST(AlborRenderContextChecks, SkipsAMeshTriangleThatNamesNoVertex) {
+    // arrange a hand-built mesh whose second triangle names a vertex the run does not hold (§6.4)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[6] = {0u, 1u, 2u, 0u, 1u, 9u};
+    // act
+    context.draw_mesh(std::make_shared<const MeshResource>(36u, vertices, indices), nullptr, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert only the whole in range triangle joined the batch (§6.4)
+    ASSERT_EQ(batch.indices.size(), 3u);
+    EXPECT_EQ(batch.indices, (std::vector<std::uint32_t>{0u, 1u, 2u}));
+    ASSERT_EQ(batch.draws.size(), 1u);
+    EXPECT_EQ(batch.draws[0].index_count, 3u);
+}
+
+TEST(AlborRenderContextChecks, RefusesAMissingOrEmptyMesh) {
+    // arrange a mesh with no triangle, which a hand-built resource can carry (§6.4)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    // act
+    context.draw_mesh(nullptr, nullptr, Paint{});
+    context.draw_mesh(std::make_shared<const MeshResource>(37u, vertices, std::span<const std::uint32_t>()), nullptr, Paint{});
+    // assert neither draw appended geometry or a draw record (§6.4)
+    EXPECT_TRUE(batch.draws.empty());
+    EXPECT_TRUE(batch.vertices.empty());
+    EXPECT_TRUE(batch.indices.empty());
+}
+
+TEST(AlborRenderContextChecks, RefusesAMeshWithATransparentPaint) {
+    // arrange a valid triangle and a context (§6.4)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const MeshVertex vertices[3] = {{.position = Point{.x = 0.0f, .y = 0.0f}}, {.position = Point{.x = 10.0f, .y = 0.0f}}, {.position = Point{.x = 0.0f, .y = 10.0f}}};
+    const std::uint32_t indices[3] = {0u, 1u, 2u};
+    // act the paint has no visible channel, so no vertex is expanded (§6.1)
+    context.draw_mesh(std::make_shared<const MeshResource>(38u, vertices, indices), nullptr, Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+    EXPECT_TRUE(batch.vertices.empty());
+    // act a zero opacity leaves no ink either (§6.1)
+    context.set_opacity(0.0f);
+    context.draw_mesh(std::make_shared<const MeshResource>(39u, vertices, indices), nullptr, Paint{});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
 }

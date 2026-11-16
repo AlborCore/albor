@@ -1,10 +1,14 @@
-#include "albor/render/render-albor/albor_batch.h"
+#pragma once
 
 #include <algorithm>
+#include <cstdint>
 
-namespace albor::render
+#include "albor/core/paint.h"
+
+namespace albor
 {
-    std::uint32_t pack_color(const Color& color) {
+    // pack a colour into premultiplied rgba8888 with red in the low byte, which a device raster reads (§6.3)
+    [[nodiscard]] inline std::uint32_t pack_color(const Color& color) {
         // every channel clamps into the unit range before the pack reads it, and a non finite one packs as zero
         const auto bounded = [](float value) -> float {
             // a channel that is not comparable falls back to the empty endpoint the clamp would pick
@@ -22,4 +26,4 @@ namespace albor::render
         // the packed word carries red in the low byte and alpha in the high one
         return channel(red * alpha) | (channel(green * alpha) << 8) | (channel(blue * alpha) << 16) | (channel(alpha) << 24);
     }
-} // namespace albor::render
+} // namespace albor

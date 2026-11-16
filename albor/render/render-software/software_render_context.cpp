@@ -177,4 +177,9 @@ namespace albor::software
         // an image is the blend2d context's, so the two engines composite it identically (§6.4)
         m_inner.draw_image(image, destination, paint);
     }
+
+    void SoftwareRenderContext::draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) {
+        // a mesh is the blend2d context's, so the two engines interpolate and sample it identically (§6.4)
+        m_inner.draw_mesh(mesh, texture, paint);
+    }
 } // namespace albor::software

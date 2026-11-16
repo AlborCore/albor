@@ -67,6 +67,14 @@ namespace albor
         return DrawCommand(ImageGeometry{.image = std::move(image), .destination = destination}, paint);
     }
 
+    DrawCommand DrawCommand::mesh(std::shared_ptr<const MeshResource> mesh, std::shared_ptr<const ImageResource> texture, Paint paint) {
+        // a mesh with no triangle draws nothing, so it is refused rather than recorded (§6.4)
+        if (mesh == nullptr || mesh->empty())
+            return DrawCommand(RectGeometry{.rect = Rect{}}, paint);
+        // the triangles and their texture are the geometry, because the replay samples the one into the other (§6.4)
+        return DrawCommand(MeshGeometry{.mesh = std::move(mesh), .texture = std::move(texture)}, paint);
+    }
+
     DrawCommand DrawCommand::glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint, Transform transform) {
         // an outline with no points draws nothing, so it is refused rather than recorded (§6.2)
         if (outline == nullptr || outline->empty())
@@ -132,6 +140,9 @@ namespace albor
         // a layer marker is the tenth alternative, and its flag says whether it opens or closes (§6.2)
         case 9:
             return layer_geometry().pop ? DrawCommandKind::LayerPop : DrawCommandKind::LayerPush;
+        // a triangle mesh is the eleventh alternative, which is what a variant holds at most (§6.4)
+        case 10:
+            return DrawCommandKind::Mesh;
         // an alternative outside the enumeration is read as the shadow, which a report sees (§6.2)
         default:
             return DrawCommandKind::Shadow;
@@ -191,6 +202,11 @@ namespace albor
     const ImageGeometry& DrawCommand::image_geometry() const {
         // the geometry is an image only when the command is one, which the replay guarantees (§6.4)
         return std::get<ImageGeometry>(m_geometry);
+    }
+
+    const MeshGeometry& DrawCommand::mesh_geometry() const {
+        // the geometry is a mesh only when the command is one, which the replay guarantees (§6.4)
+        return std::get<MeshGeometry>(m_geometry);
     }
 
     const ShadowGeometry& DrawCommand::shadow_geometry() const {
@@ -297,6 +313,12 @@ namespace albor
             // the pixels and the destination are read together, because both decide what is drawn (§6.4)
             const ImageGeometry& image = image_geometry();
             return !image.image || image.image->pixels().empty() || image.destination.empty();
+        }
+        // a mesh with no triangle contributes nothing, and a transparent paint puts no ink down (§6.4)
+        case DrawCommandKind::Mesh: {
+            // the triangles are read with the paint, because both decide what is drawn (§6.4)
+            const MeshGeometry& mesh = mesh_geometry();
+            return !mesh.mesh || mesh.mesh->empty() || !paints;
         }
         // an outline with no point, or no paint, contributes nothing (§6.4, AD-34)
         case DrawCommandKind::GlyphOutline: {
@@ -454,6 +476,38 @@ namespace albor
         case DrawCommandKind::Image:
             // an image covers where it was placed, mapped by the transform it draws under (§6.2, §6.4)
             return mapped_bounds(image_geometry().destination);
+        case DrawCommandKind::Mesh: {
+            // a mesh is bounded by its own vertices, which is what lets a damage frame cull it (§6.4)
+            const std::shared_ptr<const MeshResource>& mesh = mesh_geometry().mesh;
+            // a missing or empty mesh covers nothing, which is the quiet default (§6.4)
+            if (mesh == nullptr || mesh->vertices().empty())
+                return Rect{};
+            // the first vertex starts every edge, placed under the command transform (§6.2)
+            const Point first = m_transform.apply(mesh->vertices().front().position);
+            // the left edge starts at the first vertex, which every mesh has (§6.4)
+            float left = first.x;
+            // the right edge starts at the same vertex (§6.4)
+            float right = left;
+            // the top edge starts at the same vertex (§6.4)
+            float top = first.y;
+            // the bottom edge starts at the same vertex (§6.4)
+            float bottom = top;
+            // every further vertex widens the edges, which is what makes the bound conservative (§6.4)
+            for (const MeshVertex& vertex : mesh->vertices()) {
+                // the vertex lands where the command transform places it (§6.4)
+                const Point drawn = m_transform.apply(vertex.position);
+                // the left edge follows the leftmost vertex (§6.4)
+                left = std::min(left, drawn.x);
+                // the right edge follows the rightmost vertex (§6.4)
+                right = std::max(right, drawn.x);
+                // the top edge follows the topmost vertex (§6.4)
+                top = std::min(top, drawn.y);
+                // the bottom edge follows the bottommost vertex (§6.4)
+                bottom = std::max(bottom, drawn.y);
+            }
+            // the bound is returned whole (§6.4)
+            return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
+        }
         case DrawCommandKind::GlyphOutline: {
             // an outline covers its own points placed at its pen and under its transform (§6.4, §6.2)
             const GlyphOutlineGeometry& geometry = glyph_outline_geometry();
@@ -547,7 +601,8 @@ namespace albor
             reach = std::max(reach, batch_geometry().stroke.width * scale);
             break;
         case DrawCommandKind::Image:
-            // an image has no stroke of its own, so only the antialias fringe grows its bound (§6.4)
+        case DrawCommandKind::Mesh:
+            // an image and a mesh have no stroke of their own, so only the antialias fringe grows their bound (§6.4)
             break;
         case DrawCommandKind::Shadow:
         case DrawCommandKind::Picture:
@@ -685,6 +740,10 @@ namespace albor
         // an image draws into the destination the recorder recorded (§6.4)
         case DrawCommandKind::Image:
             context.draw_image(image_geometry().image, image_geometry().destination, m_paint);
+            return;
+        // a mesh draws its retained triangles under the transform the context stands at (§6.4)
+        case DrawCommandKind::Mesh:
+            context.draw_mesh(mesh_geometry().mesh, mesh_geometry().texture, m_paint);
             return;
         // an embedded glyph draws as its tessellated outline, which is how AD-34 text reaches a surface (§6.4, AD-34)
         case DrawCommandKind::GlyphOutline:

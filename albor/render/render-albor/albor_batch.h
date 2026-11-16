@@ -6,6 +6,7 @@
 
 #include "albor/core/geometry.h"
 #include "albor/core/paint.h"
+#include "albor/render/premultiplied_color.h"
 
 namespace albor
 {
@@ -41,6 +42,12 @@ namespace albor::render
         // the paint space coordinates, which an image draw maps into its texture
         float u = 0.0f;
         float v = 0.0f;
+
+        // the premultiplied vertex colour, packed red first in the low byte, which a mesh draw sets (§6.4)
+        std::uint32_t color = 0xFFFFFFFFu;
+
+        // the padding keeps the vertex 32 bytes, which is the structured buffer stride both shaders index (§6.3, AD-05)
+        std::uint32_t padding = 0;
     };
 
     // the scissor one draw is cut by, carried as the inverse transform of the clip box (nanovg technique)
@@ -197,7 +204,4 @@ namespace albor::render
         // the shadows the frame casts, which the draws reference by index (§6.2)
         std::vector<BatchShadow> shadows;
     };
-
-    // pack a colour into premultiplied rgba8888 with red in the low byte, which a device raster reads (§6.3)
-    [[nodiscard]] std::uint32_t pack_color(const Color& color);
 } // namespace albor::render

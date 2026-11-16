@@ -119,6 +119,9 @@ namespace albor
         // override: record an image into a destination rectangle
         void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) override;
 
+        // override: record a retained triangle mesh under an optional texture
+        void draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) override;
+
         // hand out the recorded commands in order, which the factory turns into a picture (§6.4)
         [[nodiscard]] std::vector<DrawCommand> commands() const;
 
