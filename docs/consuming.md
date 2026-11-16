@@ -293,7 +293,7 @@ endif()
 
 A Release link that references `albor-devrt` or `albor-automation` fails at link time, by
 design (AD-04, AD-10). See [Tooling](tooling.md#hot-reload) and
-[Automation and MCP](tooling.md#automation-and-mcp).
+[Automation and MCP](automation.md).
 
 ## Requirements and deployment
 

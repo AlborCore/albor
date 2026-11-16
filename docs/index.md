@@ -41,8 +41,10 @@ every new feature lands here alongside its code.
   [ComboBox](components/combo-box.md), [TextField](components/text-field.md),
   [Slider](components/slider.md), [CheckBox](components/checkbox.md),
   [Canvas](components/canvas.md)).
-- **[Tooling](tooling.md)** — the codegen driver, the dev runtime, the language server,
-  automation and how they are wired into a build.
+- **[Tooling](tooling.md)** — the codegen driver, the dev runtime, the language server
+  and how they are wired into a build.
+- **[Automation and MCP](automation.md)** — drive a running application by semantic
+  identity: discovery, the MCP session, every command and message examples.
 - **[Status and platforms](status.md)** — what is implemented, what is planned.
 
 ## A taste

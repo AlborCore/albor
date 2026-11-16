@@ -139,8 +139,16 @@ application's own handlers use ([Commands](concepts/commands.md)).
 
 The MCP server is the adapter in `automation/host/`: an adapter over the automation layer,
 nothing more (AD-20). A client sees a set of tools — query, act, inspect, capture — whose
-semantics are the automation API's; there is no second path to the runtime. `inspector/`
-consumes the same automation surface for its diagnostics; it is not a transport.
+semantics are the automation API's; there is no second path to the runtime.
+`inspector/` reads the frame scene directly; it is not a transport and it does
+not reach the automation layer.
+
+The standard surface covers semantic queries and writes (`semantic.*`), synthetic
+pointer and key input (`input.*`), frame capture (`capture.screenshot`), and the
+application command registry (`command.*`). The complete command reference — every
+command, its arguments, refusals and request/response examples — is on
+[Automation and MCP](automation.md). That page also documents host discovery, the
+MCP handshake, content blocks and the raw automation wire.
 
 ## What the test suite covers
 

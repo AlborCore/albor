@@ -1284,6 +1284,9 @@ Platform accessibility bridges consume the semantic tree:
 - **Release Exclusion:** The automation engine is excluded at link time from Release configurations.
 - **Model Context Protocol (MCP):** AI and developer tooling agents interact with the application via an MCP server adapter that connects to the automation layer. MCP operations are subject to the same authentication and application command allow-lists.
 - **Typed Answers:** every answer states its kind (`text`, `number`, `boolean`, `json`, `image`, `binary`), so a client decodes a value rather than guessing at a string. An `image` or `binary` payload travels as base64, because the wire is a line.
+- **Typed Reads:** `semantic.value` answers a node's primary value with its kind — number for a bounded range, boolean for a checked or unchecked control, text for an editable value — so a test reads a value rather than parsing the tree dump. The remaining states stay in `semantic.tree`.
+- **Layout Bounds:** `semantic.bounds` answers a node's position and extent in logical pixels, so a client asserts geometry, adjacency and a pointer target without a screenshot.
+- **Input Synthesis:** `input.click`, `input.pointer` and `input.key` deliver normalized pointer and key events through the same path a platform adapter uses, so hit testing, pointer focus, capture and accelerators all run. A pointer event carries logical window coordinates; a key press names the portable key and its modifiers.
 - **Frame Capture:** `capture.screenshot` reads the active window's last presented frame once the render executor settles. It never rebuilds a frame, so a mutation issued in the same transport pass is visible only to a later capture, and the raw form is byte-exact with the surface read.
 
 ---

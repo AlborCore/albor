@@ -1,7 +1,10 @@
 #include "albor/automation/semantic_commands.h"
 
+#include <cmath>
 #include <optional>
 #include <sstream>
+
+#include "albor/core/json.h"
 
 namespace albor::automation
 {
@@ -126,7 +129,7 @@ namespace albor::automation
 
     std::vector<std::string> semantic_command_names() {
         // the names are fixed rather than discovered, because a host allow-lists before any tree exists (§10.3, AD-10)
-        return {std::string(FAMILY) + "tree", std::string(FAMILY) + "find", std::string(FAMILY) + "invoke", std::string(FAMILY) + "actions", std::string(FAMILY) + "set_value", std::string(FAMILY) + "set_focused"};
+        return {std::string(FAMILY) + "tree", std::string(FAMILY) + "find", std::string(FAMILY) + "value", std::string(FAMILY) + "bounds", std::string(FAMILY) + "invoke", std::string(FAMILY) + "actions", std::string(FAMILY) + "set_value", std::string(FAMILY) + "set_focused"};
     }
 
     void register_semantic_commands(AutomationRegistry& registry, SemanticSnapshot snapshot) {
@@ -206,6 +209,84 @@ namespace albor::automation
                 return AutomationResult::refused("no node with id: " + *id);
             // a found node answers with its role and name, which is what the client wanted to confirm (§10.3)
             return AutomationResult::answered(role_name(node->role()) + " " + node->name());
+        });
+
+        // the value command answers the node's primary value with its kind, which a typed test reads (§10.1, §10.3)
+        registry.register_command(std::string(FAMILY) + "value", [snapshot](const AutomationRequest& request) {
+            // a host with no snapshot cannot answer, which is refused (§10.3)
+            if (!snapshot)
+                return AutomationResult::refused("the host supplied no semantic snapshot");
+            // the id is required, because a value belongs to one node (§10.3, AD-11)
+            const auto id = argument_at(request, 0);
+            // a missing id is refused rather than defaulted (§10.3, AD-11)
+            if (!id)
+                return AutomationResult::refused("value needs an id");
+            // a value query takes one selector, so a second argument is a client mistake (§10.3)
+            if (request.arguments.size() > 1)
+                return AutomationResult::refused("value takes an id");
+            // the tree is taken once, because the application may rebuild it between lines (§10.3)
+            SemanticTree& tree = *snapshot();
+            // the node is looked up by identity, which is the only selector automation offers (§18.1, AD-11)
+            SemanticNode* node = node_by_id(tree, *id);
+            // an absent id is refused with its name, so a client knows which selector failed (§10.3)
+            if (node == nullptr)
+                return AutomationResult::refused("no node with id: " + *id);
+            // a bounded number is the value a slider or stepper publishes, which a client reads as a number (§10.1)
+            if (node->has_range()) {
+                // a non finite number has no decimal spelling, so it is refused rather than answered as text (§10.3)
+                if (!std::isfinite(node->range().value))
+                    return AutomationResult::refused("the value is not a finite number: " + *id);
+                // the number is spelled as one, which is what the number kind carries (§10.3)
+                return AutomationResult::answered(ValueKind::Number, core::Json(static_cast<double>(node->range().value)).to_string());
+            }
+            // a checkable node publishes a tri state, where the settled half is a boolean (§10.1)
+            if (node->check() == CheckState::Checked)
+                return AutomationResult::answered(ValueKind::Boolean, "yes");
+            // an unchecked node is the false half of the same boolean (§10.1)
+            if (node->check() == CheckState::Unchecked)
+                return AutomationResult::answered(ValueKind::Boolean, "no");
+            // an indeterminate check has no boolean answer, so it is named rather than forced into one (§10.1)
+            if (node->check() == CheckState::Indeterminate)
+                return AutomationResult::answered(ValueKind::Text, "indeterminate");
+            // an editable or text carrying node publishes a string, which is the value a form test reads (§10.1)
+            if (!node->value().empty() || node->role() == SemanticRole::TextField)
+                return AutomationResult::answered(ValueKind::Text, node->value());
+            // a node with no value state has nothing to answer, which is refused rather than answered empty (§10.1)
+            return AutomationResult::refused("no value on node: " + *id);
+        });
+
+        // the bounds command answers the arranged rect, which a client reads before it aims a pointer (§8.2, §10.3)
+        registry.register_command(std::string(FAMILY) + "bounds", [snapshot](const AutomationRequest& request) {
+            // a host with no snapshot cannot answer, which is refused (§10.3)
+            if (!snapshot)
+                return AutomationResult::refused("the host supplied no semantic snapshot");
+            // the id is required, because a rect belongs to one node (§10.3, AD-11)
+            const auto id = argument_at(request, 0);
+            // a missing id is refused rather than defaulted (§10.3, AD-11)
+            if (!id)
+                return AutomationResult::refused("bounds needs an id");
+            // a bounds query takes one selector, so a second argument is a client mistake (§10.3)
+            if (request.arguments.size() > 1)
+                return AutomationResult::refused("bounds takes an id");
+            // the tree is taken once, because the application may rebuild it between lines (§10.3)
+            SemanticTree& tree = *snapshot();
+            // the node is looked up by identity, which is the only selector automation offers (§18.1, AD-11)
+            SemanticNode* node = node_by_id(tree, *id);
+            // an absent id is refused with its name, so a client knows which selector failed (§10.3)
+            if (node == nullptr)
+                return AutomationResult::refused("no node with id: " + *id);
+            // the rect is one object, because a client reads the four fields together (§10.3)
+            core::Json bounds;
+            // the x is the logical window coordinate the layout assigned (§8.2)
+            bounds.set("x", core::Json(static_cast<double>(node->bounds().x)));
+            // the y is the second logical window coordinate (§8.2)
+            bounds.set("y", core::Json(static_cast<double>(node->bounds().y)));
+            // the width is the arranged extent, which a pointer target needs (§8.2)
+            bounds.set("width", core::Json(static_cast<double>(node->bounds().width)));
+            // the height is the other extent, which adjacency reads (§8.2)
+            bounds.set("height", core::Json(static_cast<double>(node->bounds().height)));
+            // the object is answered as json, which is the typed shape a rect takes (§10.3)
+            return AutomationResult::answered(ValueKind::Json, bounds.to_string());
         });
 
         // the listing reports what a node can be asked to do, which a client reads before acting (§10.3)

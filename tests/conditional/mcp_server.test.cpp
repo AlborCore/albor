@@ -1,5 +1,7 @@
 #include <memory>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -400,6 +402,128 @@ TEST(McpServer, TheSetValueSchemaNamesItsTwoParameters) {
     ASSERT_NE(properties, nullptr);
     ASSERT_NE(properties->member("id"), nullptr);
     ASSERT_NE(properties->member("value"), nullptr);
+}
+
+TEST(McpServer, ThePointerAndKeyToolsDeclareTheirParameters) {
+    // arrange a layer permitting the two input tools, which is what puts them in the listing (§10.3, AD-10)
+    AutomationRegistry registry;
+    registry.register_command("input.pointer", [](const AutomationRequest&) { return AutomationResult::answered(""); });
+    registry.register_command("input.key", [](const AutomationRequest&) { return AutomationResult::answered(""); });
+    registry.allow("input.pointer");
+    registry.allow("input.key");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [](std::string_view) { return AutomationResult::answered(""); };
+    McpServer server(std::move(route));
+    // act
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":41,"method":"tools/list"})");
+    // assert each tool names the parameters the adapter can place, because a missing name is a dropped argument (§10.3)
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    const core::Json* tools = reply->member("result")->member("tools");
+    ASSERT_NE(tools, nullptr);
+    ASSERT_EQ(tools->as_array().size(), 2U);
+    // the tools are located by name, because the allow list is a sorted map rather than the registration order (§10.3)
+    const core::Json* pointer = nullptr;
+    // the key tool is the second one the listing carries (§10.3)
+    const core::Json* key = nullptr;
+    // each listed tool contributes its schema, which the test reads by name (§10.3)
+    for (const core::Json& tool : tools->as_array()) {
+        // the pointer tool carries the four fields a raw event needs (§8.3)
+        if (tool.member("name")->as_string() == "input.pointer")
+            pointer = &tool;
+        // the key tool carries the key and the optional modifier list (§18.5)
+        if (tool.member("name")->as_string() == "input.key")
+            key = &tool;
+    }
+    ASSERT_NE(pointer, nullptr);
+    ASSERT_NE(key, nullptr);
+    // the pointer schema names the node, the action and the optional point (§10.3)
+    const core::Json* pointer_properties = pointer->member("inputSchema")->member("properties");
+    ASSERT_NE(pointer_properties, nullptr);
+    ASSERT_NE(pointer_properties->member("id"), nullptr);
+    ASSERT_NE(pointer_properties->member("action"), nullptr);
+    ASSERT_NE(pointer_properties->member("x"), nullptr);
+    ASSERT_NE(pointer_properties->member("y"), nullptr);
+    // the action is the four event kinds the command delivers, which a client discovers from the enum (§10.3)
+    const core::Json* actions = pointer_properties->member("action")->member("enum");
+    ASSERT_NE(actions, nullptr);
+    ASSERT_EQ(actions->as_array().size(), 4U);
+    EXPECT_EQ(actions->as_array().at(0).as_string(), "press");
+    EXPECT_EQ(actions->as_array().at(1).as_string(), "move");
+    EXPECT_EQ(actions->as_array().at(2).as_string(), "release");
+    EXPECT_EQ(actions->as_array().at(3).as_string(), "cancel");
+    // the key schema names both fields, because a named call cannot place what the schema omits (§10.3)
+    const core::Json* key_properties = key->member("inputSchema")->member("properties");
+    ASSERT_NE(key_properties, nullptr);
+    ASSERT_NE(key_properties->member("key"), nullptr);
+    ASSERT_NE(key_properties->member("modifiers"), nullptr);
+}
+
+TEST(McpServer, APointerNamedCallLandsInTheLayerOrder) {
+    // arrange a layer that records the arguments it received, which is how the adapter's placement is observed (§10.3)
+    AutomationRegistry registry;
+    std::vector<std::string> received;
+    registry.register_command("input.pointer", [&received](const AutomationRequest& request) {
+        received = request.arguments;
+        return AutomationResult::answered("");
+    });
+    // the key command is the second placement the test checks (§10.3)
+    registry.register_command("input.key", [&received](const AutomationRequest& request) {
+        received = request.arguments;
+        return AutomationResult::answered("");
+    });
+    registry.allow("input.pointer");
+    registry.allow("input.key");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act a client names the pointer fields in an object order that differs from the layer order (§10.3)
+    (void)server.handle_line(R"({"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"input.pointer","arguments":{"y":"34","id":"level","x":"12","action":"press"}}})");
+    // assert the point reached the layer in the table order, because the wire is positional (§10.3)
+    ASSERT_EQ(received.size(), 4U);
+    EXPECT_EQ(received.at(0), "level");
+    EXPECT_EQ(received.at(1), "press");
+    EXPECT_EQ(received.at(2), "12");
+    EXPECT_EQ(received.at(3), "34");
+    // act a client names the key and its modifiers, which is the second table entry (§10.3)
+    (void)server.handle_line(R"({"jsonrpc":"2.0","id":43,"method":"tools/call","params":{"name":"input.key","arguments":{"modifiers":"control","key":"s"}}})");
+    // assert the key and modifiers arrived in the layer order (§18.5)
+    ASSERT_EQ(received.size(), 2U);
+    EXPECT_EQ(received.at(0), "s");
+    EXPECT_EQ(received.at(1), "control");
+}
+
+TEST(McpServer, ASemanticValueAndBoundsNamedCallCarriesTheId) {
+    // arrange a layer that records the arguments it received, which is how the adapter's placement is observed (§10.3)
+    AutomationRegistry registry;
+    std::vector<std::string> received;
+    registry.register_command("semantic.value", [&received](const AutomationRequest& request) {
+        received = request.arguments;
+        return AutomationResult::answered(ValueKind::Number, "1");
+    });
+    // the bounds command is the second placement the test checks, because both take one id (§10.3)
+    registry.register_command("semantic.bounds", [&received](const AutomationRequest& request) {
+        received = request.arguments;
+        return AutomationResult::answered(ValueKind::Json, "{}");
+    });
+    registry.allow("semantic.value");
+    registry.allow("semantic.bounds");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act a client names the node it reads, which the adapter must place as the only argument (§10.3)
+    (void)server.handle_line(R"({"jsonrpc":"2.0","id":44,"method":"tools/call","params":{"name":"semantic.value","arguments":{"id":"level"}}})");
+    // assert the id reached the layer, because a missing table entry would drop it (§10.3)
+    ASSERT_EQ(received.size(), 1U);
+    EXPECT_EQ(received.at(0), "level");
+    // act the bounds call names its node the same way (§10.3)
+    (void)server.handle_line(R"({"jsonrpc":"2.0","id":45,"method":"tools/call","params":{"name":"semantic.bounds","arguments":{"id":"panel"}}})");
+    // assert the second id reached the layer as well (§10.3)
+    ASSERT_EQ(received.size(), 1U);
+    EXPECT_EQ(received.at(0), "panel");
 }
 
 TEST(McpServer, ASetValueNamedCallCarriesASpaceToTheLayer) {
