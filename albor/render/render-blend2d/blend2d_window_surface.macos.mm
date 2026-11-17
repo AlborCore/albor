@@ -5,6 +5,8 @@
 #import <QuartzCore/CALayer.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -129,6 +131,12 @@ namespace albor::blend2d
                 return m_raster->read_pixels();
             }
 
+            // override: report how many frames the layer presented, which a diagnostic or test reads (§6.3)
+            [[nodiscard]] std::size_t presented_frames() const override {
+                // the counter is read across threads, which is why it is atomic (§6.3)
+                return m_presented_frames.load();
+            }
+
         private:
             // copy the finished raster into the drawable, which the layer presents (§6.3)
             void present() {
@@ -169,6 +177,8 @@ namespace albor::blend2d
                     // the layer presents the drawable when the copier lands, which is the whole presentation (§6.3)
                     [buffer presentDrawable:drawable];
                     [buffer commit];
+                    // the frame reached the layer, which the presentation counter records (§6.3)
+                    m_presented_frames++;
                 }
             }
 
@@ -180,6 +190,9 @@ namespace albor::blend2d
 
             // the metrics the layer is sized against (§6.2)
             WindowMetrics m_metrics;
+
+            // the frames the layer presented, which a diagnostic reads across threads (§6.3)
+            std::atomic<std::size_t> m_presented_frames{0};
 
             // whether a frame is currently begun, which the end balances (§6.1)
             bool m_began = false;

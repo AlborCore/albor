@@ -9,6 +9,8 @@
 #include <windows.h>
 #include <wrl/client.h>
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -235,6 +237,12 @@ namespace albor::blend2d
                 return m_raster->read_pixels();
             }
 
+            // override: report how many frames the swapchain presented, which a diagnostic or test reads (§6.3)
+            [[nodiscard]] std::size_t presented_frames() const override {
+                // the counter is read across threads, which is why it is atomic (§6.3)
+                return m_presented_frames.load();
+            }
+
         private:
             // copy the finished raster into the back buffer, which the swapchain presents (§6.3)
             void present() {
@@ -264,6 +272,8 @@ namespace albor::blend2d
                 context->CopyResource(back_buffer.Get(), m_upload.Get());
                 // the present is a shared dxgi call, so it runs inside the lock with the copy that feeds it (§6.3)
                 (void)m_swap_chain->Present(1, 0);
+                // the frame reached the swapchain, which the presentation counter records (§6.3)
+                m_presented_frames++;
             }
 
             // resize the swapchain and the upload texture to the metrics, the window presentation size (§6.3, AD-27)
@@ -333,6 +343,9 @@ namespace albor::blend2d
 
             // the metrics the swapchain is sized against (§6.2)
             WindowMetrics m_metrics;
+
+            // the frames the swapchain presented, which a diagnostic reads across threads (§6.3)
+            std::atomic<std::size_t> m_presented_frames{0};
 
             // whether a frame is currently begun, which the end balances (§6.1)
             bool m_began = false;

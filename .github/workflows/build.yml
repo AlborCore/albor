@@ -163,16 +163,16 @@ jobs:
               choco install ccache --no-progress -y
           - name: linux-release
             os: ubuntu-latest
-            enable: false
+            enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-            setup: sudo apt-get update && sudo apt-get install -y ccache
+            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev wayland-protocols libxkbcommon-dev libdecor-0-dev libdecor-0-plugin-1-cairo weston pkg-config libgl1-mesa-dri libegl1
           - name: linux-debug
             os: ubuntu-latest
-            enable: false
+            enable: true
             preset: debug
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-            setup: sudo apt-get update && sudo apt-get install -y ccache
+            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev wayland-protocols libxkbcommon-dev libdecor-0-dev libdecor-0-plugin-1-cairo weston pkg-config libgl1-mesa-dri libegl1
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3
@@ -257,8 +257,56 @@ jobs:
         working-directory: .build-${{ matrix.preset }}/tests
         run: ./albor-tests && ./albor-generated-font-checks
 
+      - name: linux wayland tests
+        if: matrix.enable && runner.os == 'Linux'
+        working-directory: .build-${{ matrix.preset }}/tests
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-0 --idle-time=0 > "$RUNNER_TEMP/weston.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+            cat "$RUNNER_TEMP/weston.log"
+            exit 1
+          fi
+          export WAYLAND_DISPLAY=wayland-0
+          ./albor-linux-tests
+
+      - name: linux wayland tests at scale 2
+        if: matrix.enable && runner.os == 'Linux'
+        working-directory: .build-${{ matrix.preset }}/tests
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg-scale"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-scale --scale=2 --idle-time=0 > "$RUNNER_TEMP/weston-scale.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S "$XDG_RUNTIME_DIR/wayland-scale" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/wayland-scale" ]; then
+            cat "$RUNNER_TEMP/weston-scale.log"
+            exit 1
+          fi
+          export WAYLAND_DISPLAY=wayland-scale
+          export ALBOR_EXPECT_SCALE=2
+          ./albor-linux-tests
+
+      # the linux platform font resolver is tracked in #235, so the selection check waits for it
       - name: font selection check
-        if: matrix.enable
+        if: matrix.enable && runner.os != 'Linux'
         env:
           ALBOR_BUILD_DIR: .build-${{ matrix.preset }}
         run: bash build/check-font-selection.sh

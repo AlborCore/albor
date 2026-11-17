@@ -46,6 +46,8 @@ every new feature lands here alongside its code.
 - **[Automation and MCP](automation.md)** — drive a running application by semantic
   identity: discovery, the MCP session, every command and message examples.
 - **[Status and platforms](status.md)** — what is implemented, what is planned.
+- **[Linux](linux.md)** — the Wayland adapter, the dependencies, the container workflow and
+  the headless Weston suite.
 
 ## A taste
 
