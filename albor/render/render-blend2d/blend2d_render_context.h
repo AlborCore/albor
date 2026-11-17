@@ -95,6 +95,9 @@ namespace albor::blend2d
         // override: draw a retained immutable image into a destination rectangle
         void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) override;
 
+        // override: draw a retained triangle mesh under the current transform
+        void draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) override;
+
         // hand out how deep the state stack is, which a test asserts against the saves it made
         [[nodiscard]] std::size_t depth() const;
 

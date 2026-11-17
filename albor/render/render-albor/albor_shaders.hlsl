@@ -7,6 +7,8 @@ struct BatchVertex
     float lateral;
     float longitudinal;
     float2 uv;
+    uint color;
+    uint padding;
 };
 
 // the per draw state, which the backend writes once per recorded draw
@@ -34,7 +36,13 @@ struct Varyings
     float lateral : LATERAL;
     float longitudinal : LONGITUDINAL;
     float2 uv : PAINTUV;
+    float4 color : VERTEXCOLOR;
 };
+
+// unpack one premultiplied rgba8 vertex colour into the unit range the fragment multiplies (§6.3)
+float4 unpack_color(uint packed) {
+    return float4(packed & 255, (packed >> 8) & 255, (packed >> 16) & 255, (packed >> 24)) / 255.0;
+}
 
 // the draw state buffer the vertex stage reads, bound to the slot the backend names per draw
 StructuredBuffer<BatchVertex> vertices : register(t0);
@@ -58,6 +66,8 @@ Varyings albor_vertex(uint vertexId : SV_VertexID) {
     shaded.lateral = input.lateral;
     shaded.longitudinal = input.longitudinal;
     shaded.uv = input.uv;
+    // the vertex colour is premultiplied like the draw colour, which the fragment multiplies through (§6.4)
+    shaded.color = unpack_color(input.color);
     return shaded;
 }
 
@@ -109,9 +119,10 @@ cbuffer FragmentUniformsCb : register(b0)
 
 // shade one fragment, which every pipeline shares and the kind selects between
 float4 albor_fragment(Varyings pixel) : SV_Target0 {
-    float4 base = fragmentUniforms.color;
+    // the vertex colour and the draw colour both premultiply into the base, which leaves a white vertex unchanged (§6.4)
+    float4 base = fragmentUniforms.color * pixel.color;
     if (fragmentUniforms.hasTexture != 0) {
-        base = paint.Sample(paintSampler, pixel.uv) * fragmentUniforms.color;
+        base = base * paint.Sample(paintSampler, pixel.uv);
     }
     float scale = coverage(pixel, fragmentUniforms) * scissor_mask(pixel.position.xy, fragmentUniforms);
     float4 result = base * scale;
@@ -139,9 +150,10 @@ struct ExactFragment
 
 // shade one fragment of a mode that needs the destination, which the fixed factors alone cannot express
 ExactFragment albor_fragment_exact(Varyings pixel) {
-    float4 source = fragmentUniforms.color;
+    // the vertex colour and the draw colour both premultiply into the source, which leaves a white vertex unchanged (§6.4)
+    float4 source = fragmentUniforms.color * pixel.color;
     if (fragmentUniforms.hasTexture != 0) {
-        source = paint.Sample(paintSampler, pixel.uv) * fragmentUniforms.color;
+        source = source * paint.Sample(paintSampler, pixel.uv);
     }
     float scale = coverage(pixel, fragmentUniforms) * scissor_mask(pixel.position.xy, fragmentUniforms);
     ExactFragment shaded;
@@ -181,6 +193,8 @@ Varyings shadow_vertex(uint vertexId : SV_VertexID) {
     shaded.lateral = 1.0;
     shaded.longitudinal = 1.0;
     shaded.uv = corner;
+    // the shadow passes carry no vertex colour, so the varying stays white (§6.2)
+    shaded.color = float4(1.0, 1.0, 1.0, 1.0);
     return shaded;
 }
 

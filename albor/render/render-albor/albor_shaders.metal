@@ -9,6 +9,8 @@ struct BatchVertex
     float lateral;
     float longitudinal;
     float2 uv;
+    uint color;
+    uint padding;
 };
 
 // the per draw state, which the backend writes once per recorded draw
@@ -34,7 +36,13 @@ struct Varyings
     float lateral;
     float longitudinal;
     float2 uv;
+    float4 color;
 };
+
+// unpack one premultiplied rgba8 vertex colour into the unit range the fragment multiplies (§6.3)
+static float4 unpack_color(uint packed) {
+    return float4(float(packed & 0xFFu), float((packed >> 8) & 0xFFu), float((packed >> 16) & 0xFFu), float(packed >> 24)) / 255.0;
+}
 
 // map a device space position onto the clip space the rasterizer expects, with the y axis flipped
 static float4 project(float2 position, float2 targetSize) {
@@ -51,6 +59,8 @@ vertex Varyings albor_vertex(uint vertexId [[vertex_id]], constant BatchVertex* 
     out.lateral = input.lateral;
     out.longitudinal = input.longitudinal;
     out.uv = input.uv;
+    // the vertex colour is premultiplied like the draw colour, which the fragment multiplies through (§6.4)
+    out.color = unpack_color(input.color);
     return out;
 }
 
@@ -94,9 +104,10 @@ constant int COMPOSITION_COPY = 9;
 
 // shade one fragment, which every pipeline shares and the kind selects between
 fragment float4 albor_fragment(Varyings in [[stage_in]], constant DrawUniforms& uniforms [[buffer(1)]], texture2d<float> paint [[texture(0)]], sampler paintSampler [[sampler(0)]]) {
-    float4 base = uniforms.color;
+    // the vertex colour and the draw colour both premultiply into the base, which leaves a white vertex unchanged (§6.4)
+    float4 base = uniforms.color * in.color;
     if (uniforms.hasTexture != 0) {
-        base = paint.sample(paintSampler, in.uv) * uniforms.color;
+        base = base * paint.sample(paintSampler, in.uv);
     }
     float scale = coverage(in, uniforms) * scissor_mask(in.position.xy, uniforms);
     float4 result = base * scale;
@@ -124,9 +135,10 @@ struct ExactFragment
 
 // shade one fragment of a mode that needs the destination, which the fixed factors alone cannot express
 fragment ExactFragment albor_fragment_exact(Varyings in [[stage_in]], constant DrawUniforms& uniforms [[buffer(1)]], texture2d<float> paint [[texture(0)]], sampler paintSampler [[sampler(0)]]) {
-    float4 source = uniforms.color;
+    // the vertex colour and the draw colour both premultiply into the source, which leaves a white vertex unchanged (§6.4)
+    float4 source = uniforms.color * in.color;
     if (uniforms.hasTexture != 0) {
-        source = paint.sample(paintSampler, in.uv) * uniforms.color;
+        source = source * paint.sample(paintSampler, in.uv);
     }
     float scale = coverage(in, uniforms) * scissor_mask(in.position.xy, uniforms);
     ExactFragment out;
@@ -160,6 +172,8 @@ vertex Varyings shadow_vertex(uint vertexId [[vertex_id]]) {
     out.lateral = 1.0;
     out.longitudinal = 1.0;
     out.uv = corner;
+    // the shadow passes carry no vertex colour, so the varying stays white (§6.2)
+    out.color = float4(1.0);
     return out;
 }
 

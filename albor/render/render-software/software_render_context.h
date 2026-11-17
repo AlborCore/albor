@@ -45,6 +45,7 @@ namespace albor::software
         void draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) override;
         void draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) override;
         void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) override;
+        void draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) override;
 
     private:
         // the raster context the atlas quads are composited onto, which the surface owns (§6.3)

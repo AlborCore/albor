@@ -4,6 +4,7 @@
 
 #include "albor/render/image_resource.h"
 #include "albor/render/line_batch.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/path_resource.h"
 #include "albor/render/picture_resource.h"
 
@@ -196,6 +197,15 @@ namespace albor
     void SceneRecorder::draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) {
         // the destination is mapped into scene space now, like a recorded rectangle (§6.4)
         record(DrawCommand::image(image, to_scene(destination), paint));
+    }
+
+    void SceneRecorder::draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) {
+        // the vertices stay raw, because a retained mesh cannot be mapped without copying them (§6.4)
+        DrawCommand command = DrawCommand::mesh(mesh, texture, paint);
+        // the recorder transform places the mesh at replay, which keeps the resource retained (§6.4)
+        command.set_transform(m_transform);
+        // the command carries the clip and the opacity of the moment it was recorded (§6.2)
+        record(std::move(command));
     }
 
     void SceneRecorder::glyph_outline(const std::shared_ptr<const GlyphOutline>& outline, Point position, const Paint& paint) {

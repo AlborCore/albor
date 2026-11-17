@@ -210,6 +210,11 @@ namespace albor
         record(DrawCommand::image(image, destination, paint));
     }
 
+    void PictureRecorder::draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) {
+        // the vertices and the texture stay raw, because the transform travels beside them (§6.4)
+        record(DrawCommand::mesh(mesh, texture, paint));
+    }
+
     std::vector<DrawCommand> PictureRecorder::commands() const {
         // the commands are copied in recording order, which becomes the picture's replay order (§6.4)
         std::vector<DrawCommand> sealed = m_commands;

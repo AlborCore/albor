@@ -161,7 +161,7 @@ default selection, which preserves bold-only family selection. The long-run coun
 
 This remains the strongest part of the Windows port.
 
-- Both backends expose the same **87-test** corpus:
+- Both backends expose the same **93-test** corpus:
   - aligned and feathered geometry
   - clips and transforms
   - soft shadows, hard shadows, sheared casters
@@ -169,10 +169,11 @@ This remains the strongest part of the Windows port.
   - layers, transparency, nested layers
   - paths, holed/concave/even-odd fills
   - lines, pictures, images, fractional scaling, texture reuse
+  - textured and vertex-coloured triangle meshes, including a picture mesh and a copy-composition mesh
   - shaped, rotated, sheared, and embedded text runs
-- Metal test file: **87 tests**
-- Direct3D test file: **87 tests**
-- Both have 42 parity tests.
+- Metal test file: **93 tests**
+- Direct3D test file: **93 tests**
+- Both have 48 parity tests.
 - Both backends cover:
   - a partial damage frame that preserves pixels outside its region
   - a damage-scoped frame that replays a translated picture inside a clip below its local origin
@@ -265,22 +266,20 @@ the host with `albor automation: serving <descriptor>` instead of the previous n
 
 ## 6. CI and verification
 
-The latest full Windows run, CI `40691294678` at `a8e019f`, recorded:
+The latest full Windows run, CI `43962099371` at `7c13661`, recorded:
 
 | configuration | suite | result |
 | --- | --- | ---: |
-| debug | `albor-tests.exe` | 3,565 tests: 3,563 passed, 2 skipped, 0 failed |
-| release | `albor-tests.exe` | 3,387 tests: 3,385 passed, 2 skipped, 0 failed |
+| debug | `albor-tests.exe` | 4,470 tests: 4,468 passed, 2 skipped, 0 failed |
+| release | `albor-tests.exe` | 4,228 tests: 4,226 passed, 2 skipped, 0 failed |
 | debug | `albor-generated-font-checks.exe` | 4 passed |
 | release | `albor-generated-font-checks.exe` | 4 passed |
 
 `bash build/check-format.sh` passes, and `bash build/shaders.sh --d3d` reports that the committed DXBC artifact
 matches the six HLSL entry points. The Windows host cannot build the macOS bridge, so the macOS half of this
-pass runs in the macOS CI jobs: the debug suite runs **3,588 tests** with zero failures, including all 18 macOS
-popup tests and the parented-dialog teardown suite, and the release suite runs 3,408 tests with zero failures. The
-17 Win32 popup tests passed in both Windows configurations, including owner-move following, trigger-click
-forwarding and capture handoff. The counts in this paragraph are the prior pass; the teardown change adds four
-macOS tests, one macOS application-level suite and two Win32 tests on top of them.
+pass runs in the macOS CI jobs: the debug suite runs **4,466 tests** (4,465 passed, 1 environment skip) and the
+release suite runs **4,224 tests** (4,223 passed, 1 skip). The 17 Win32 popup tests passed in both Windows
+configurations, including owner-move following, trigger-click forwarding and capture handoff.
 
 The complete Windows suite has exactly **2 skips**:
 
@@ -296,9 +295,9 @@ The Metal footprint test skips when coverage instrumentation is active. Those ar
 intentional, and unrelated to Windows. Both the Metal and Direct3D footprint probes drain the present
 queue before each measurement, so a frame still in flight is not counted as retained growth.
 
-The radio-group, radio-button, numeric-stepper, Image and dual-engine suites are included in the macOS count,
-but not in the Windows counts above, because this host cannot build Windows. The pushed CI run is the
-authoritative result for both configurations.
+The debug counts include the Dev/Test-only suites, while the release counts exclude them, which is why the
+release totals are lower on both platforms. The per-platform debug totals differ by the platform-conditional
+suites each host carries; the pushed CI run is the authoritative result for both configurations.
 
 A Windows coverage job was evaluated and not added. It would need a Windows-native instrumentation toolchain
 (`clang-cl` plus `llvm-cov`, or OpenCppCoverage), and the footprint/allocation probes are sensitive to
@@ -309,7 +308,7 @@ job remains a tracked enhancement rather than a parity requirement.
 
 | Suite | macOS | Windows |
 | --- | ---: | ---: |
-| `render-albor` backend/parity | 87 | 87 |
+| `render-albor` backend/parity | 93 | 93 |
 | Window popup | 18 | 17 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
@@ -318,6 +317,7 @@ job remains a tracked enhancement rather than a parity requirement.
 
 ## 8. Changes in the Windows parity pass
 
+- Added the retained triangle mesh primitive `draw_mesh` (#211): `MeshResource` and `ResourceFactory::create_mesh`, `DrawCommandKind::Mesh`, both recorders, the `render-albor` per-frame batch expansion with a packed premultiplied vertex colour, and the Blend2D barycentric reference rasterizer. The Metal and Direct3D suites carry six mirrored mesh parity tests, and the committed DXBC artifact and stamp were regenerated with `bash build/shaders.sh --d3d --write` on a Windows runner. A backend cache for the retained geometry is filed as #232.
 - Fixed picture replay under a clip in both `render-albor` and Blend2D: a picture's inner commands and clips live
   in picture space, so the active clip is now rebased through the placement before the list replays. A damage
   frame no longer scissors a translated picture by the placement twice, and a picture-local clip no longer

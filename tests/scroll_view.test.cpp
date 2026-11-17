@@ -80,6 +80,8 @@ namespace
 
         void draw_image(const std::shared_ptr<const ImageResource>&, const Rect&, const Paint&) override {}
 
+        void draw_mesh(const std::shared_ptr<const MeshResource>&, const std::shared_ptr<const ImageResource>&, const Paint&) override {}
+
         // the rounded rectangles the surface was asked to adopt, which is how a test finds the thumb (§6.1)
         std::vector<Rect> rounded;
 

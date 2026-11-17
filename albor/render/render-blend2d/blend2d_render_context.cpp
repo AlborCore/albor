@@ -15,8 +15,10 @@
 #include "albor/render/draw_command.h"
 #include "albor/render/image_resource.h"
 #include "albor/render/line_batch.h"
+#include "albor/render/mesh_resource.h"
 #include "albor/render/path_resource.h"
 #include "albor/render/picture_resource.h"
+#include "albor/render/render-blend2d/blend2d_mesh_raster.h"
 #include "albor/render/text_layout.h"
 #include "albor/resources/embedded_font.h"
 
@@ -1065,5 +1067,103 @@ namespace albor::blend2d
         m_context->setCompOp(to_blend_comp(paint.composition));
         m_context->blitImage(BLRect(destination.x, destination.y, destination.width, destination.height), raster);
         m_context->setCompOp(BL_COMP_OP_SRC_OVER);
+    }
+
+    void Blend2DRenderContext::draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) {
+        // a context with no raster or a mesh without a triangle draws nothing (§6.4)
+        if (m_context == nullptr || !mesh || mesh->empty())
+            return;
+        // a paint that neither fills nor strokes puts no ink down, which a zero opacity leaves (§6.1, §6.4)
+        if (!paint.fills() && !paint.strokes())
+            return;
+        // an empty clip cuts every triangle away, so no raster is built (§6.2)
+        if (m_clip.empty())
+            return;
+        // the target extent bounds the raster, because a pixel outside it has no surface (§6.4)
+        const int target_width = static_cast<int>(m_context->targetWidth());
+        const int target_height = static_cast<int>(m_context->targetHeight());
+        // a target with no pixel cannot host a mesh (§6.4)
+        if (target_width <= 0 || target_height <= 0)
+            return;
+        // the device transform maps the mesh positions onto the physical raster (§6.3, AD-27)
+        const Transform device = m_transform.then(Transform::scaling(m_device_scale, m_device_scale));
+        // the paint dims the mesh through its visible channel alone, which the reference does too (§6.4, AD-26)
+        const float alpha = paint.fills() ? paint.fill.alpha : paint.stroke.alpha;
+        // the opacity dims the mesh once, which the modulation folds into every sample (§6.1)
+        const Color modulation = Color::rgba(1.0f, 1.0f, 1.0f, alpha).with_alpha(m_opacity);
+        // the target box bounds the raster, and the context clip cuts the composite at replay (§6.4)
+        const Rect target = Rect::from_origin_size(Point{.x = 0.0f, .y = 0.0f}, Size{.width = static_cast<float>(target_width), .height = static_cast<float>(target_height)});
+        // the rasterizer interpolates the colour and the uv and samples the texture (§6.4)
+        const MeshRaster raster = rasterize_mesh(*mesh, texture.get(), device, modulation, target);
+        // a mesh that covers no pixel leaves nothing to composite (§6.4)
+        if (raster.empty())
+            return;
+        // the raster becomes the premultiplied image blend2d composites (§6.4, AD-26)
+        BLImage image;
+        if (image.create(raster.width, raster.height, BL_FORMAT_PRGB32) != BL_SUCCESS)
+            return;
+        BLImageData data;
+        if (image.makeMutable(&data) != BL_SUCCESS)
+            return;
+        // resource pixels are premultiplied rgba8, while the raster is premultiplied bgra (§6.4, AD-26)
+        for (int y = 0; y < raster.height; y++) {
+            // the source row is tightly packed, because the rasterizer wrote it that way (§6.4)
+            const std::uint8_t* source = raster.pixels.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(raster.width) * 4;
+            // the target row honours the stride the raster reports, so an alignment does not shift the picture (§6.4)
+            std::uint8_t* target_row = static_cast<std::uint8_t*>(data.pixelData) + static_cast<std::intptr_t>(y) * data.stride;
+            for (int x = 0; x < raster.width; x++) {
+                // red and blue swap into bgra order, which the raster stores (§6.4, AD-26)
+                target_row[0] = source[2];
+                target_row[1] = source[1];
+                target_row[2] = source[0];
+                target_row[3] = source[3];
+                source += 4;
+                target_row += 4;
+            }
+        }
+        // the context state is saved, because the composite resets the transform to device space (§6.2)
+        m_context->save();
+        m_context->setGlobalAlpha(1.0);
+        m_context->setCompOp(to_blend_comp(paint.composition));
+        // the device pixels map one to one under the inverse scale, which the layer composite already uses (§6.3)
+        m_context->setTransform(BLMatrix2D::makeScaling(1.0 / m_device_scale, 1.0 / m_device_scale));
+        // a source over mesh is a plain image, because a transparent margin composites nothing (§6.4)
+        if (paint.composition == CompositionMode::SourceOver) {
+            // the raster lands at its own device origin, which the inverse scale maps one to one (§6.3)
+            m_context->blitImage(BLRect(raster.x, raster.y, raster.width, raster.height), image);
+        }
+        else {
+            // the mesh composites as one unit, so a destination dependent mode applies once over the triangle path (§6.4)
+            BLPath triangles;
+            // every triangle is rebuilt in device coordinates, because the pattern masks the raster by them (§6.4)
+            for (std::size_t first = 0; first + 2 < mesh->indices().size(); first += 3) {
+                // the three indices are read as one triangle, which the factory validated (§6.4)
+                const std::uint32_t index0 = mesh->indices()[first];
+                const std::uint32_t index1 = mesh->indices()[first + 1];
+                const std::uint32_t index2 = mesh->indices()[first + 2];
+                // a triangle that names no vertex is skipped, so a hand-built mesh cannot read past the run (§6.4)
+                if (index0 >= mesh->vertices().size() || index1 >= mesh->vertices().size() || index2 >= mesh->vertices().size())
+                    continue;
+                // the three vertices are placed under the same device transform the rasterizer used (§6.4)
+                const Point point0 = device.apply(mesh->vertices()[index0].position);
+                const Point point1 = device.apply(mesh->vertices()[index1].position);
+                const Point point2 = device.apply(mesh->vertices()[index2].position);
+                // the user space is logical, so each device point divides by the scale the meta applies (§6.3)
+                triangles.moveTo(point0.x / m_device_scale, point0.y / m_device_scale);
+                triangles.lineTo(point1.x / m_device_scale, point1.y / m_device_scale);
+                triangles.lineTo(point2.x / m_device_scale, point2.y / m_device_scale);
+                triangles.close();
+            }
+            // the pattern maps each raster pixel onto the user space the path fills (§6.4)
+            const BLMatrix2D pattern_matrix(1.0 / m_device_scale, 0.0, 0.0, 1.0 / m_device_scale, static_cast<float>(raster.x) / m_device_scale, static_cast<float>(raster.y) / m_device_scale);
+            // the pattern samples the raster clamped at its edge, which the rasterizer already produced (§6.4)
+            const BLPattern pattern(image, BL_EXTEND_MODE_PAD, pattern_matrix);
+            // the triangle union fills once, so a shared edge is covered by neither triangle twice (§6.4)
+            m_context->setFillRule(BL_FILL_RULE_NON_ZERO);
+            m_context->setFillStyle(pattern);
+            m_context->fillPath(triangles);
+        }
+        // the context returns to the transform and clip it stood at (§6.2)
+        m_context->restore();
     }
 } // namespace albor::blend2d

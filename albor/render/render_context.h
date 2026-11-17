@@ -17,6 +17,7 @@ namespace albor
     class PathResource;
     class PictureResource;
     class ImageResource;
+    class MeshResource;
 
     // the two dimensional drawing surface a renderer backend hands to the scene build (§6.2)
     class RenderContext
@@ -101,6 +102,9 @@ namespace albor
 
         // draw an image into a destination rectangle where bytes are premultiplied and alpha modulates (§6.4, AD-26)
         virtual void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) = 0;
+
+        // draw a retained triangle mesh, which the reference composites as one unit (§6.4, AD-06)
+        virtual void draw_mesh(const std::shared_ptr<const MeshResource>& mesh, const std::shared_ptr<const ImageResource>& texture, const Paint& paint) = 0;
     };
 
     // the surface a window presents into, which owns one drawing context per frame (§6.2)
