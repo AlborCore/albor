@@ -39,7 +39,7 @@ are the framework's choice. The target map and advanced composition are on
 | Input normalization and focus | Partial | xkbcommon key and modifier mapping; no scripted real-device suite yet |
 | System appearance | Not yet | XDG portal appearance is #234 |
 | Native file dialogs | Not yet | XDG portal file chooser is #234 |
-| Platform font resolution | Not yet | fontconfig resolver is #235 |
+| Platform font resolution | Full | fontconfig resolves a family and hands over its sfnt; embedded text never reaches it and a host without fontconfig degrades to embedded-only |
 | Renderer | Partial | Blend2D CPU presenting through `wl_shm`; the Vulkan backend is #110 |
 | Accessibility | Not yet | AT-SPI is #42 |
 

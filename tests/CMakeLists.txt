@@ -191,6 +191,17 @@ if(WIN32)
     target_link_libraries(albor-tests PRIVATE ole32 shell32)
 endif()
 
+# the linux font suite drives the fontconfig resolver and the sfnt it hands over, which is the linux half (§9.1, AD-28)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(albor-tests PRIVATE "./conditional/text_platform_font.test.linux.c++")
+    # the suite applies a private fontconfig configuration, so it links the same library the resolver did (§9.1)
+    if(ALBOR_FONTCONFIG_FOUND)
+        find_package(Fontconfig REQUIRED)
+        target_compile_definitions(albor-tests PRIVATE ALBOR_HAVE_FONTCONFIG=1)
+        target_link_libraries(albor-tests PRIVATE Fontconfig::Fontconfig)
+    endif()
+endif()
+
 
 # the automation suite reaches the automation core, which exists only when it is enabled, so the suite is gathered
 # under the same condition. a release configure has no such target, and referencing it would fail the link (AD-10)

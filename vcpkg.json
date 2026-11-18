@@ -47,6 +47,11 @@
       ]
     },
     {
+      "name": "fontconfig",
+      "platform": "linux",
+      "default-features": false
+    },
+    {
       "name": "bzip2",
       "default-features": false
     },

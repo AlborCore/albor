@@ -4777,11 +4777,13 @@ namespace albor::compiler
     }
 
     WriteResult write_if_changed(const std::filesystem::path& path, std::string_view content) {
-        // the existing content is compared first, so an up to date file is left untouched (§14.2)
-        std::ifstream existing(path, std::ios::binary);
-        // a file that exists is read whole, which is what the comparison needs (§14.2)
-        if (existing.is_open()) {
+        // a path that names no regular file is not compared, because reading a directory throws on libstdc++ (§14.2)
+        std::error_code error;
+        // a path the probe cannot inspect counts as no regular file, which the write below then judges (§14.2)
+        if (std::filesystem::is_regular_file(path, error)) {
             // the previous bytes are read, which is the exact prior content (§14.2)
+            std::ifstream existing(path, std::ios::binary);
+            // the bytes are held as one string, which is what the comparison below reads (§14.2)
             const std::string previous((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
             // a file that already matches is not rewritten, which is what keeps the build quiet (§14.2)
             if (previous == content)

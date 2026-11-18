@@ -69,6 +69,9 @@ option(ALBOR_TESTS "Build the unit test binary" ${ALBOR_DEV_BUILD})
 option(ALBOR_COVERAGE "Instrument the unit tests so a coverage report can be generated from them" OFF)
 option(ALBOR_ASAN "Instrument every target with AddressSanitizer" OFF)
 
+# the linux platform font resolver reaches fontconfig, which a host may not ship, so the build can turn it off (§9.1, AD-34)
+option(ALBOR_FONTCONFIG "Resolve linux platform fonts through fontconfig" ON)
+
 # the portable backend is a build-time surface, which a consumer picks through the package, while the developer tree carries it (§6.3, AD-26)
 # linux needs it by default until the Vulkan backend lands (#110), because it is the only renderer the umbrella can carry
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

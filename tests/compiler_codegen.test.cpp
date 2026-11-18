@@ -316,6 +316,32 @@ TEST(Codegen, WriteIfChangedReportsAFailedWrite) {
     EXPECT_EQ(result, WriteResult::Failed);
 }
 
+TEST(Codegen, AnEmptyContentOverADirectoryIsAFailedWrite) {
+    // arrange a directory in place of the output file, which no write can truncate (§14.2)
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "albor-codegen-write-if-changed-empty-dir";
+    // a leftover from a failed run would skew the outcome, so it is removed first (§14.2)
+    std::filesystem::remove_all(path);
+    // the directory stands where the file would be written (§14.2)
+    std::filesystem::create_directories(path);
+    // act the write of no content is attempted against the directory (§14.2)
+    const WriteResult result = write_if_changed(path, "");
+    // the probe is removed, so the test leaves nothing behind (§14.2)
+    std::filesystem::remove_all(path);
+    // assert the failed write is reported rather than matched against a read that never happened (§14.2)
+    EXPECT_EQ(result, WriteResult::Failed);
+}
+
+TEST(Codegen, APathUnderAMissingDirectoryIsAFailedWrite) {
+    // arrange an output path whose parent does not exist, which no write can reach (§14.2)
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "albor-codegen-write-if-changed-no-parent" / "generated.h";
+    // a leftover from a failed run would skew the outcome, so it is removed first (§14.2)
+    std::filesystem::remove_all(path.parent_path());
+    // act the write is attempted below a directory that is not there (§14.2)
+    const WriteResult result = write_if_changed(path, "one");
+    // assert the failed write is reported rather than escaping as an inspection failure (§14.2)
+    EXPECT_EQ(result, WriteResult::Failed);
+}
+
 TEST(Codegen, ARepeatOverAScalarNeedsAnIdentityToKeyBy) {
     // arrange
     DiagnosticList diagnostics;
