@@ -3,6 +3,7 @@
 #include <cmath>
 #include <optional>
 #include <sstream>
+#include <string>
 
 #include "albor/core/json.h"
 
@@ -129,7 +130,7 @@ namespace albor::automation
 
     std::vector<std::string> semantic_command_names() {
         // the names are fixed rather than discovered, because a host allow-lists before any tree exists (§10.3, AD-10)
-        return {std::string(FAMILY) + "tree", std::string(FAMILY) + "find", std::string(FAMILY) + "value", std::string(FAMILY) + "bounds", std::string(FAMILY) + "invoke", std::string(FAMILY) + "actions", std::string(FAMILY) + "set_value", std::string(FAMILY) + "set_focused"};
+        return {std::string(FAMILY) + "tree", std::string(FAMILY) + "find", std::string(FAMILY) + "value", std::string(FAMILY) + "bounds", std::string(FAMILY) + "read", std::string(FAMILY) + "invoke", std::string(FAMILY) + "actions", std::string(FAMILY) + "set_value", std::string(FAMILY) + "set_focused"};
     }
 
     void register_semantic_commands(AutomationRegistry& registry, SemanticSnapshot snapshot) {
@@ -287,6 +288,101 @@ namespace albor::automation
             bounds.set("height", core::Json(static_cast<double>(node->bounds().height)));
             // the object is answered as json, which is the typed shape a rect takes (§10.3)
             return AutomationResult::answered(ValueKind::Json, bounds.to_string());
+        });
+
+        // the generic read answers one typed property of one node, which is the read a state assertion needs (§10.3)
+        registry.register_command(std::string(FAMILY) + "read", [snapshot](const AutomationRequest& request) {
+            // a host with no snapshot cannot answer, which is refused (§10.3)
+            if (!snapshot)
+                return AutomationResult::refused("the host supplied no semantic snapshot");
+            // the id is required, because a property belongs to one node (§10.3, AD-11)
+            const auto id = argument_at(request, 0);
+            // a missing id is refused rather than defaulted (§10.3, AD-11)
+            if (!id)
+                return AutomationResult::refused("read needs an id");
+            // the property is required, because one generic read serves every state (§10.3)
+            const auto property = argument_at(request, 1);
+            // a missing property is refused, because guessing one would read the wrong state (§10.3)
+            if (!property)
+                return AutomationResult::refused("read needs a property");
+            // a read takes an id and a property, so a third argument is a client mistake (§10.3)
+            if (request.arguments.size() > 2)
+                return AutomationResult::refused("read takes an id and a property");
+            // the tree is taken once, because the application may rebuild it between lines (§10.3)
+            SemanticTree& tree = *snapshot();
+            // the node is looked up by identity, which is the only selector automation offers (§18.1, AD-11)
+            SemanticNode* node = node_by_id(tree, *id);
+            // an absent id is refused with its name, so a client knows which selector failed (§10.3)
+            if (node == nullptr)
+                return AutomationResult::refused("no node with id: " + *id);
+            // a focused node answers the boolean it holds, which is the keyboard focus (§10.1)
+            if (*property == "focused")
+                return AutomationResult::answered(ValueKind::Boolean, node->focused() ? "yes" : "no");
+            // a selected node answers the boolean it holds, which a list client reads (§10.1)
+            if (*property == "selected")
+                return AutomationResult::answered(ValueKind::Boolean, node->selected() ? "yes" : "no");
+            // a disabled node answers the boolean it holds, which a client must not drive against (§10.1)
+            if (*property == "disabled")
+                return AutomationResult::answered(ValueKind::Boolean, node->disabled() ? "yes" : "no");
+            // a read only node answers the boolean it holds, which still takes focus and permits a copy (§10.1)
+            if (*property == "read_only")
+                return AutomationResult::answered(ValueKind::Boolean, node->read_only() ? "yes" : "no");
+            // a multiline node answers the boolean it holds, which a reader announces (§10.1)
+            if (*property == "multiline")
+                return AutomationResult::answered(ValueKind::Boolean, node->multiline() ? "yes" : "no");
+            // an expanded node answers the boolean it holds, which a popup control reports (§10.1)
+            if (*property == "expanded")
+                return AutomationResult::answered(ValueKind::Boolean, node->expanded() ? "yes" : "no");
+            // an indeterminate node answers the boolean it holds, which a bar with unknown work reports (§10.1)
+            if (*property == "indeterminate")
+                return AutomationResult::answered(ValueKind::Boolean, node->indeterminate() ? "yes" : "no");
+            // a checkable node publishes a tri state, where the settled halves are booleans (§10.1)
+            if (*property == "check") {
+                // a checked node is the true half, which the boolean kind spells (§10.1)
+                if (node->check() == CheckState::Checked)
+                    return AutomationResult::answered(ValueKind::Boolean, "yes");
+                // an unchecked node is the false half of the same boolean (§10.1)
+                if (node->check() == CheckState::Unchecked)
+                    return AutomationResult::answered(ValueKind::Boolean, "no");
+                // only a checkable node carries the third state, so a plain button has none to answer (§10.1)
+                if (node->check() != CheckState::Indeterminate)
+                    return AutomationResult::refused("no check on node: " + *id);
+                // an indeterminate check has no boolean answer, so it is named rather than forced into one (§10.1)
+                return AutomationResult::answered(ValueKind::Text, "indeterminate");
+            }
+            // a selection is the half open byte range a field publishes, which a client reads as start:end (§10.1)
+            if (*property == "selection")
+                return AutomationResult::answered(ValueKind::Text, std::to_string(node->selection_start()) + ":" + std::to_string(node->selection_end()));
+            // the role is the word the dump names, so a client reads the same spelling both ways (§10.1, §10.3)
+            if (*property == "role")
+                return AutomationResult::answered(ValueKind::Text, role_name(node->role()));
+            // the name is the accessible label, which a client asserts without parsing the dump (§10.1)
+            if (*property == "name")
+                return AutomationResult::answered(ValueKind::Text, node->name());
+            // a range is the four numbers a bounded control publishes, which only a range carrying node answers (§10.1)
+            if (*property == "range") {
+                // a node with no range has nothing to answer, which is refused rather than answered as zeros (§10.1)
+                if (!node->has_range())
+                    return AutomationResult::refused("no range on node: " + *id);
+                // a non finite bound has no decimal spelling, so it is refused rather than serialized as one (§10.3)
+                const SemanticRange& range = node->range();
+                if (!std::isfinite(range.value) || !std::isfinite(range.minimum) || !std::isfinite(range.maximum) || !std::isfinite(range.step))
+                    return AutomationResult::refused("the range is not finite: " + *id);
+                // the four fields travel as one object, because a client reads a range as a whole (§10.3)
+                core::Json object;
+                // the current value is what a write moves, which a client asserts after a gesture (§10.1)
+                object.set("value", core::Json(range.value));
+                // the minimum is the bottom the value never falls below (§10.1)
+                object.set("minimum", core::Json(range.minimum));
+                // the maximum is the top the value never rises above (§10.1)
+                object.set("maximum", core::Json(range.maximum));
+                // the step is the distance one increment moves the value (§10.1)
+                object.set("step", core::Json(range.step));
+                // the object is answered as json, which is the typed shape a range takes (§10.3)
+                return AutomationResult::answered(ValueKind::Json, object.to_string());
+            }
+            // a word no branch above answered is a client mistake, which is refused with the name it wrote (§10.3)
+            return AutomationResult::refused("no such property: " + *property);
         });
 
         // the listing reports what a node can be asked to do, which a client reads before acting (§10.3)

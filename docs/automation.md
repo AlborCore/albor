@@ -155,7 +155,7 @@ token is per process run; a new host mints a new token.
 ```
 
 The answer lists only the commands the layer's allow-list permits. The standard
-host permits the 19 commands documented on this page. Each tool carries a name, a
+host permits the 20 commands documented on this page. Each tool carries a name, a
 generic description, and an `inputSchema`:
 
 ```json
@@ -183,7 +183,7 @@ generic description, and an `inputSchema`:
 }
 ```
 
-The real list contains all 19 tools. The schema's property names and enums are
+The real list contains all 20 tools. The schema's property names and enums are
 authoritative for the MCP boundary; this page documents what each command does,
 which arguments are required, and what the answer means.
 
@@ -267,11 +267,11 @@ that names the value.
 
 ## Command reference
 
-Nineteen tools are available:
+Twenty tools are available:
 
 | family | commands |
 | --- | --- |
-| semantic | `semantic.tree`, `semantic.find`, `semantic.value`, `semantic.bounds`, `semantic.actions`, `semantic.invoke`, `semantic.set_value`, `semantic.set_focused` |
+| semantic | `semantic.tree`, `semantic.find`, `semantic.value`, `semantic.bounds`, `semantic.read`, `semantic.actions`, `semantic.invoke`, `semantic.set_value`, `semantic.set_focused` |
 | input | `input.type`, `input.click`, `input.pointer`, `input.key` |
 | capture | `capture.screenshot` |
 | command | `command.list`, `command.get`, `command.invoke`, `command.can_undo`, `command.undo`, `command.redo` |
@@ -397,8 +397,63 @@ Text:
 ```
 
 The generic state read (`focused`, `disabled`, `selected`, `expanded`, `check`,
-`selection`, `role`, `name`, `range`) is not part of this command. Those states are
-available in `semantic.tree` until a generic property read lands.
+`selection`, `role`, `name`, `range`) is not part of this command; it has its own
+command, [`semantic.read`](#semanticread).
+
+### semantic.read
+
+Reads one typed semantic property of a node, which is what a test asserts against
+without parsing the tree dump.
+
+- **Arguments:** `id` and `property` (both required).
+- **Answer:**
+  - `boolean` `yes` / `no` for `focused`, `disabled`, `read_only`, `selected`,
+    `expanded`, `indeterminate` and `multiline`.
+  - `boolean` `yes` / `no` for `check`, and `text` `indeterminate` for the third
+    check state, which has no boolean spelling. This is the same pair of kinds
+    `semantic.value` answers for the same state.
+  - `text` for `selection`, the half-open byte range spelled `start:end` (`0:0` when
+    the caret is collapsed), for `role`, spelled as the dump spells it, and for
+    `name`.
+  - `json` for `range`, an object with `value`, `minimum`, `maximum` and `step`.
+- **Refused when:** the host supplied no snapshot, `id` or `property` is missing,
+  a third argument is present, no node carries the id, the property is unknown,
+  `range` is read from a node that publishes none, `check` is read from a node
+  that is not checkable, or one of the range numbers is not finite.
+
+Boolean:
+
+```json
+{ "jsonrpc": "2.0", "id": 40, "method": "tools/call", "params": { "name": "semantic.read", "arguments": { "id": "form_press", "property": "focused" } } }
+```
+
+```json
+{ "jsonrpc": "2.0", "id": 40, "result": { "content": [{ "type": "text", "text": "no" }], "isError": false } }
+```
+
+Selection:
+
+```json
+{ "jsonrpc": "2.0", "id": 41, "method": "tools/call", "params": { "name": "semantic.read", "arguments": { "id": "form_name", "property": "selection" } } }
+```
+
+```json
+{ "jsonrpc": "2.0", "id": 41, "result": { "content": [{ "type": "text", "text": "1:4" }], "isError": false } }
+```
+
+Range:
+
+```json
+{ "jsonrpc": "2.0", "id": 42, "method": "tools/call", "params": { "name": "semantic.read", "arguments": { "id": "form_level", "property": "range" } } }
+```
+
+```json
+{ "jsonrpc": "2.0", "id": 42, "result": { "content": [{ "type": "text", "text": "{\"maximum\":1,\"minimum\":0,\"step\":0.050000,\"value\":0.500000}" }], "isError": false } }
+```
+
+An unknown property is refused by name (`no such property: nope`), because a typo
+must not read as a state, and `range` on a node without one is refused rather than
+answered as zeros.
 
 ### semantic.bounds
 
@@ -1154,7 +1209,7 @@ answer in a content block. A tool call is therefore exactly one raw command.
 | `no such command: <name>` | the command is not registered in this build. See the family tables. |
 | `command not allowed: <name>` | the host did not permit the command. The standard surface is permitted automatically; an application-specific command is reached through `command.*`, not as its own tool. |
 | `semantic.bounds` refuses an id | the id is not an author-assigned `id:` on the active window. Names, roles and positions are not selectors. |
-| `semantic.value` refuses a node | the node has no primary value. A button or label has none; use the tree dump until the generic state read lands. |
+| `semantic.value` refuses a node | the node has no primary value. A button or label has none; read its states with `semantic.read` instead. |
 | `capture.screenshot` says the frame is not at its current size | the window has not presented since creation or resize. Pump the application and capture again. |
 | `tools/list` answers `authentication failed` | the connection did not complete `initialize` with the token from the `token` file. |
 | no `tools/list` reply | the client is not connected to the endpoint in `host.json`, or the host has no active window. |
