@@ -1,6 +1,6 @@
 # The .ui language
 
-A `.ui` file is a declarative description of one component tree: state declarations at the
+A `.ui` file is a declarative description of a component tree: state declarations at the
 top, a root element below them, children nested by indentation the author writes. The file
 **compiles to native C++** — there is no interpreter, no property-by-name reflection and no
 runtime evaluator in a production build. What the compiler emits is ordinary C++ that links
@@ -37,8 +37,9 @@ component GreetingPanel {
 
 Reading top to bottom:
 
-1. **Component declaration** — `component Name { ... }`. A file may declare several
-   components; each one compiles to its own facade class.
+1. **Component declaration** — `component Name { ... }`. A file declares one exported component
+   named after the file; further components are same-file bases
+   ([Components](components.md#one-exported-component-per-file)).
 2. **Property declarations** — `in` and `inout` properties with their types and optional
    defaults ([Properties](properties.md)).
 3. **Signal declarations** — `signal name(parameters);`, raised to whoever listens
@@ -55,6 +56,10 @@ becomes the generated unit. `greeting_panel.ui` containing `GreetingPanel` emits
 build/generated/<target>/greeting_panel.h    // the concrete facade
 build/generated/<target>/greeting_panel.cpp  // the implementation
 ```
+
+The component the file is named after is the one the build compiles; a same-file base is
+flattened into that pair, not a second unit the build compiles
+([Components](components.md#one-exported-component-per-file)).
 
 The header exposes exactly what the declaration promised — property accessors
 (`set_user_name`, `click_count`), signal slots (`set_on_run_clicked`) and construction with

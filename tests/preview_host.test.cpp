@@ -101,6 +101,46 @@ TEST(PreviewHostChecks, ACleanSourceBuildsItsTree) {
     EXPECT_EQ(count_nodes(*result.root), 3U);
 }
 
+TEST(PreviewHostChecks, TheExportedComponentIsPreviewedWhenItsBaseComesFirst) {
+    // arrange a saved root whose first component is the base and whose stem names the derived one (§11.1, §12.2)
+    const char* source = R"UI(component Panel {
+    Column {
+        @children
+    }
+}
+
+component Wide : Panel {
+    Label { text: "Derived"; }
+})UI";
+    // the saved name selects the export, because the build names the facade pair after it (§11.1)
+    const std::filesystem::path source_path = std::filesystem::temp_directory_path() / "albor-preview-export" / "wide.ui";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(source, engine, source_path);
+    // assert the same-file inheritance checked, because the base beside the export is allowed (§11.1)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    // assert the previewed tree is Wide, because the base alone declares no label (§11.3)
+    Label* label = dynamic_cast<Label*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Label*>(&node) != nullptr; }));
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->text(), "Derived");
+}
+
+TEST(PreviewHostChecks, ASavedSourceWithNoExportedComponentIsRefused) {
+    // arrange a saved source whose component misses the stem, so no pair exists to preview (§11.1, §12.2)
+    const char* source = R"UI(component ConsumerPanel {
+    Column { }
+})UI";
+    // the saved name is what the preview uses to find the exported component (§11.3)
+    const std::filesystem::path source_path = std::filesystem::temp_directory_path() / "albor-preview-no-export" / "panel.ui";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(source, engine, source_path);
+    // assert the naming rule is reported and no tree is built, because the exported component is missing (§11.1)
+    EXPECT_GT(result.diagnostics, 0U);
+    EXPECT_EQ(result.root, nullptr);
+}
+
 TEST(PreviewHostChecks, AnImportedComponentIsExpandedAndItsPropertyIsAssigned) {
     // arrange a panel beside a window, because an import reads a saved file from disk (§11.1, §12.2)
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-preview-import";

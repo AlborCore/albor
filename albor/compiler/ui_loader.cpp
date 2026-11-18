@@ -16,7 +16,7 @@ namespace albor::compiler
         return m_dependencies;
     }
 
-    std::optional<CheckedFile> UiImportLoader::check(const std::filesystem::path& source) {
+    std::optional<CheckedFile> UiImportLoader::check(const std::filesystem::path& source, RootNameCheck root_name) {
         // the catalog is reset first, because a declaration a previous root added must not leak into this run (§11.1)
         m_catalog = m_initial_catalog;
         // the previous checked cache is dropped while the parse trees stay alive for retained results (§11.1)
@@ -25,6 +25,8 @@ namespace albor::compiler
         m_stack.clear();
         // the dependency list starts empty, because it names this run alone (§14.2)
         m_dependencies.clear();
+        // the saved-file rule is remembered for the root, while every import keeps it (§11.1, §12.2)
+        m_root_name_check = root_name == RootNameCheck::Required;
         // the root is loaded with an empty import span, because no line named it (§11.1)
         return load(source, SourceSpan{}, true, source);
     }
@@ -130,6 +132,16 @@ namespace albor::compiler
             // the component must be named after the file, because the build names one unit pair per file (§11.1, §14.2)
             else if (component_header_name(parsed->components.at(0).name) != component_header_name(normalized.stem().string()))
                 file_diagnostics.add(Diagnostic::Severity::Error, parsed->components.at(0).span, "E0805", "an imported component must match its file, so '" + normalized.stem().string() + ".ui' names it in PascalCase");
+        }
+        // a saved root exports the component its stem names, which is the pair the build compiles (§11.1, §11.3)
+        else if (m_root_name_check) {
+            // the stem names the exported component, which the build and the preview both address (§11.3)
+            const std::string expected = component_header_name(normalized.stem().string());
+            // every declaration is checked, because a base may be written before the exported component (§11.1)
+            const bool exported = std::any_of(parsed->components.begin(), parsed->components.end(), [&expected](const ComponentDeclaration& component) { return component_header_name(component.name) == expected; });
+            // a root without it would fail the build with a missing output, so it is reported here instead (§11.1, §14.2)
+            if (!exported)
+                file_diagnostics.add(Diagnostic::Severity::Error, parsed->components.empty() ? SourceSpan{} : parsed->components.front().span, "E0805", "a ui file must declare the component its stem names, so '" + normalized.stem().string() + ".ui' names it in PascalCase");
         }
         // the checker resolves the file against its own declarations and the imported interfaces (§11.1)
         TypeChecker checker(m_catalog, file_diagnostics);

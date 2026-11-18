@@ -182,8 +182,8 @@ namespace albor::language_server
                 // the bytes are the source the parser takes (§11.1)
                 return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
             });
-            // the loader checks the root and every file it imports, which is what resolves a cross-file component (§11.1)
-            const std::optional<compiler::CheckedFile> checked = loader.check(root);
+            // the loader checks the root and every import, and an unsaved buffer has no stem to compare (§12.2)
+            const std::optional<compiler::CheckedFile> checked = loader.check(root, source_path.empty() ? compiler::RootNameCheck::Skipped : compiler::RootNameCheck::Required);
             // a root that could not be checked stops before generation, because there is no typed tree to generate (§11.3)
             if (!checked.has_value())
                 return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies()};

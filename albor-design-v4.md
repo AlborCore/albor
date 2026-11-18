@@ -1466,10 +1466,10 @@ per-binding allocation (§13.3).
 
 #### Component Composition
 
-A component the file declares is itself an element type of that file:
+A file's exported component is an element type in a file that imports it:
 
 ```text
-// Example: App.ui
+// Example: greeting.ui
 component Greeting {
     in property<string> title;
     signal dismissed();
@@ -1478,6 +1478,11 @@ component Greeting {
         Label { text: title; }
     }
 }
+```
+
+```text
+// Example: app.ui
+import "greeting.ui";
 
 component App {
     in property<string> name;
@@ -1513,6 +1518,13 @@ cross-file component cycle. A file that fails checking still publishes the compo
 declares, because the importer must not turn one error in the defining file into a cascade of
 unknown-element errors; the defining file's diagnostics remain the blocking problem.
 
+A root `.ui` file exports one component too: the one its stem names in PascalCase, because that is
+the pair the build compiles (§14.2). It may declare further components beside it, but only as the
+same-file bases the exported component derives from: each is flattened into the exported facade,
+carries no separate unit the build compiles, and is not exported itself. A file that declares a base
+and its derived component is therefore a composition root and cannot be imported, because an
+imported file declares exactly one component.
+
 An instance takes no children — content is what a derived component supplies alone, so children
 written on an instance are refused — and a component graph that instantiates itself is refused
 outright.
@@ -1537,7 +1549,7 @@ panel can keep its images in its own directory.
 A component may derive from one the same file declares:
 
 ```text
-// Example: Panel.ui
+// Example: Wide.ui
 component Panel {
     in property<string> title;
 
@@ -1551,6 +1563,9 @@ component Wide : Panel {
     Label { text: "Wide"; }
 }
 ```
+
+`Wide.ui` exports `Wide`, the derived component; `Panel` is the base declared beside it and is not
+exported itself.
 
 `@children` marks the content point inside the base's tree — at most one per component, because two
 could never both be filled. The derived body carries content elements instead of a root; the fill
