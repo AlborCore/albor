@@ -204,8 +204,21 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 
 ## Building
 
-Requirements: C++23, CMake ≥ 3.28 with Ninja, [vcpkg](https://vcpkg.io) (manifest mode;
+Requirements: C++20, CMake ≥ 3.28 with Ninja, [vcpkg](https://vcpkg.io) (manifest mode;
 dependencies are pinned in [`vcpkg.json`](vcpkg.json)).
+
+The supported runtime floors and the build baselines that enforce them are pinned:
+
+| platform | runtime floor | build baseline |
+| --- | --- | --- |
+| macOS | 13.3 | `macos-15`, Xcode 16.4 |
+| Windows | Windows 10 1809 (build 17763); VC++ 2015-2022 redistributable | `windows-2022`, VS 2022 / MSVC 14.44, Windows SDK 10.0.22621.0 |
+| Linux Wayland | RHEL/Alma 9+ (glibc 2.34, GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21) | `ubuntu-24.04` current; `almalinux:9` baseline |
+
+On Linux the adapter needs the Wayland, xkbcommon and Pango/Cairo/D-Bus development
+packages; libdecor and the Wayland protocol XMLs are vendored, so there is no libdecor
+package, runtime plugin or CMake flag. [`docs/linux.md`](docs/linux.md) carries the package
+list, the Alma 9 container and `build/check-linux-floor.sh`.
 
 ```sh
 cmake --preset debug          # configure (fetches vcpkg dependencies)

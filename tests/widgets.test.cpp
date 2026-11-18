@@ -8200,7 +8200,8 @@ TEST(ImageChecks, TheSourceIsRecordedIntoTheArrangedBounds) {
     image.render(recorder);
     // assert one image command carries the source into the arranged rectangle (§6.4)
     std::vector<DrawCommand> commands;
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         if (command.kind() == DrawCommandKind::Image)
             commands.push_back(command);
     ASSERT_EQ(commands.size(), 1u);
@@ -8220,7 +8221,8 @@ TEST(ImageChecks, AnEmptySourceRecordsNothing) {
     // act
     image.render(recorder);
     // assert there is no command, because there are no pixels to map (§6.4)
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         EXPECT_NE(command.kind(), DrawCommandKind::Image);
 }
 
@@ -9087,7 +9089,8 @@ TEST(ButtonIconChecks, AnIconOnlyButtonPaintsNoTextAndClearsBackToTheLabelPath) 
     button.render(recorder);
     // assert the icon-only path records the image and no run (§6.4)
     std::size_t images = 0;
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         if (command.kind() == DrawCommandKind::Image)
             images++;
     EXPECT_EQ(images, 1U);
@@ -9115,7 +9118,8 @@ TEST(ButtonIconChecks, TheIconAndLabelAreBothRecorded) {
     button.render(recorder);
     // assert the image and the label both reach the scene (§6.1)
     std::size_t images = 0;
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         if (command.kind() == DrawCommandKind::Image)
             images++;
     EXPECT_EQ(images, 1u);
@@ -9137,7 +9141,8 @@ TEST(ButtonIconChecks, AnEndAlignedGroupEndsAtTheTrailingEdge) {
     // act
     button.render(recorder);
     // assert the icon and label end at the plate's trailing edge rather than being centred (§8.2)
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         if (command.kind() == DrawCommandKind::Image)
             EXPECT_FLOAT_EQ(command.image_geometry().destination.x, 164.0f);
     ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);

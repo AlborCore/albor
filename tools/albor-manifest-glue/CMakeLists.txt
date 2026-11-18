@@ -8,7 +8,7 @@ add_executable(albor-manifest-glue ${CPP_SOURCES})
 
 # the driver includes through the project root, which is where the module includes point (§3.5)
 target_include_directories(albor-manifest-glue PRIVATE ${ALBOR_SOURCE_DIR})
-target_compile_features(albor-manifest-glue PRIVATE cxx_std_23)
+target_compile_features(albor-manifest-glue PRIVATE cxx_std_20)
 
 # the driver is a compile time tool, so it links the manifest front end through the manifest library (§11.2, AD-17)
 target_link_libraries(albor-manifest-glue PRIVATE albor-manifest)

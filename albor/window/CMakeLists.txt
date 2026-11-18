@@ -8,7 +8,7 @@ add_library(albor-window STATIC ${CPP_SOURCES})
 
 # the window interfaces are header visible, because application code names them (§3.5)
 target_include_directories(albor-window PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-window PUBLIC cxx_std_23)
+target_compile_features(albor-window PUBLIC cxx_std_20)
 
 # the window module needs the shared value types and nothing else (§3.2)
 target_link_libraries(albor-window PUBLIC albor-core)

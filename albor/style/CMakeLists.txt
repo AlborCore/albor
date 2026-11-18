@@ -8,7 +8,7 @@ add_library(albor-style STATIC ${CPP_SOURCES})
 
 # the theme type is header visible, because widgets resolve their paint through it (§3.5, AD-05)
 target_include_directories(albor-style PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-style PUBLIC cxx_std_23)
+target_compile_features(albor-style PUBLIC cxx_std_20)
 
 # the theme is built from geometry and paint values, so it needs only the core types and no platform (§3.5)
 target_link_libraries(albor-style PUBLIC albor-core)

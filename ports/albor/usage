@@ -3,7 +3,8 @@ albor provides C++ targets for the declarative UI framework:
     find_package(albor CONFIG REQUIRED)
     target_link_libraries(main PRIVATE albor)          # recommended GPU runtime (Metal / Direct3D)
 
-The portable CPU renderer arrives through the package feature `albor[blend2d]`:
+The portable CPU renderer arrives through the package feature `albor[blend2d]` on macOS and
+Windows; the Linux package carries it by default until the Vulkan backend lands (#110):
 
     target_link_libraries(main PRIVATE albor-blend2d)  # the blend2d feature's umbrella
 
@@ -23,3 +24,13 @@ a plain-prefix consumer links release at the minimum.
 
 On macOS the deployment floor is 13.3: export MACOSX_DEPLOYMENT_TARGET before configuring,
 or set VCPKG_OSX_DEPLOYMENT_TARGET in the triplet you build the package with.
+
+On Linux the Wayland adapter builds against the host's Wayland, xkbcommon, Pango/Cairo and
+D-Bus development packages. The libdecor frame and the Wayland protocol definitions are
+vendored into the package, so no libdecor package, plugin directory or CMake option is
+needed. The supported floor is RHEL/Alma 9 (glibc 2.34, libstdc++ 3.4.29, Wayland 1.21);
+Ubuntu 24.04 is the current configuration. On Debian/Ubuntu install:
+
+    sudo apt-get install libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev pkg-config
+
+The portable CPU renderer is the Linux default until the Vulkan backend lands (#110).

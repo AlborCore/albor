@@ -27,6 +27,11 @@ fi
         printf '\n'
         xcrun --sdk macosx --show-sdk-version 2>/dev/null || true
         printf '\n'
+        # the linux baseline and the current configuration are different ABI inputs, so the distro is part of the key (AD-16)
+        if [ "$(uname -s)" = "Linux" ] && [ -r /etc/os-release ]; then
+            distro_identity="$(. /etc/os-release && printf '%s %s' "$ID" "$VERSION_ID")"
+            printf '%s\n' "$distro_identity"
+        fi
     fi
 } | if command -v sha256sum >/dev/null 2>&1; then
     sha256sum | cut -d' ' -f1

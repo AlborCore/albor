@@ -24,7 +24,7 @@ add_library(albor-render-software STATIC ${CPP_SOURCES})
 
 # the backend implements the rendering hal and names albor types only (§3.5, AD-05)
 target_include_directories(albor-render-software PUBLIC ${ALBOR_SOURCE_DIR})
-target_compile_features(albor-render-software PUBLIC cxx_std_23)
+target_compile_features(albor-render-software PUBLIC cxx_std_20)
 
 # the blend2d headers are consumed as system headers, because their own warnings are not the framework's (§3.5)
 target_include_directories(albor-render-software SYSTEM PRIVATE $<TARGET_PROPERTY:blend2d::blend2d,INTERFACE_INCLUDE_DIRECTORIES>)

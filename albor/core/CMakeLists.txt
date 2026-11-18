@@ -8,4 +8,4 @@ add_library(albor-core STATIC ${CPP_SOURCES})
 
 # the value types are header visible, because they appear in every public interface (§3.5)
 target_include_directories(albor-core PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-core PUBLIC cxx_std_23)
+target_compile_features(albor-core PUBLIC cxx_std_20)

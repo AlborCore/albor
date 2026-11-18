@@ -6,12 +6,19 @@ the architecture specification `albor-design-v4.md`.
 
 ## Platforms
 
-| platform | state |
-| --- | --- |
-| macOS 13.3+ (AppKit, Metal), Intel and Apple silicon | implemented — the primary platform |
-| Windows 10/11 (Win32, Direct3D) | implemented and built in CI |
-| Linux Wayland (Blend2D CPU) | implemented — CI temporarily disabled until a Linux host is available; X11 is planned, Vulkan is #110 |
-| headless | implemented — the test and CI surface |
+| platform | runtime floor | build baseline | state |
+| --- | --- | --- | --- |
+| macOS (AppKit, Metal), Intel and Apple silicon | macOS 13.3 | `macos-15`, Xcode 16.4 | implemented — the primary platform |
+| Windows (Win32, Direct3D) | Windows 10 1809 (build 17763, LTSC 2019); VC++ 2015-2022 redistributable | `windows-2022`, VS 2022 17.14 / MSVC 14.44, Windows SDK 10.0.22621.0 | implemented and built in CI |
+| Linux Wayland (Blend2D CPU) | RHEL/Alma 9+ (glibc 2.34, GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21) | `ubuntu-24.04` current; `almalinux:9` baseline | implemented — CI temporarily disabled until a Linux host is available; X11 is planned, Vulkan is #110 |
+| headless | — | — | implemented — the test and CI surface |
+
+The framework and its compiler are **C++20**. The Windows build declares the Windows 10
+1809 target (`WINVER`, `_WIN32_WINNT`, `NTDDI_VERSION`) so a newer API cannot slip in, and
+the macOS build stamps the 13.3 deployment floor into the shaders and the package. The
+Linux artifacts are checked against the glibc and libstdc++ floor with
+`build/check-linux-floor.sh`; [Linux](linux.md) carries the baseline. The Windows and macOS
+pins are recorded in the parity ledger (`macos-windows.md` §6).
 
 An application names a window and a component. A normal application links `albor`
 (GPU renderer) or `albor-blend2d` (portable CPU renderer); the platform and text engine
@@ -36,10 +43,12 @@ are the framework's choice. The target map and advanced composition are on
 | Renderer | Partial | Blend2D CPU presenting through `wl_shm`; the Vulkan backend is #110 |
 | Accessibility | Not yet | AT-SPI is #42 |
 
-The adapter builds only where the Wayland, xkbcommon, libdecor and wayland-protocols
-development packages exist. The Linux CI jobs are temporarily disabled until a Linux host
-is available; the container workflow installs the packages and runs the platform suite under
-a headless Weston compositor. [Linux](linux.md) records the workflow and the current limits.
+The adapter builds only where the Wayland, xkbcommon and Pango/Cairo/D-Bus development
+packages exist. The libdecor frame and the Wayland protocol XMLs are vendored, so no
+libdecor package, plugin directory or `wayland-protocols` package is needed. The Linux CI
+jobs are temporarily disabled until a Linux host is available; the container workflow
+installs the packages and runs the platform suite under a headless Weston compositor.
+[Linux](linux.md) records the workflow, the Alma 9 baseline and the current limits.
 
 ## Windows support
 

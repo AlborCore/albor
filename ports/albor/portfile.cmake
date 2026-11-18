@@ -32,6 +32,12 @@ vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
         blend2d ALBOR_RENDERER_BLEND2D
 )
 
+# linux carries the portable renderer by default, because it is the only renderer the umbrella can carry until #110,
+# so the feature's OFF is dropped and the project's own platform default applies (AD-16, AD-26)
+if(VCPKG_TARGET_IS_LINUX)
+    list(REMOVE_ITEM FEATURE_OPTIONS "-DALBOR_RENDERER_BLEND2D=OFF")
+endif()
+
 # a pinned release from before the renderer retirement still declares the retired option, so the port
 # disables it for that source; the current tree carries neither the option nor the module
 set(RETIRED_RENDERER_OPTIONS "")
@@ -41,6 +47,8 @@ if(ALBOR_ROOT_CMAKE MATCHES "ALBOR_RENDERER_SKIA")
 endif()
 
 # the port builds the framework and nothing else, because examples and the test binary are development surfaces (§2.2)
+# a linux build resolves the system wayland, xkbcommon and frame libraries through pkg-config, which the port host provides;
+# libdecor and the wayland protocol xmls ship in the source tree, so no libdecor package is named anywhere (AD-16, AD-19)
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
@@ -52,6 +60,27 @@ vcpkg_cmake_configure(
         -DALBOR_TESTS=OFF
 )
 vcpkg_cmake_install()
+
+# a linux package without the wayland adapter or its renderer has no umbrella, so the port refuses a silently useless install (AD-16, AD-19)
+if(VCPKG_TARGET_IS_LINUX)
+    file(GLOB ALBOR_WAYLAND_LIBRARIES "${CURRENT_PACKAGES_DIR}/lib*/libalbor-platform-wayland.a")
+    if(NOT ALBOR_WAYLAND_LIBRARIES)
+        message(FATAL_ERROR "albor port: the wayland adapter was not built; install the Wayland, xkbcommon and frame development packages on the build host (see docs/linux.md)")
+    endif()
+    # the private frame is what makes a consumer install no libdecor package, so the package must carry its plugin object
+    list(GET ALBOR_WAYLAND_LIBRARIES 0 ALBOR_WAYLAND_LIBRARY)
+    execute_process(COMMAND ar t "${ALBOR_WAYLAND_LIBRARY}" OUTPUT_VARIABLE ALBOR_WAYLAND_OBJECTS RESULT_VARIABLE ALBOR_AR_RESULT ERROR_VARIABLE ALBOR_AR_ERROR)
+    if(NOT ALBOR_AR_RESULT EQUAL 0)
+        message(FATAL_ERROR "albor port: 'ar' could not read ${ALBOR_WAYLAND_LIBRARY} (${ALBOR_AR_ERROR}); install binutils on the build host")
+    endif()
+    if(NOT ALBOR_WAYLAND_OBJECTS MATCHES "libdecor-cairo\\.c\\.o")
+        message(FATAL_ERROR "albor port: the private libdecor frame is not in the linux package; install the Pango, Cairo, wayland-cursor and D-Bus development packages on the build host")
+    endif()
+    file(GLOB ALBOR_BLEND2D_LIBRARIES "${CURRENT_PACKAGES_DIR}/lib*/libalbor-render-blend2d.a")
+    if(NOT ALBOR_BLEND2D_LIBRARIES)
+        message(FATAL_ERROR "albor port: the blend2d renderer was not built, so the linux umbrella is missing; the port forces ALBOR_RENDERER_BLEND2D=ON")
+    endif()
+endif()
 
 # the checked-in install story puts the config, its version file and the helpers in lib/cmake/albor, whose
 # relocation the fixup performs for the debug and release prefixes vcpkg installs (AD-19)

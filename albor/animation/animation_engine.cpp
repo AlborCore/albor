@@ -42,7 +42,7 @@ namespace albor
         // the handle is taken before the entry is stored, because the entry records its own handle (§7.3)
         const AnimationHandle handle = m_next_handle++;
         // the entry starts at zero elapsed and active, which is what a just scheduled animation is (§7.3)
-        m_animations.push_back(Running{.handle = handle, .periodic_tick = std::move(tick), .duration = period, .elapsed = 0.0f, .repeats = ANIMATION_FOREVER, .periodic = true, .active = true});
+        m_animations.push_back(Running{.handle = handle, .tick = {}, .periodic_tick = std::move(tick), .duration = period, .elapsed = 0.0f, .repeats = ANIMATION_FOREVER, .periodic = true, .active = true});
         // the first frame is requested, because the schedule is a change the next frame presents (§6.1, §7.3)
         if (m_invalidation)
             m_invalidation();
@@ -53,7 +53,7 @@ namespace albor
         // the handle is taken before the entry is stored, because the entry records its own handle (§7.3)
         const AnimationHandle handle = m_next_handle++;
         // the entry starts at zero elapsed and active, which is what a just scheduled animation is (§7.3)
-        m_animations.push_back(Running{.handle = handle, .tick = std::move(tick), .duration = duration, .elapsed = 0.0f, .repeats = repeats, .active = true});
+        m_animations.push_back(Running{.handle = handle, .tick = std::move(tick), .periodic_tick = {}, .duration = duration, .elapsed = 0.0f, .repeats = repeats, .active = true});
         // the first frame is requested, because nothing has been drawn yet at the starting progress (§6.1, §7.3)
         if (m_invalidation)
             m_invalidation();

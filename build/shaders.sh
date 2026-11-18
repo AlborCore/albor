@@ -143,12 +143,21 @@ check_d3d() {
     # one container section is a uint32 little endian length followed by that entry point's compiled blob
     local ENTRY_PAIRS="albor_vertex:vs_5_0 albor_fragment:ps_5_0 albor_fragment_exact:ps_5_0 shadow_vertex:vs_5_0 shadow_shape:ps_5_0 shadow_blur:ps_5_0"
 
-    # the toolchain ships with every windows sdk, so a host without it is told where it ships
+    # the toolchain ships with every windows sdk; a pinned sdk is used when the environment names one, so the
+    # committed artifact is reproducible on the same compiler rather than the first sdk the image happens to install (AD-16)
     local FXC
-    FXC="$(find "/c/Program Files (x86)/Windows Kits/10/bin" -name fxc.exe -path "*x64*" 2> /dev/null | head -n 1)"
-    if [ -z "$FXC" ]; then
-        echo "error: the fxc toolchain is missing, install the windows 10 sdk (c:/program files (x86)/windows kits/10/bin)" >&2
-        exit 1
+    if [ -n "${WINDOWS_SDK:-}" ]; then
+        FXC="/c/Program Files (x86)/Windows Kits/10/bin/${WINDOWS_SDK}/x64/fxc.exe"
+        if [ ! -x "$FXC" ]; then
+            echo "error: fxc for the pinned windows sdk ${WINDOWS_SDK} is missing (c:/program files (x86)/windows kits/10/bin/${WINDOWS_SDK}/x64/fxc.exe)" >&2
+            exit 1
+        fi
+    else
+        FXC="$(find "/c/Program Files (x86)/Windows Kits/10/bin" -name fxc.exe -path "*x64*" 2> /dev/null | head -n 1)"
+        if [ -z "$FXC" ]; then
+            echo "error: the fxc toolchain is missing, install the windows 10 sdk (c:/program files (x86)/windows kits/10/bin)" >&2
+            exit 1
+        fi
     fi
 
     # the container header the backend refuses an artifact without, because the format moved

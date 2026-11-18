@@ -49,6 +49,20 @@ def version_of(pkg):
 def without_gtest(entries):
     return [entry for entry in entries if json.loads(entry).get("name") != "gtest"]
 
+def uncovered_by_manifest(entries, manifest_entries):
+    # a platform-restricted packaging entry is covered when the project names the same dependency unconditionally,
+    # which is how linux-only package dependencies stay expressible without duplicating the source manifest (AD-19)
+    for entry in entries:
+        if entry in manifest_entries:
+            continue
+        parsed = json.loads(entry)
+        if "platform" in parsed:
+            unconditional = {key: value for key, value in parsed.items() if key != "platform"}
+            if json.dumps(unconditional, sort_keys=True) in manifest_entries:
+                continue
+        return entry
+    return None
+
 portfile = (root / "ports/albor/portfile.cmake").read_text()
 
 # the local override, which the checker treats exactly like the portfile treats it: presence decides, contents validate (AD-19)
@@ -96,11 +110,13 @@ for feature, definition in port.get("features", {}).items():
 if port_entries != fixture_entries:
     issue("fixture dependency matrix != the port's default runtime matrix (the test bed consumes the default features):\n  fixture   " + "\n  fixture   ".join(fixture_entries) + "\n  port      " + "\n  port      ".join(port_entries))
 
-if not set(port_entries) <= set(manifest_entries):
-    issue("the port's default runtime matrix names dependencies the project manifest does not declare (AD-19)")
+uncovered = uncovered_by_manifest(port_entries, manifest_entries)
+if uncovered:
+    issue(f"the port's default runtime matrix names a dependency the project manifest does not cover: {uncovered} (AD-19)")
 for name, entries in feature_entries.items():
-    if not set(entries) <= set(manifest_entries):
-        issue(f"{name} names dependencies the project manifest does not declare (AD-19)")
+    uncovered = uncovered_by_manifest(entries, manifest_entries)
+    if uncovered:
+        issue(f"{name} names a dependency the project manifest does not cover: {uncovered} (AD-19)")
 
 print(f"port default matrix is a project subset and matches the fixture (%d entries, version %s)" % (len(port_entries), project_version))
 

@@ -1690,7 +1690,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-20** | MCP Routing | **Decided** | MCP routes strictly through the authenticated automation layer; never reaches internals directly. |
 | **AD-21** | Nested Loops | **Decided** | Event sources registered in all run-loop modes; re-entrant pump keeps live resizing smooth. |
 | **AD-22** | Linux X11 Tier | **Decided** | Linux Wayland is Tier 1; X11 is supported as Tier 2 fallback. |
-| **AD-23** | Compiler Language | **Decided** | Compiler is implemented in modern C++23. |
+| **AD-23** | Compiler Language | **Decided** | Compiler is implemented in modern C++20 (revised from C++23: the framework uses C++20 features only and does not require a C++23 toolchain). |
 | **AD-24** | Write Precedence | **Decided** | Imperative write breaks binding; `rebind()` restores; animation writes through distinct channel. |
 | **AD-25** | Dual-Engine Equivalence| **Decided** | Compiled C++ and Dev IR evaluator validated against a shared conformance test corpus. |
 | **AD-26** | Software Parity | **Decided, revised** | Blend2D plus the HarfBuzz glyph atlas provides deterministic reference rendering for CI headless testing; the reference is independent of the engine it judges, and the transitional backend retired in §4.7. |

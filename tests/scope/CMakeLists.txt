@@ -11,4 +11,4 @@ albor_build_ui_component(albor-scope-fixture "${CMAKE_CURRENT_SOURCE_DIR}/scope_
 
 # the fixture includes through the project root, which is where the module includes point (§3.5, §11.3)
 target_include_directories(albor-scope-fixture PRIVATE ${ALBOR_SOURCE_DIR})
-target_compile_features(albor-scope-fixture PRIVATE cxx_std_23)
+target_compile_features(albor-scope-fixture PRIVATE cxx_std_20)

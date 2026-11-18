@@ -1792,7 +1792,8 @@ TEST(TextFieldMultiLineChecks, ALongRunRecordsOnlyTheVisibleLines) {
     field.render(recorder);
     // assert the recorded run carries only the rows the clip can show, not all two hundred (§6.2)
     std::size_t visible_lines = 0;
-    for (const DrawCommand& command : recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands()) {
         if (command.kind() == DrawCommandKind::Text && command.text_geometry().layout.run != nullptr)
             visible_lines += command.text_geometry().layout.run->lines().size();
     }
@@ -1996,7 +1997,8 @@ TEST(TextFieldContentAlignChecks, ASingleLineHintCentresWhereTheLineWould) {
     field.render(recorder);
     // assert the hint takes the same alignment a first line would, rather than a rule of its own (§8.2)
     std::optional<float> hint_y;
-    for (const DrawCommand& command : recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands()) {
         if (command.kind() == DrawCommandKind::Text)
             hint_y = command.text_geometry().origin.y;
     }
@@ -2116,7 +2118,8 @@ TEST(TextFieldContentAlignChecks, AnEmptyEditorHangsItsHintFromThePlateTop) {
     field.render(recorder);
     // assert the hint sits where a first line would, rather than floating mid plate (§8.2)
     std::optional<float> hint_y;
-    for (const DrawCommand& command : recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands()) {
         if (command.kind() == DrawCommandKind::Text)
             hint_y = command.text_geometry().origin.y;
     }
@@ -2451,7 +2454,8 @@ TEST(TextFieldImeChecks, ACompositionOverASelectionShowsWhatTheCommitWillReplace
     field.render(recorder);
     // assert the provisional display is the value with the selection replaced (§8.3)
     std::string painted;
-    for (const DrawCommand& command : recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands()) {
         if (command.kind() != DrawCommandKind::Text)
             continue;
         const TextGeometry& geometry = command.text_geometry();
@@ -3049,7 +3053,8 @@ TEST(TextFieldImeChecks, ACompositionShowsOverTheRangeTheCommitWillReplace) {
     field.render(recorder);
     // assert the provisional display replaced the named span, so it matches what the commit will do (§8.3)
     std::string painted;
-    for (const DrawCommand& command : recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands()) {
         if (command.kind() != DrawCommandKind::Text)
             continue;
         const TextGeometry& geometry = command.text_geometry();
@@ -4045,7 +4050,8 @@ TEST(TextFieldDecorationChecks, TheNetlistFixturePaintsItsThreeTokenColours) {
     std::size_t keyword = 0;
     std::size_t number = 0;
     std::size_t comment = 0;
-    for (const DrawCommand& command : recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands()) {
         if (command.kind() != DrawCommandKind::Text)
             continue;
         const Color fill = command.paint().fill;
@@ -4087,7 +4093,8 @@ TEST(TextFieldDecorationChecks, WrappedDecorationsScrollWithTheCaretAndSelection
     const float row_x = field.text_origin().x + line.origin.x + field.layout().run->x_at_byte(row, 9);
     Rect selection{};
     Rect underline{};
-    for (const DrawCommand& command : selection_recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> selection_frame_scene = selection_recorder.scene();
+    for (const DrawCommand& command : selection_frame_scene->commands()) {
         if (command.kind() != DrawCommandKind::Rect)
             continue;
         if (command.paint().fill == Color::rgba(0.20f, 0.55f, 0.90f, 0.35f))
@@ -4107,7 +4114,8 @@ TEST(TextFieldDecorationChecks, WrappedDecorationsScrollWithTheCaretAndSelection
     field.render(caret_recorder);
     const Rect caret = field.caret_rect();
     Rect drawn_caret{};
-    for (const DrawCommand& command : caret_recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> caret_frame_scene = caret_recorder.scene();
+    for (const DrawCommand& command : caret_frame_scene->commands()) {
         if (command.kind() == DrawCommandKind::Rect && command.paint().fill == Color::rgba(0.94f, 0.96f, 0.98f, 1.0f))
             drawn_caret = command.rect_geometry().rect;
     }
@@ -4551,7 +4559,8 @@ TEST(TextFieldBarChecks, AnOverflowingFieldDrawsItsThumbInTheGutter) {
     field.render(recorder);
     // assert the thumb is a rounded bar in the reserved strip at the trailing edge (§6.1)
     std::size_t thumbs = 0;
-    for (const DrawCommand& command : recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands()) {
         if (command.kind() != DrawCommandKind::RoundedRect)
             continue;
         const Rect thumb = command.rect_geometry().rect;
@@ -4575,7 +4584,8 @@ TEST(TextFieldBarChecks, AFittingFieldDrawsNoThumb) {
     // assert nothing is drawn at all, because a field whose run fits has no travel to report (§6.2)
     EXPECT_TRUE(rect_commands(*recorder.scene()).empty());
     // assert no thumb is drawn either, which is what the as needed policy resolves to (§8)
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         EXPECT_NE(command.kind(), DrawCommandKind::RoundedRect);
 }
 
@@ -4592,7 +4602,8 @@ TEST(TextFieldBarChecks, TheThumbReachesTheBottomAtTheMaximumOffset) {
     field.render(recorder);
     // assert the thumb ends where the plate ends, which is what the last offset means (§8.2)
     bool seen = false;
-    for (const DrawCommand& command : recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands()) {
         if (command.kind() != DrawCommandKind::RoundedRect)
             continue;
         const Rect thumb = command.rect_geometry().rect;
@@ -4651,7 +4662,8 @@ TEST(TextFieldBarChecks, AnAlwaysOffFieldDrawsNothingAndStillScrolls) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{140.0f, 60.0f}, 1.0f));
     field.render(recorder);
     // assert the field painted no thumb at all, which is what always off means (§8)
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         EXPECT_NE(command.kind(), DrawCommandKind::RoundedRect);
     Event wheel{.kind = EventKind::Wheel, .position = Point{.x = 10.0f, .y = 10.0f}, .scroll = -1.0f};
     field.dispatch_event(wheel);
@@ -4673,7 +4685,8 @@ TEST(TextFieldBarChecks, AnAlwaysOnFieldDrawsAThumbWhileTheRunFits) {
     field.render(recorder);
     // assert the thumb is drawn even with no travel, which is what the policy asked (§8)
     std::size_t thumbs = 0;
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         if (command.kind() == DrawCommandKind::RoundedRect)
             thumbs++;
     EXPECT_EQ(thumbs, 1u);
@@ -4845,7 +4858,8 @@ TEST(TextFieldBarChecks, ASingleLineFieldIgnoresTheAlwaysOnPolicy) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{220.0f, 60.0f}, 1.0f));
     field.render(recorder);
     // assert no bar is drawn, whatever the policy says (§8)
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         EXPECT_NE(command.kind(), DrawCommandKind::RoundedRect);
 }
 
@@ -4862,7 +4876,8 @@ TEST(TextFieldBarChecks, AnAlwaysOnFieldFillsTheTrackWhileTheRunFits) {
     field.render(recorder);
     // assert the thumb fills the plate, because a run that fits has the whole track (§8.2)
     bool seen = false;
-    for (const DrawCommand& command : recorder.scene()->commands()) {
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands()) {
         if (command.kind() != DrawCommandKind::RoundedRect)
             continue;
         EXPECT_FLOAT_EQ(command.rect_geometry().rect.height, 40.0f);
@@ -4905,7 +4920,8 @@ TEST(TextFieldBarChecks, DeletingToAFitClearsTheOffsetAndTheThumb) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{140.0f, 60.0f}, 1.0f));
     field.render(recorder);
     // assert no thumb reports a travel that no longer exists (§6.2)
-    for (const DrawCommand& command : recorder.scene()->commands())
+    const std::shared_ptr<const FrameScene> frame_scene = recorder.scene();
+    for (const DrawCommand& command : frame_scene->commands())
         EXPECT_NE(command.kind(), DrawCommandKind::RoundedRect);
 }
 

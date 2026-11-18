@@ -71,10 +71,9 @@ namespace albor::wayland
             std::size_t count = 1;
             fds[0].fd = m_state->connection->fd();
             fds[0].events = POLLIN;
-            // the decoration descriptor index stays zero where libdecor is absent, which the poll set skips (§5.3)
-            std::size_t decoration_index = 0;
 #ifdef ALBOR_WAYLAND_LIBDECOR
             // the decoration queue is polled on its own descriptor where it differs from the display (§5.3)
+            std::size_t decoration_index = 0;
             const int decoration_fd = m_state->connection->decoration_fd();
             if (decoration_fd >= 0 && decoration_fd != fds[0].fd) {
                 fds[count].fd = decoration_fd;

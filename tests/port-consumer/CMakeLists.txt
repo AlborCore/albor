@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 
 # the deployment floor is the consumer's to declare before the first configure, which the overlay triplets also assert (§6.3)
-if(NOT DEFINED ENV{MACOSX_DEPLOYMENT_TARGET})
+if(APPLE AND NOT DEFINED ENV{MACOSX_DEPLOYMENT_TARGET})
     set(ENV{MACOSX_DEPLOYMENT_TARGET} "13.3")
 endif()
 

@@ -23,7 +23,7 @@ albor_build_ui_component(albor-vertical-slice "${CMAKE_CURRENT_SOURCE_DIR}/verti
 
 # the example includes through the project root, which is where the module includes point (§3.5, §11.3)
 target_include_directories(albor-vertical-slice PRIVATE ${ALBOR_SOURCE_DIR})
-target_compile_features(albor-vertical-slice PRIVATE cxx_std_23)
+target_compile_features(albor-vertical-slice PRIVATE cxx_std_20)
 
 # the public target carries the platform, text engine, widgets, layout, commands, accessibility and i18n (§3.3, AD-19)
 target_link_libraries(albor-vertical-slice PRIVATE albor)

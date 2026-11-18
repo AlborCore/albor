@@ -21,7 +21,7 @@ add_library(albor-render-albor STATIC ${CPP_SOURCES})
 
 # the backend implements the rendering hal and names albor types only (§3.5, AD-05)
 target_include_directories(albor-render-albor PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-render-albor PUBLIC cxx_std_23)
+target_compile_features(albor-render-albor PUBLIC cxx_std_20)
 
 # the backend draws through the shared hal and carries no third party engine dependency of its own (§6.3)
 target_link_libraries(albor-render-albor PUBLIC albor-render)
