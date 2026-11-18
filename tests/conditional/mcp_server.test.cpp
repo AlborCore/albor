@@ -170,6 +170,20 @@ TEST(McpServer, NamedArgumentsArePlacedInTheOrderTheLayerTakes) {
     EXPECT_NE(error->member("message")->as_string().find("no such action: activate"), std::string::npos);
 }
 
+TEST(McpServer, TheReadToolPlacesItsNamedArguments) {
+    // arrange
+    Fixture fixture;
+    // act the client names the property before the id, which is the opposite of the wire order (§10.3)
+    const core::Json reply = fixture.ask(tools_call("20", "semantic.read", R"({"property":"role","id":"root"})"));
+    // assert the adapter placed the pair by name, because the layer reads the id first (§10.3)
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* content = result->member("content");
+    ASSERT_NE(content, nullptr);
+    ASSERT_EQ(content->as_array().size(), 1U);
+    EXPECT_EQ(content->as_array().at(0).member("text")->as_string(), "group");
+}
+
 TEST(McpServer, ALayerRefusalBecomesAJsonRpcErrorCarryingTheLayersReason) {
     // arrange
     Fixture fixture;
@@ -402,6 +416,29 @@ TEST(McpServer, TheSetValueSchemaNamesItsTwoParameters) {
     ASSERT_NE(properties, nullptr);
     ASSERT_NE(properties->member("id"), nullptr);
     ASSERT_NE(properties->member("value"), nullptr);
+}
+
+TEST(McpServer, TheReadSchemaNamesItsTwoParameters) {
+    // arrange a layer permitting the generic read, which is what puts it in the listing (§10.3, AD-10)
+    AutomationRegistry registry;
+    registry.register_command("semantic.read", [](const AutomationRequest&) { return AutomationResult::answered(""); });
+    registry.allow("semantic.read");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [](std::string_view) { return AutomationResult::answered(""); };
+    McpServer server(std::move(route));
+    // act
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":32,"method":"tools/list"})");
+    // assert the schema names the id and the property, because a named call is validated against it (§10.3)
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    const core::Json* tools = reply->member("result")->member("tools");
+    ASSERT_NE(tools, nullptr);
+    ASSERT_EQ(tools->as_array().size(), 1U);
+    const core::Json* properties = tools->as_array().at(0).member("inputSchema")->member("properties");
+    ASSERT_NE(properties, nullptr);
+    ASSERT_NE(properties->member("id"), nullptr);
+    ASSERT_NE(properties->member("property"), nullptr);
 }
 
 TEST(McpServer, ThePointerAndKeyToolsDeclareTheirParameters) {

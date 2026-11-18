@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -260,6 +261,8 @@ namespace
             field.set_name("Name");
             // the value is the text the field edits (§10.1)
             field.set_value("alpha");
+            // the selection is the half open range a client reads beside the value (§10.1)
+            field.set_selection(1, 4);
             // the field joins the tree with the other scalar nodes (§10.1)
             tree.add(std::move(field));
             // the button publishes no value at all, which the query refuses (§10.1)
@@ -280,6 +283,58 @@ namespace
             panel.set_bounds(Rect::from_origin_size(Point{16.0f, 24.0f}, Size{120.0f, 40.0f}));
             // the panel joins the tree with the other scalar nodes (§10.1)
             tree.add(std::move(panel));
+            // the box publishes the settled true half, which the check read answers as a boolean (§10.1)
+            SemanticNode on{SemanticRole::Checkbox};
+            // the id is what the read query selects (§18.1, AD-11)
+            on.set_explicit_id("on");
+            // the name is the accessible label a reader speaks (§10.1)
+            on.set_name("On");
+            // the checked state is the boolean true the read reports (§10.1)
+            on.set_check(CheckState::Checked);
+            // the box joins the tree after the nodes the older assertions index (§10.1)
+            tree.add(std::move(on));
+            // the group publishes every state flag at once, which one read answers property by property (§10.1)
+            SemanticNode busy{SemanticRole::Group};
+            // the id is what the read query selects (§18.1, AD-11)
+            busy.set_explicit_id("busy");
+            // the name is the accessible label a reader speaks (§10.1)
+            busy.set_name("Busy");
+            // the keyboard focus is one of the flags the read answers (§10.1)
+            busy.set_focused(true);
+            // the selection is another flag, which a list client reads (§10.1)
+            busy.set_selected(true);
+            // the disabled state is what keeps a client from driving the node (§10.1)
+            busy.set_disabled(true);
+            // the read only state still takes focus and still permits a copy (§10.1)
+            busy.set_read_only(true);
+            // the multi line state is what a reader announces for a field (§10.1)
+            busy.set_multiline(true);
+            // the expanded state is what a popup control reports while it is open (§10.1)
+            busy.set_expanded(true);
+            // the indeterminate state is what a bar with unknown remaining work reports (§10.1)
+            busy.set_indeterminate(true);
+            // the group joins the tree after the nodes the older assertions index (§10.1)
+            tree.add(std::move(busy));
+            // the slider publishes a value with no decimal spelling, which the range read must refuse (§10.3)
+            SemanticNode broken{SemanticRole::Slider};
+            // the id is what the refusal names (§18.1, AD-11)
+            broken.set_explicit_id("broken");
+            // the name is the accessible label a reader speaks (§10.1)
+            broken.set_name("Broken");
+            // the value is not finite, so the object cannot carry it (§10.3)
+            broken.set_range(SemanticRange{.value = std::numeric_limits<double>::quiet_NaN(), .minimum = 0.0, .maximum = 1.0, .step = 0.1}, [](double) {});
+            // the slider joins the tree after the nodes the older assertions index (§10.1)
+            tree.add(std::move(broken));
+            // the slider publishes a step with no decimal spelling, which the range read must refuse (§10.3)
+            SemanticNode broken_step{SemanticRole::Slider};
+            // the id is what the refusal names (§18.1, AD-11)
+            broken_step.set_explicit_id("broken_step");
+            // the name is the accessible label a reader speaks (§10.1)
+            broken_step.set_name("BrokenStep");
+            // the step is not finite, so the object cannot carry it either (§10.3)
+            broken_step.set_range(SemanticRange{.value = 0.5, .minimum = 0.0, .maximum = 1.0, .step = std::numeric_limits<double>::quiet_NaN()}, [](double) {});
+            // the slider joins the tree after the nodes the older assertions index (§10.1)
+            tree.add(std::move(broken_step));
             // the commands are registered over the snapshot, which is what a host wires (§10.3, AD-20)
             register_semantic_commands(registry, [this] { return &tree; });
             // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
@@ -1066,6 +1121,216 @@ TEST(SemanticCommands, ABoundsQueryTakesOneId) {
     // assert the excess argument is refused rather than ignored, because the wire is positional (§10.3)
     EXPECT_FALSE(result.ok);
     EXPECT_NE(result.error.find("takes an id"), std::string::npos);
+}
+
+TEST(SemanticCommands, AStateFlagIsReadAsABoolean) {
+    // arrange a tree whose node carries every state flag at once (§10.1)
+    ScalarFixture fixture;
+    // act every boolean property names the state it reads (§10.3)
+    for (const char* property : {"focused", "selected", "disabled", "read_only", "multiline", "expanded", "indeterminate"}) {
+        // each read is one command line, which the session answers (§10.3)
+        const AutomationResult result = fixture.run(std::string("semantic.read busy ") + property);
+        // the answer is the boolean the state holds, which is what a typed test reads (§10.3)
+        ASSERT_TRUE(result.ok) << property;
+        EXPECT_EQ(result.kind, ValueKind::Boolean) << property;
+        EXPECT_EQ(result.payload, "yes") << property;
+    }
+}
+
+TEST(SemanticCommands, AnUnsetStateFlagAnswersNo) {
+    // arrange a tree whose plain button carries no state flag (§10.1)
+    ScalarFixture fixture;
+    // act every boolean property names a state the button does not hold (§10.3)
+    for (const char* property : {"focused", "selected", "disabled", "read_only", "multiline", "expanded", "indeterminate"}) {
+        // each read is one command line, which the session answers (§10.3)
+        const AutomationResult result = fixture.run(std::string("semantic.read press ") + property);
+        // assert an unset flag is the boolean false rather than a refusal, because the state exists (§10.1, §10.3)
+        ASSERT_TRUE(result.ok) << property;
+        EXPECT_EQ(result.kind, ValueKind::Boolean) << property;
+        EXPECT_EQ(result.payload, "no") << property;
+    }
+}
+
+TEST(SemanticCommands, ACheckOnANonCheckableNodeIsRefused) {
+    // arrange a tree whose button is not checkable at all (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.read press check");
+    // assert the absence of a check is refused, which must not read as the indeterminate state (§10.1, §10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("no check on node: press"), std::string::npos);
+}
+
+TEST(SemanticCommands, ACheckAnswersItsThreeStates) {
+    // arrange a tree with one box in each check state (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult unchecked = fixture.run("semantic.read armed check");
+    const AutomationResult checked = fixture.run("semantic.read on check");
+    const AutomationResult indeterminate = fixture.run("semantic.read mixed check");
+    // assert the settled halves are booleans, which is the pair the value query also reports (§10.1, §10.3)
+    ASSERT_TRUE(unchecked.ok);
+    EXPECT_EQ(unchecked.kind, ValueKind::Boolean);
+    EXPECT_EQ(unchecked.payload, "no");
+    ASSERT_TRUE(checked.ok);
+    EXPECT_EQ(checked.kind, ValueKind::Boolean);
+    EXPECT_EQ(checked.payload, "yes");
+    // assert the third state is named as text, because it has no boolean answer (§10.1)
+    ASSERT_TRUE(indeterminate.ok);
+    EXPECT_EQ(indeterminate.kind, ValueKind::Text);
+    EXPECT_EQ(indeterminate.payload, "indeterminate");
+}
+
+TEST(SemanticCommands, TheSelectionAnswersItsHalfOpenRange) {
+    // arrange a tree whose field publishes a selection beside its value (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.read name selection");
+    // assert the range is one text payload, which a client parses as start:end (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.kind, ValueKind::Text);
+    EXPECT_EQ(result.payload, "1:4");
+}
+
+TEST(SemanticCommands, TheRoleAndNameAreReadAsText) {
+    // arrange a tree whose slider and button carry a role and a name (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult role = fixture.run("semantic.read level role");
+    const AutomationResult name = fixture.run("semantic.read press name");
+    // assert the role is the word the dump uses, so the two surfaces cannot drift (§10.1, §10.3)
+    ASSERT_TRUE(role.ok);
+    EXPECT_EQ(role.kind, ValueKind::Text);
+    EXPECT_EQ(role.payload, "slider");
+    // assert the name is the accessible label the node publishes (§10.1)
+    ASSERT_TRUE(name.ok);
+    EXPECT_EQ(name.kind, ValueKind::Text);
+    EXPECT_EQ(name.payload, "Press");
+}
+
+TEST(SemanticCommands, TheRangeAnswersItsFourFields) {
+    // arrange a tree whose slider publishes a bounded number (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.read level range");
+    // assert the answer is one json object, because a client reads a range as a whole (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.kind, ValueKind::Json);
+    // the payload is parsed, because a client reads it the same way (§10.3)
+    const std::optional<core::Json> range = core::Json::parse(result.payload);
+    ASSERT_TRUE(range.has_value());
+    // each field is the number the control published (§10.1)
+    ASSERT_NE(range->member("value"), nullptr);
+    ASSERT_NE(range->member("minimum"), nullptr);
+    ASSERT_NE(range->member("maximum"), nullptr);
+    ASSERT_NE(range->member("step"), nullptr);
+    EXPECT_DOUBLE_EQ(range->member("value")->as_number(), 0.5);
+    EXPECT_DOUBLE_EQ(range->member("minimum")->as_number(), 0.0);
+    EXPECT_DOUBLE_EQ(range->member("maximum")->as_number(), 1.0);
+    EXPECT_DOUBLE_EQ(range->member("step")->as_number(), 0.1);
+}
+
+TEST(SemanticCommands, ARangeOnANodeThatCarriesNoneIsRefused) {
+    // arrange a tree whose button publishes no range (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.read press range");
+    // assert a range read without a range is refused, because zeros would claim a bounded control (§10.1, §10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("no range on node: press"), std::string::npos);
+}
+
+TEST(SemanticCommands, ANonFiniteRangeIsRefused) {
+    // arrange a tree whose slider publishes a value with no decimal spelling (§10.3)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.read broken range");
+    // assert the refusal names the node, because a json object cannot carry the number (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("the range is not finite: broken"), std::string::npos);
+}
+
+TEST(SemanticCommands, ReadingAnUnknownPropertyIsRefused) {
+    // arrange a tree whose slider carries the known properties (§10.1)
+    ScalarFixture fixture;
+    // act the command names a state no property carries
+    const AutomationResult result = fixture.run("semantic.read level nope");
+    // assert the refusal repeats the name, because a typo must not read as a state (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("no such property: nope"), std::string::npos);
+}
+
+TEST(SemanticCommands, ReadingAnAbsentIdIsRefusedWithTheSelector) {
+    // arrange a tree of scalar nodes (§10.1)
+    ScalarFixture fixture;
+    // act the command names no node
+    const AutomationResult result = fixture.run("semantic.read absent role");
+    // assert the refusal names the selector, because a missing node must not answer as none (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("no node with id: absent"), std::string::npos);
+}
+
+TEST(SemanticCommands, ReadingNeedsAnIdAndAProperty) {
+    // arrange a tree of scalar nodes (§10.1)
+    ScalarFixture fixture;
+    // act three client mistakes, each of which names too little or too much (§10.3)
+    const AutomationResult no_id = fixture.run("semantic.read");
+    const AutomationResult no_property = fixture.run("semantic.read level");
+    const AutomationResult extra = fixture.run("semantic.read level role extra");
+    // assert each is refused with the argument it wanted, because the wire is positional (§10.3)
+    EXPECT_FALSE(no_id.ok);
+    EXPECT_NE(no_id.error.find("read needs an id"), std::string::npos);
+    EXPECT_FALSE(no_property.ok);
+    EXPECT_NE(no_property.error.find("read needs a property"), std::string::npos);
+    EXPECT_FALSE(extra.ok);
+    EXPECT_NE(extra.error.find("read takes an id and a property"), std::string::npos);
+}
+
+TEST(SemanticCommands, ACollapsedSelectionAnswersZero) {
+    // arrange a tree whose button carries no selection, which the generic read reports as a collapsed caret (§10.1)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.read press selection");
+    // assert the empty range is the text zero to zero, which a client parses like any other range (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.kind, ValueKind::Text);
+    EXPECT_EQ(result.payload, "0:0");
+}
+
+TEST(SemanticCommands, APropertyNameIsNotCaseFolded) {
+    // arrange a tree whose slider carries the lower case property names (§10.3)
+    ScalarFixture fixture;
+    // act the client capitalizes the property, which no alias accepts
+    const AutomationResult result = fixture.run("semantic.read level Role");
+    // assert the name is refused as written, because a case fold would hide a client's mistake (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("no such property: Role"), std::string::npos);
+}
+
+TEST(SemanticCommands, ANonFiniteStepIsRefused) {
+    // arrange a tree whose slider publishes a step with no decimal spelling (§10.3)
+    ScalarFixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.read broken_step range");
+    // assert every one of the four numbers is checked, not only the value (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("the range is not finite: broken_step"), std::string::npos);
+}
+
+TEST(SemanticCommands, AReadIsRefusedWhenTheHostSuppliedNoSnapshot) {
+    // arrange a registry whose snapshot answers nothing, which is a host without an active window (§10.3)
+    AutomationRegistry registry;
+    register_semantic_commands(registry, nullptr);
+    // every command is permitted, so the refusal is the snapshot rather than the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.read level role");
+    // assert the missing snapshot is refused, because an empty answer would read as a missing node (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("no semantic snapshot"), std::string::npos);
 }
 
 TEST(SemanticCommands, TheTreeDumpCarriesNoRectToken) {

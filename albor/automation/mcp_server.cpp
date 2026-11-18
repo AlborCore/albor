@@ -67,6 +67,9 @@ namespace albor::automation
             // a bounds read names the node it measures (§10.3)
             if (command == "semantic.bounds")
                 return {"id"};
+            // a generic read names the node and the property it reads (§10.3)
+            if (command == "semantic.read")
+                return {"id", "property"};
             // a click names the control it presses (§10.3)
             if (command == "input.click")
                 return {"id"};
