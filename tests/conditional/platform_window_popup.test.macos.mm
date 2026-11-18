@@ -34,6 +34,9 @@ namespace
 
         void on_platform_focus_gained() override { focus_gained++; }
 
+        // the popup suite never moves a pointer, so the exit is only required to compile (§8.3)
+        void on_platform_pointer_exited() override {}
+
         void on_platform_appearance_changed(const SystemAppearance&) override { appearance_changed++; }
 
         // the metrics the window last reported, which the resize observer pushes (§9.1)

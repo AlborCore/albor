@@ -393,15 +393,17 @@ namespace albor
         // an empty chain has nothing to leave (§8.3)
         if (m_hover_chain.empty())
             return;
+        // the leaving nodes are taken before anything is told, so a handler that hides its window cannot re-enter (§8.3)
+        const std::vector<UiNode*> leaving = std::move(m_hover_chain);
+        // the chain empties first, so a handler that asks the controller sees nothing hovered (§8.3)
+        m_hover_chain.clear();
         // the exit events are replayed in chain order, because a stale hover must not survive the change (§8.3)
-        for (UiNode* node : m_hover_chain) {
+        for (UiNode* node : leaving) {
             // a node that left the tree is skipped, because the events own the tree (§8.3)
             if (node == nullptr)
                 continue;
             Event leave{.kind = EventKind::PointerLeave, .position = Point{node->bounds().x, node->bounds().y}};
             InputDispatcher::dispatch_to_chain(std::vector<UiNode*>{node}, leave);
         }
-        // the chain is emptied, so the next move starts from nothing (§8.3)
-        m_hover_chain.clear();
     }
 } // namespace albor

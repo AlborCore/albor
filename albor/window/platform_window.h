@@ -42,6 +42,9 @@ namespace albor
             // a backend that carries no cue restores nothing, which is the quiet default of §8.3
         }
 
+        // report that the pointer left the window, which ends a hover no move can end (§5.3, §8.3)
+        virtual void on_platform_pointer_exited() = 0;
+
         // report that the appearance the system renders with changed while the window is alive (§5.3, §8.4)
         virtual void on_platform_appearance_changed(const SystemAppearance& appearance) = 0;
     };

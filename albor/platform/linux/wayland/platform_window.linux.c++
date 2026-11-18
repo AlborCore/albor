@@ -966,6 +966,9 @@ namespace albor
             // the batches drop, because a wheel event behind the surface would carry a stale position (§8.3)
             state->wheel[0].clear();
             state->wheel[1].clear();
+            // the pointer is over no node of this window, so every hover it held ends (§8.3)
+            if (state->listener != nullptr)
+                state->listener->on_platform_pointer_exited();
         }
 
         // the move the pointer made, which is delivered in logical units (§8.3)

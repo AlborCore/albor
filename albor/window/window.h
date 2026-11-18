@@ -99,6 +99,9 @@ namespace albor
         // install the callback a native focus gain reaches, which restores the focus cue the window hid (§5.1, §8.3)
         void set_focus_gained_handler(std::function<void()> handler);
 
+        // install the callback a pointer exit reaches, which ends the hover the window can no longer follow (§5.3, §8.3)
+        void set_pointer_exited_handler(std::function<void()> handler);
+
         // install the callback a hide reaches, which cancels the drag before the surface leaves (§5.1, §8.3)
         void set_hidden_handler(std::function<void()> handler);
 
@@ -131,6 +134,9 @@ namespace albor
 
         // override: report a native focus gain to the focus gained handler (§5.3, §8.3)
         void on_platform_focus_gained() override;
+
+        // override: report a pointer exit to the pointer exited handler (§5.3, §8.3)
+        void on_platform_pointer_exited() override;
 
         // override: report a system appearance change to the appearance handler (§5.3, §8.4)
         void on_platform_appearance_changed(const SystemAppearance& appearance) override;
@@ -165,6 +171,9 @@ namespace albor
 
         // the callback a native focus gain reaches, which restores the cue the window hid (§8.3)
         std::function<void()> m_focus_gained_handler;
+
+        // the callback a pointer exit reaches, which ends the hover the window can no longer follow (§8.3)
+        std::function<void()> m_pointer_exited_handler;
 
         // the callback a hide reaches, which cancels the drag before the surface leaves (§8.3)
         std::function<void()> m_hidden_handler;

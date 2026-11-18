@@ -975,6 +975,18 @@ The chain order matters and is fixed: **deepest first**. An exit has to reach th
 before its parent, and a transition delivered parent-first would leave a child painted hovered
 while its parent was told otherwise.
 
+**The Window Edge Ends the Hover (settled during implementation):**
+
+The synthesis retires a hover from a move, and the move that leaves the window never comes: the
+last position the platform delivers is still inside it. Every backend therefore reports the
+departure as a fact of its own, `PlatformWindowListener::on_platform_pointer_exited`, and the
+controller replays the exits and empties the chain. It carries no position and is not a
+normalized event, because a node's `PointerLeave` stays the controller's synthesis. The tracked
+rectangle is the client area on both desktop platforms, so a move onto the title bar ends a hover
+exactly as leaving the window does, and a window that hides ends it the same way. AppKit needs a
+tracking area to deliver the button-less move and the exit at all, Win32 asks for `WM_MOUSELEAVE`
+with `TrackMouseEvent`, and Wayland raises the same report from `wl_pointer.leave`.
+
 **A Nested Viewport Claims the Wheel Only While It Can Move (settled during implementation):**
 
 A wheel over nested scrollable nodes scrolls the innermost one first. A viewport therefore claims

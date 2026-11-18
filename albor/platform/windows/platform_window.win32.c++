@@ -40,6 +40,9 @@ namespace albor
         // whether a left press is held, which tells a popup shown from that press to leave the capture alone (§5.1)
         bool mouse_down = false;
 
+        // whether the client area is being tracked, which arms the leave message once per entry (§8.3)
+        bool tracking_mouse = false;
+
         // how many clicks the last press belongs to, which a double or triple click selection reads (§8.3)
         int click_count = 0;
 
@@ -633,6 +636,22 @@ namespace albor
                 // the held buttons travel with the move, which lets a drag name the gesture it belongs to (§8.3)
                 message.button = (wparam & MK_MBUTTON) != 0 ? PointerButton::Middle : ((wparam & MK_RBUTTON) != 0 ? PointerButton::Right : PointerButton::Left);
                 state->listener->on_platform_event(message);
+                // the client area is tracked, because leaving it is a departure no further move reports (§8.3)
+                if (!state->tracking_mouse) {
+                    // the leave is asked for once per entry, which the flag and the message pair up (§8.3)
+                    TRACKMOUSEEVENT track{};
+                    track.cbSize = sizeof(TRACKMOUSEEVENT);
+                    track.dwFlags = TME_LEAVE;
+                    track.hwndTrack = window;
+                    state->tracking_mouse = TrackMouseEvent(&track) != FALSE;
+                }
+                return 0;
+            }
+            case WM_MOUSELEAVE: {
+                // the tracking is over, so the next move inside the client area arms it again (§8.3)
+                state->tracking_mouse = false;
+                // the pointer is over no node of this window, so every hover it held ends (§8.3)
+                state->listener->on_platform_pointer_exited();
                 return 0;
             }
             case WM_MOUSEWHEEL: {

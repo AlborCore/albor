@@ -217,6 +217,9 @@ namespace
 
     // whether a selection was pushed at all, which the selected query answers through (§8.3)
     BOOL m_selection_valid;
+
+    // the area the pointer is tracked in, which is what delivers a button-less move and the exit (§8.3)
+    NSTrackingArea* m_tracking;
 }
 
 // the view owns the caret, so it accepts first responder for the key events to reach it (§8.3)
@@ -237,6 +240,47 @@ namespace
 - (BOOL)acceptsFirstMouse:(NSEvent*)event {
     (void)event;
     return YES;
+}
+
+// track the pointer inside the visible content, which is the area whose nodes a hover names (§8.3)
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    // the previous area goes first, because appkit adds a new one without replacing the old (§8.3)
+    if (m_tracking != nil)
+        [self removeTrackingArea:m_tracking];
+    // moves, entries and exits are what a hover needs, and the visible rect is the client area the tree occupies (§8.3)
+    NSTrackingAreaOptions options = NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited | NSTrackingActiveInActiveApp | NSTrackingInVisibleRect;
+    // the area follows the view, so a resize needs no manual update of the tracked rectangle (§5.3)
+    m_tracking = [[NSTrackingArea alloc] initWithRect:NSZeroRect options:options owner:self userInfo:nil];
+    [self addTrackingArea:m_tracking];
+}
+
+// the pointer moved without a button held, which is the hover the click paths never delivered (§8.3)
+- (void)mouseMoved:(NSEvent*)event {
+    // a plain move holds no button, so the default the normalized event carries is named (§8.3)
+    [self forwardPointer:event kind:albor::EventKind::PointerMove button:albor::PointerButton::Left];
+}
+
+// the pointer entered the window, which seeds the hover before the first move inside it (§8.3)
+- (void)mouseEntered:(NSEvent*)event {
+    // a gone listener drops the entry, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::PointerMove;
+    message.position = [self logicalPointOf:event];
+    // the entry lands at a position, so it is a move the hover chain derives from (§8.3)
+    self.listener->on_platform_event(message);
+}
+
+// the pointer left the window, which ends a hover no further move can end (§8.3)
+- (void)mouseExited:(NSEvent*)event {
+    (void)event;
+    // a gone listener drops the exit, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    // the framework ends the hover of every node the pointer is no longer over (§8.3)
+    self.listener->on_platform_pointer_exited();
 }
 
 // turn a native pointer position into the logical point of §8.3, flipping the y axis to the tree origin

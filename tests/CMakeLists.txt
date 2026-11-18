@@ -144,6 +144,12 @@ if(APPLE)
     set_source_files_properties("./conditional/platform_window_popup.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-tests PRIVATE albor-platform-macos)
 
+    # the input suite drives the appkit window adapter's pointer path, because a button-less move and the
+    # departure are native appkit surfaces a double cannot prove (§8.3, AD-16). it links the adapter plain for
+    # the same reason the popup suite does: the create factory is all it calls, so no platform install collides
+    target_sources(albor-tests PRIVATE "./conditional/platform_window_input.test.macos.mm")
+    set_source_files_properties("./conditional/platform_window_input.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+
     # the dialog teardown suite drives a parented dialog end to end, because the appkit display cycle crash of #150
     # only reproduces through the application, its pump and the real window factory (§5.1, §5.2, AD-16)
     target_sources(albor-tests PRIVATE "./conditional/platform_window_dialog.test.macos.mm")
@@ -165,6 +171,9 @@ endif()
 if(WIN32)
     target_sources(albor-tests PRIVATE "./conditional/platform_window_popup.test.win32.c++")
     target_link_libraries(albor-tests PRIVATE albor-platform-windows)
+    # the input suite drives the win32 window adapter's pointer path, because the move and the leave message are
+    # native surfaces a double cannot prove; it mirrors the appkit suite one for one (§8.3, AD-16)
+    target_sources(albor-tests PRIVATE "./conditional/platform_window_input.test.win32.c++")
     # the accessibility suite walks the ui automation hierarchy the win32 bridge publishes into, because the
     # role mapping is only reachable once the bridge hands its tree to that hierarchy (§10.2, AD-16). the suite
     # drives the provider directly and through a ui automation client, and asserts the WM_GETOBJECT hook answers

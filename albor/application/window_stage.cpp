@@ -146,6 +146,14 @@ namespace albor
         m_input->cancel_pointer_capture(reason);
     }
 
+    void WindowStage::clear_hover() {
+        // an unwired stage has no hover to end, which the window betrayed at creation time (§8.3)
+        if (!m_input)
+            return;
+        // the controller replays the exits, because the pointer left the surface its tree sits on (§8.3)
+        m_input->clear_hover();
+    }
+
     void WindowStage::set_window_active(bool active) {
         // an unwired stage has no focus manager to hide, which the window betrayed at creation time (§8.3)
         if (!m_input)

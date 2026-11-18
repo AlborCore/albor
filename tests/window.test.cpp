@@ -1010,6 +1010,26 @@ TEST(Window, APlatformFocusGainReachesTheFocusGainedHandler) {
     EXPECT_TRUE(called);
 }
 
+TEST(Window, APlatformPointerExitReachesThePointerExitedHandler) {
+    // arrange a window that ends its hover when the pointer leaves it (§8.3)
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    bool called = false;
+    window.set_pointer_exited_handler([&called] { called = true; });
+    // act
+    window.on_platform_pointer_exited();
+    // assert the departure reached the handler, because no move follows it to end the hover instead (§8.3)
+    EXPECT_TRUE(called);
+}
+
+TEST(Window, APointerExitWithoutAHandlerIsANoOp) {
+    // arrange a window with no hover handler, which a hand drawn window may keep (§8.3)
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    // act
+    window.on_platform_pointer_exited();
+    // assert the forward is a no op without a handler, which is the quiet default of §8.3
+    EXPECT_TRUE(window.alive());
+}
+
 TEST(Window, AHideReachesTheHiddenHandlerBeforeTheNativeWindow) {
     // arrange a window whose handler cancels the drag while the tree is still alive (§8.3)
     auto native = std::make_unique<TestPlatformWindow>();

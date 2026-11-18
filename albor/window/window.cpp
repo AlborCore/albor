@@ -169,6 +169,11 @@ namespace albor
         m_focus_gained_handler = std::move(handler);
     }
 
+    void Window::set_pointer_exited_handler(std::function<void()> handler) {
+        // the handler ends the hover the window can no longer follow, because no move arrives outside it (§8.3)
+        m_pointer_exited_handler = std::move(handler);
+    }
+
     void Window::set_hidden_handler(std::function<void()> handler) {
         // the handler cancels the drag before the native surface leaves the screen (§8.3)
         m_hidden_handler = std::move(handler);
@@ -259,6 +264,13 @@ namespace albor
         if (!m_focus_gained_handler)
             return;
         m_focus_gained_handler();
+    }
+
+    void Window::on_platform_pointer_exited() {
+        // a window without a handler has no hover to end, which is the quiet default of §8.3
+        if (!m_pointer_exited_handler)
+            return;
+        m_pointer_exited_handler();
     }
 
     void Window::on_platform_appearance_changed(const SystemAppearance& appearance) {

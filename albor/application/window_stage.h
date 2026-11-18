@@ -58,6 +58,9 @@ namespace albor
         // drop the pointer capture when the window loses the interaction, which tells the captured node why (§8.3)
         void cancel_pointer_capture(PointerCancelReason reason = PointerCancelReason::CaptureLost);
 
+        // end the hover, which the window edge and a hide both need because no move follows them (§8.3)
+        void clear_hover();
+
         // hide or restore the focus cue when the window loses or regains key status (§5.3, §8.3)
         void set_window_active(bool active);
 
