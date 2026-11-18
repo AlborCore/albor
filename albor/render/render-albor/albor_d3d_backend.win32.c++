@@ -332,7 +332,7 @@ namespace albor::render
         }
 
         // count the frames the process submitted, which a test reads to prove a windowed frame passed the present (§6.3)
-        std::atomic<std::uint64_t>& presented_frames() {
+        std::atomic<std::uint64_t>& submitted_frames() {
             // the counter lives for the process, because one present is one frame whichever surface submitted it (§6.3)
             static std::atomic<std::uint64_t> frames{0};
             return frames;
@@ -991,7 +991,7 @@ namespace albor::render
             const HRESULT presented = m_swap_chain->Present(0, 0);
             // only a submit that returned success is a frame the window composes, not an occluded status (§6.3)
             if (presented == S_OK)
-                presented_frames().fetch_add(1);
+                submitted_frames().fetch_add(1);
             note_device_result(presented);
         }
 
@@ -1660,7 +1660,7 @@ namespace albor::render
 
     std::uint64_t d3d_presented_frames() {
         // the count is the one the present path rose, which an offscreen frame never reaches (§6.3)
-        return presented_frames().load();
+        return submitted_frames().load();
     }
 
     std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations) {

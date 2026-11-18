@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -140,6 +141,12 @@ namespace albor
 
         // end the frame and present the frame state the begin kept, exactly once per begun frame (§6.1, §6.3)
         virtual void end_frame() = 0;
+
+        // report how many frames the surface has handed to its native target, which a diagnostic or test reads (§6.3)
+        [[nodiscard]] virtual std::size_t presented_frames() const {
+            // a surface with no native target presents nothing through this seam (§6.3)
+            return 0;
+        }
 
         // read the last FINISHED frame back, refusing before the first or mid frame; see render/screenshot.h (§6.3)
         [[nodiscard]] virtual std::vector<std::uint8_t> read_pixels() const {

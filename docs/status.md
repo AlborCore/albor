@@ -10,13 +10,36 @@ the architecture specification `albor-design-v4.md`.
 | --- | --- |
 | macOS 13.3+ (AppKit, Metal), Intel and Apple silicon | implemented — the primary platform |
 | Windows 10/11 (Win32, Direct3D) | implemented and built in CI |
+| Linux Wayland (Blend2D CPU) | implemented — CI temporarily disabled until a Linux host is available; X11 is planned, Vulkan is #110 |
 | headless | implemented — the test and CI surface |
-| Linux (Wayland, X11) | planned — the HAL interface is fixed |
 
 An application names a window and a component. A normal application links `albor`
 (GPU renderer) or `albor-blend2d` (portable CPU renderer); the platform and text engine
 are the framework's choice. The target map and advanced composition are on
 [Consuming Albor](consuming.md).
+
+## Linux support
+
+| abstraction | level | notes |
+| --- | --- | --- |
+| Application, event loop, tasks, timers | Full | Wayland loop with timerfd pacing |
+| Window roles and close request | Partial | Normal, Dialog and Tool are parented toplevels; Popup uses `xdg_popup` + `xdg_positioner`; close veto is framework-enforced |
+| Window modality and parent windows | Full | the framework gate enforces it before dispatch; Wayland has no native dialog role |
+| Clipboard | Partial | `wl_data_device` text selection; a headless compositor without a seat has no clipboard |
+| IME and text composition | Partial | `text-input-v3`; candidate anchor; surrounding text is not sent yet |
+| DPI and scale factor | Partial | integer output scale, covered at scale 2 by the local container; fractional scaling is #236 |
+| Event-loop frame pacing | Full | timerfd pacing |
+| Input normalization and focus | Partial | xkbcommon key and modifier mapping; no scripted real-device suite yet |
+| System appearance | Not yet | XDG portal appearance is #234 |
+| Native file dialogs | Not yet | XDG portal file chooser is #234 |
+| Platform font resolution | Not yet | fontconfig resolver is #235 |
+| Renderer | Partial | Blend2D CPU presenting through `wl_shm`; the Vulkan backend is #110 |
+| Accessibility | Not yet | AT-SPI is #42 |
+
+The adapter builds only where the Wayland, xkbcommon, libdecor and wayland-protocols
+development packages exist. The Linux CI jobs are temporarily disabled until a Linux host
+is available; the container workflow installs the packages and runs the platform suite under
+a headless Weston compositor. [Linux](linux.md) records the workflow and the current limits.
 
 ## Windows support
 
@@ -50,7 +73,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Render surface, metrics, scale | Full | D3D and Blend2D windowed surfaces |
 | Two-stage frame pipeline | Full | scene build and render execution separated |
 | Custom rendering and retained resources | Full | `CustomRenderNode`, `RenderContext`, batch buffers, glyph cache |
-| `render-albor` GPU backend | Full | Direct3D 11; 82 tests, 41 parity tests, D3D/Metal parity, damage culled stage one and damage-bounded partial frames |
+| `render-albor` GPU backend | Full | Direct3D 11; 93 tests, 48 parity tests, D3D/Metal parity, damage culled stage one and damage-bounded partial frames |
 | Blend2D windowed surface | Full | 3 windowed tests |
 | Software and headless renderer | Full | screenshot reference for GPU/software parity |
 
@@ -81,7 +104,7 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 | Application, event loop, tasks, timers | `application/` | shipped |
 | Window roles, modality, close request | `window/` | shipped |
 | Native file dialogs | `application/`, `platform/` | shipped — appkit panels, shell dialogs and a scripted headless backend |
-| Platform abstraction (macOS, Windows, headless) | `platform/` | shipped |
+| Platform abstraction (macOS, Windows, Linux Wayland, headless) | `platform/` | shipped |
 | Render surface, metrics, scale factor | `render/` | shipped |
 | Frame pipeline, two-stage frame | `render/` | shipped |
 | Custom rendering (`CustomRenderNode`) | `render/` | shipped |

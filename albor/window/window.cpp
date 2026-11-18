@@ -44,7 +44,8 @@ namespace albor
         if (!m_platform)
             return;
         m_platform->show();
-        m_visible = true;
+        // the platform is the authority on whether the window is on screen, which a refused popup role reports (§5.1)
+        m_visible = m_platform->visible();
     }
 
     void Window::activate() {

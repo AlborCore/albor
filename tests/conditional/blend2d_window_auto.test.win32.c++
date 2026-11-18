@@ -79,6 +79,8 @@ TEST(Blend2DAutoInstallChecks, ARealWindowGetsAPresentingSurface) {
     // act
     surface->begin_frame();
     surface->end_frame();
+    // assert the frame reached the swapchain, which a present that never ran would miss (§6.3)
+    EXPECT_EQ(surface->presented_frames(), 1u);
     // assert the finished frame reads back at the physical extent, which is what the copy presents (§6.3, AD-27)
     EXPECT_TRUE(surface->valid());
     EXPECT_EQ(surface->read_pixels().size(), static_cast<std::size_t>(64) * 48u * 4u);
@@ -88,6 +90,8 @@ TEST(Blend2DAutoInstallChecks, ARealWindowGetsAPresentingSurface) {
     EXPECT_TRUE(surface->valid());
     surface->begin_frame();
     surface->end_frame();
+    // assert the second frame reached the swapped buffers at the new extent (§6.3)
+    EXPECT_EQ(surface->presented_frames(), 2u);
     // assert the presentation moved to the new metrics, whose physical extent the buffers took (§6.2, AD-27)
     EXPECT_TRUE(surface->valid());
     EXPECT_EQ(surface->metrics(), WindowMetrics::from_logical(Size{40.0f, 30.0f}, 2.0f));

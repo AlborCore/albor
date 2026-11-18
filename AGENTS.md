@@ -114,7 +114,7 @@ albor/ (every framework module lives under this include folder, so consumers
         include "albor/<module>/<header>.h" and the paths match the albor:: namespace)
 ├── core/ application/ ui/ layout/ input/ focus/ commands/ model/
 ├── text/ style/ animation/ window/
-├── platform/ (macos/ windows/ headless/)
+├── platform/ (macos/ windows/ linux/ headless/)
 ├── render/ render-software/ render-blend2d/ render-albor/ widgets/ semantics/ accessibility/
 ├── resources/ i18n/
 ├── compiler/ manifest/ language-server/ preview/
