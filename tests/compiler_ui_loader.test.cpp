@@ -427,6 +427,76 @@ TEST(UiLoader, AcceptsARootThatDeclaresABaseAndItsExportedComponent) {
     EXPECT_EQ(diagnostics.count(), 0U);
     ASSERT_TRUE(checked.has_value());
     EXPECT_EQ(checked->components.size(), 2U);
+    // assert the exported component is the one the build compiles, while the base stays flattened (§11.1, §14.2)
+    EXPECT_EQ(checked->exported_component, "Wide");
+}
+
+TEST(UiLoader, ReportsASiblingThatIsNotTheExportedBase) {
+    // arrange a root with a base, an exported component and an unrelated sibling, which no build unit can name (§11.1)
+    std::map<std::string, std::string> files;
+    files["wide.ui"] = "component Panel { Column { @children } } component Wide : Panel { Label { text: \"Wide\"; } } component Extra { Column {} }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act the root is checked, which rejects the sibling before codegen can leave it unbuilt (§11.1, §14.2)
+    const std::optional<CheckedFile> checked = loader.check("wide.ui");
+    // assert one sibling error names the declaration, because the author must split it into its own file (§11.1)
+    std::size_t sibling_errors = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.code == "E0806") {
+            sibling_errors++;
+            EXPECT_EQ(diagnostic.path, "wide.ui");
+            EXPECT_NE(diagnostic.message.find("'Extra'"), std::string::npos);
+            EXPECT_NE(diagnostic.message.find("own ui file"), std::string::npos);
+        }
+    EXPECT_EQ(sibling_errors, 1U);
+    // assert the sibling is the only complaint, because the root itself exports the stem-named component (§11.1)
+    EXPECT_EQ(diagnostics.count(), 1U);
+    // assert the export still resolves, because the error is about the sibling rather than the root rule (§11.1)
+    ASSERT_TRUE(checked.has_value());
+    EXPECT_EQ(checked->exported_component, "Wide");
+}
+
+TEST(UiLoader, AcceptsARootWhoseBaseFollowsTheExport) {
+    // arrange a root whose base follows the exported component, because the name decides and not the order (§11.1)
+    std::map<std::string, std::string> files;
+    files["wide.ui"] = "component Wide : Panel { Label { text: \"Wide\"; } } component Panel { Column { @children } }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act the root is checked, which resolves the base declared after its derived component (§11.1)
+    const std::optional<CheckedFile> checked = loader.check("wide.ui");
+    // assert the later base is accepted and the export is still the stem-named component (§11.1, §14.2)
+    EXPECT_EQ(diagnostics.count(), 0U);
+    ASSERT_TRUE(checked.has_value());
+    EXPECT_EQ(checked->exported_component, "Wide");
+}
+
+TEST(UiLoader, SkipsTheSiblingRuleForAnUnsavedBuffer) {
+    // arrange an unsaved buffer with two independent components, which has no stem to name an export (§11.1, §12.2)
+    std::map<std::string, std::string> files;
+    files["preview.ui"] = "component First { Column {} } component Second { Column {} }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&files](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = files.find(path.generic_string());
+        return found == files.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    // act the buffer is checked with the stem rule skipped, which the editor path does (§12.2)
+    const std::optional<CheckedFile> checked = loader.check("preview.ui", RootNameCheck::Skipped);
+    // assert no export and no sibling error, because an unsaved buffer has no build pair (§11.1)
+    EXPECT_EQ(diagnostics.count(), 0U);
+    ASSERT_TRUE(checked.has_value());
+    EXPECT_TRUE(checked->exported_component.empty());
 }
 
 TEST(UiLoader, ReportsARootWithNoComponentNamedAfterItsFile) {

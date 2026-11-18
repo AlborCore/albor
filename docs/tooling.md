@@ -92,7 +92,7 @@ header wait for the imported units and compiles every file into the same target.
 with the same stem cannot share a target, because they would write the same generated pair.
 The helper compiles the component its source is named after, so a saved file must declare that
 component (`E0805`); a same-file base is flattened into it, not a separate unit the build
-compiles. The target
+compiles, and any other component beside it is refused (`E0806`). The target
 still links one public framework target, `albor` or `albor-blend2d`; see
 [Consuming Albor](consuming.md).
 

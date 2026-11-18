@@ -300,6 +300,9 @@ namespace albor::compiler
         // the checked components in declaration order (§11.1)
         std::vector<CheckedComponent> components;
 
+        // the component the build compiles, which is empty when the file has no single export (§11.1, §14.2)
+        std::string exported_component;
+
         // the checked functions in declaration order, which a component binding may call (§11.1)
         std::vector<CheckedFunction> functions;
 

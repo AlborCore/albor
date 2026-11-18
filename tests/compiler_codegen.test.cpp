@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -10,6 +12,7 @@
 #include "albor/compiler/lexer.h"
 #include "albor/compiler/parser.h"
 #include "albor/compiler/type_checker.h"
+#include "albor/compiler/ui_loader.h"
 #include "albor/compiler/value_type.h"
 
 using namespace albor::compiler;
@@ -4022,6 +4025,33 @@ component Derived : Base {
     const GeneratedFile& header = file_named(files, "derived.h");
     EXPECT_TRUE(contains(header.content, "[[nodiscard]] int class_() const;"));
     EXPECT_TRUE(contains(header.content, "[[nodiscard]] int class__() const;"));
+}
+
+TEST(Codegen, AMultiComponentRootEmitsOnlyTheExportedPair) {
+    // arrange a saved root whose base precedes the exported component, which is the documented shape (§11.1)
+    std::map<std::string, std::string> sources;
+    sources["wide.ui"] = "component Panel { Column { @children } } component Wide : Panel { Label { text: \"Wide\"; } }";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const auto reader = [&sources](const std::filesystem::path& path) -> std::optional<std::string> {
+        const auto found = sources.find(path.generic_string());
+        return found == sources.end() ? std::nullopt : std::optional<std::string>(found->second);
+    };
+    UiImportLoader loader(catalog, diagnostics, reader);
+    const std::optional<CheckedFile> checked = loader.check("wide.ui");
+    ASSERT_TRUE(checked.has_value());
+    ASSERT_EQ(diagnostics.count(), 0U);
+    // act the generator runs over the checked file, which carries the export the loader resolved (§11.1, §14.2)
+    CodeGenerator generator(diagnostics);
+    generator.set_catalog(&catalog);
+    const std::vector<GeneratedFile> files = generator.generate(*checked);
+    // assert the exported pair is the only output, because the build declares one pair per file (§11.1, §14.2)
+    EXPECT_TRUE(has_file(files, "wide.h"));
+    EXPECT_TRUE(has_file(files, "wide.cpp"));
+    EXPECT_FALSE(has_file(files, "panel.h"));
+    EXPECT_FALSE(has_file(files, "panel.cpp"));
+    // assert the emitted facade is the derived component, because the base was flattened into it (§11.1)
+    EXPECT_TRUE(contains(file_named(files, "wide.h").content, "class Wide final"));
 }
 
 TEST(Codegen, ACommandTakesASpellingTheDeclarationsLeftFree) {

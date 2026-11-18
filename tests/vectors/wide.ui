@@ -1,0 +1,11 @@
+// the multi-component fixture, which proves the documented base-first shape builds through the shared rule (§11.1, §14.2)
+
+component Panel {
+    Column {
+        @children
+    }
+}
+
+component Wide : Panel {
+    Label { text: "Wide"; }
+}

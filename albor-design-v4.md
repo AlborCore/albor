@@ -1533,9 +1533,10 @@ unknown-element errors; the defining file's diagnostics remain the blocking prob
 A root `.ui` file exports one component too: the one its stem names in PascalCase, because that is
 the pair the build compiles (§14.2). It may declare further components beside it, but only as the
 same-file bases the exported component derives from: each is flattened into the exported facade,
-carries no separate unit the build compiles, and is not exported itself. A file that declares a base
-and its derived component is therefore a composition root and cannot be imported, because an
-imported file declares exactly one component.
+carries no separate unit the build compiles, and is not exported itself. A sibling that is neither
+the export nor its base is refused (`E0806`), because no build unit could name it. A file that
+declares a base and its derived component is therefore a composition root and cannot be imported,
+because an imported file declares exactly one component.
 
 An instance takes no children — content is what a derived component supplies alone, so children
 written on an instance are refused — and a component graph that instantiates itself is refused
@@ -1628,9 +1629,9 @@ The application defines it to return its concrete subclass. Generated code calls
 
 ### 11.3 C++ Code Generation Model (AD-03a, AD-03b Decided)
 
-- **Concrete Facades:** For each component, the compiler generates a stable public header (`main_view.h`, the component name in snake case) exposing a concrete, non-virtual facade class.
+- **Concrete Facades:** For each exported component, the compiler generates a stable public header (`main_view.h`, the component name in snake case) exposing a concrete, non-virtual facade class.
 - **Write-If-Changed:** Generated headers and implementation files are rewritten only if their content has changed, ensuring build systems (CMake / Ninja) do not trigger unnecessary recompilations.
-- **Translation Unit Batching:** By default, each component generates its own `.cpp` implementation file. For large projects with hundreds of components, the compiler supports a configurable chunking option (`--tu-chunk-size=25`) to optimize clean build times without compromising incremental edit speed.
+- **Translation Unit Batching:** By default, each exported component generates its own `.cpp` implementation file. For large projects with hundreds of components, the compiler supports a configurable chunking option (`--tu-chunk-size=25`) to optimize clean build times without compromising incremental edit speed.
 
 ---
 

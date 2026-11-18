@@ -124,24 +124,39 @@ namespace albor::compiler
                 imported_components.push_back(std::move(interface));
             }
         }
+        // the component the build compiles, which a saved file names from its stem (§11.1, §14.2)
+        std::string exported_name;
         // an imported file is one reusable component, because the build declares one generated pair for it (§11.1, §14.2)
         if (!root) {
             // a file with no component or several cannot be named by one import (§11.1)
             if (parsed->components.size() != 1)
                 file_diagnostics.add(Diagnostic::Severity::Error, SourceSpan{}, "E0804", "an imported ui file must declare exactly one component");
             // the component must be named after the file, because the build names one unit pair per file (§11.1, §14.2)
-            else if (component_header_name(parsed->components.at(0).name) != component_header_name(normalized.stem().string()))
-                file_diagnostics.add(Diagnostic::Severity::Error, parsed->components.at(0).span, "E0805", "an imported component must match its file, so '" + normalized.stem().string() + ".ui' names it in PascalCase");
+            else {
+                // the single component is the export, which is the one pair the build declares (§11.1, §14.2)
+                exported_name = parsed->components.at(0).name;
+                // a misnamed component cannot be the pair the importer includes, so it is reported (§11.1, §14.2)
+                if (component_header_name(parsed->components.at(0).name) != component_header_name(normalized.stem().string()))
+                    file_diagnostics.add(Diagnostic::Severity::Error, parsed->components.at(0).span, "E0805", "an imported component must match its file, so '" + normalized.stem().string() + ".ui' names it in PascalCase");
+            }
         }
         // a saved root exports the component its stem names, which is the pair the build compiles (§11.1, §11.3)
         else if (m_root_name_check) {
             // the stem names the exported component, which the build and the preview both address (§11.3)
             const std::string expected = component_header_name(normalized.stem().string());
             // every declaration is checked, because a base may be written before the exported component (§11.1)
-            const bool exported = std::any_of(parsed->components.begin(), parsed->components.end(), [&expected](const ComponentDeclaration& component) { return component_header_name(component.name) == expected; });
+            const auto exported = std::find_if(parsed->components.begin(), parsed->components.end(), [&expected](const ComponentDeclaration& component) { return component_header_name(component.name) == expected; });
             // a root without it would fail the build with a missing output, so it is reported here instead (§11.1, §14.2)
-            if (!exported)
+            if (exported == parsed->components.end())
                 file_diagnostics.add(Diagnostic::Severity::Error, parsed->components.empty() ? SourceSpan{} : parsed->components.front().span, "E0805", "a ui file must declare the component its stem names, so '" + normalized.stem().string() + ".ui' names it in PascalCase");
+            else {
+                // the export is the pair codegen emits, which the checked file carries (§11.1, §14.2)
+                exported_name = exported->name;
+                // only the export's base may share the file, because no unit compiles the rest (§11.1)
+                for (const ComponentDeclaration& component : parsed->components)
+                    if (&component != &*exported && component.name != exported->base)
+                        file_diagnostics.add(Diagnostic::Severity::Error, component.span, "E0806", "'" + component.name + "' is neither the exported component nor its base, so it needs its own ui file");
+            }
         }
         // the checker resolves the file against its own declarations and the imported interfaces (§11.1)
         TypeChecker checker(m_catalog, file_diagnostics);
@@ -151,6 +166,8 @@ namespace albor::compiler
         CheckedFile checked = checker.check(*parsed);
         // the interfaces travel with the checked file, because codegen includes their headers (§11.1)
         checked.imported_components = imported_components;
+        // the export travels too, because codegen emits exactly that component's pair (§11.1, §14.2)
+        checked.exported_component = exported_name;
         // the parse tree is kept before the result is cached, because the checked expressions alias it (§11.1)
         m_parsed.push_back(std::move(parsed));
         // the file's problems join the run with its path, so an imported diagnostic names its own source (§11.1)
