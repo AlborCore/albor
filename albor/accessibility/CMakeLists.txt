@@ -16,8 +16,15 @@ if(WIN32)
     file(GLOB_RECURSE WIN32_SOURCES "./*.win32.c++")
 endif()
 
+# the linux side reports that it has no bridge until the at-spi adapter lands, and the source carries
+# the linux infix so that adapter replaces this one rather than joining it (§10.2, #42, AD-16)
+set(LINUX_SOURCES "")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    file(GLOB_RECURSE LINUX_SOURCES "./*.linux.c++")
+endif()
+
 # create the static library from the gathered sources, which is declared once whichever platform is built (§3.2)
-add_library(albor-accessibility STATIC ${CPP_SOURCES} ${MACOS_SOURCES} ${WIN32_SOURCES})
+add_library(albor-accessibility STATIC ${CPP_SOURCES} ${MACOS_SOURCES} ${WIN32_SOURCES} ${LINUX_SOURCES})
 
 # the bridge implements the rendering hal and names albor types only (§3.5, AD-05)
 target_include_directories(albor-accessibility PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
