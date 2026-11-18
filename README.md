@@ -9,8 +9,9 @@ rendering (schematics, CAD views, waveforms, plots), real multi-window behavior 
 modality, and a two-stage render pipeline that never blocks the UI thread on drawing.
 
 > **Status: under heavy development.** macOS (AppKit + Metal) and Windows
-> (Win32 + Direct3D) are implemented and built in CI; the Linux (Wayland/X11/Vulkan)
-> port follows. `render-albor`, the in-repo GPU 2D renderer, draws shapes, retained
+> (Win32 + Direct3D) are implemented and built in CI; Linux Wayland with Blend2D is
+> implemented, with its CI temporarily disabled until a Linux host is available; X11
+> and Vulkan follow. `render-albor`, the in-repo GPU 2D renderer, draws shapes, retained
 > resources, outlined text, shadows, composited layers and all Porter-Duff composition
 > modes, and is gated against a software reference by a parity suite. The architecture
 > is settled and specified in [`albor-design-v4.md`](albor-design-v4.md).
@@ -198,7 +199,7 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | inspector, LSP, preview host, automation core, MCP adapter | done (Dev/Test only, phase 5) |
 | accessibility: macOS NSAccessibility and Windows UI Automation bridges | done; AT-SPI adapter planned (§10.2) |
 | Win32 platform: window, clipboard, event loop, text encoding, named-pipe automation | implemented and built in CI; Direct3D backend ships (§5.3) |
-| Wayland / X11 / Vulkan platform and renderer | planned (phase 1 follow-up) |
+| Wayland platform and Blend2D renderer | implemented; CI temporarily disabled until a Linux host is available. X11 and Vulkan planned. |
 | out-of-process dev service that delivers definitions to the extension | planned (§12.1, AD-12) |
 
 ## Building

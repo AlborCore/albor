@@ -163,13 +163,15 @@ jobs:
               choco install ccache --no-progress -y
           - name: linux-release
             os: ubuntu-latest
-            enable: true
+            # disabled until a Linux host runs the full vcpkg build and platform suite (docs/linux.md)
+            enable: false
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev wayland-protocols libxkbcommon-dev libdecor-0-dev libdecor-0-plugin-1-cairo weston pkg-config libgl1-mesa-dri libegl1
           - name: linux-debug
             os: ubuntu-latest
-            enable: true
+            # disabled until a Linux host runs the full vcpkg build and platform suite (docs/linux.md)
+            enable: false
             preset: debug
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev wayland-protocols libxkbcommon-dev libdecor-0-dev libdecor-0-plugin-1-cairo weston pkg-config libgl1-mesa-dri libegl1

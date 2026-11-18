@@ -10,7 +10,7 @@ the architecture specification `albor-design-v4.md`.
 | --- | --- |
 | macOS 13.3+ (AppKit, Metal), Intel and Apple silicon | implemented — the primary platform |
 | Windows 10/11 (Win32, Direct3D) | implemented and built in CI |
-| Linux Wayland (Blend2D CPU) | implemented — X11 is planned, Vulkan is #110 |
+| Linux Wayland (Blend2D CPU) | implemented — CI temporarily disabled until a Linux host is available; X11 is planned, Vulkan is #110 |
 | headless | implemented — the test and CI surface |
 
 An application names a window and a component. A normal application links `albor`
@@ -27,7 +27,7 @@ are the framework's choice. The target map and advanced composition are on
 | Window modality and parent windows | Full | the framework gate enforces it before dispatch; Wayland has no native dialog role |
 | Clipboard | Partial | `wl_data_device` text selection; a headless compositor without a seat has no clipboard |
 | IME and text composition | Partial | `text-input-v3`; candidate anchor; surrounding text is not sent yet |
-| DPI and scale factor | Partial | integer output scale, covered at scale 2 in CI; fractional scaling is #236 |
+| DPI and scale factor | Partial | integer output scale, covered at scale 2 by the local container; fractional scaling is #236 |
 | Event-loop frame pacing | Full | timerfd pacing |
 | Input normalization and focus | Partial | xkbcommon key and modifier mapping; no scripted real-device suite yet |
 | System appearance | Not yet | XDG portal appearance is #234 |
@@ -37,9 +37,9 @@ are the framework's choice. The target map and advanced composition are on
 | Accessibility | Not yet | AT-SPI is #42 |
 
 The adapter builds only where the Wayland, xkbcommon, libdecor and wayland-protocols
-development packages exist. The CI jobs install them and run the platform suite under a
-headless Weston compositor; [Linux](linux.md) records the container workflow and the
-current limits.
+development packages exist. The Linux CI jobs are temporarily disabled until a Linux host
+is available; the container workflow installs the packages and runs the platform suite under
+a headless Weston compositor. [Linux](linux.md) records the workflow and the current limits.
 
 ## Windows support
 

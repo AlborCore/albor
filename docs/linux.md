@@ -97,11 +97,12 @@ kill "$weston_pid"
 The suite covers window creation, show/hide/resize, metrics, a parented popup, xkb key and
 modifier mapping, frame pacing, the clipboard surface, and a real Blend2D frame presented
 through `wl_shm`, including a present from a render thread while the UI thread resizes the
-window. The suite runs twice in CI, once at the default scale and once under a Weston
-authoritative output scale of 2, so the integer scale path is exercised. A headless
-compositor has no real input devices or decorations, so a compositor-driven popup dismissal
-and the decorated desktop path still need a real Wayland session; the suite does not claim
-desktop parity.
+window. The suite can run twice, once at the default scale and once under a Weston
+authoritative output scale of 2, so the integer scale path is exercised. The Linux CI jobs
+are temporarily disabled; the container workflow above is the local route until a Linux
+host is available. A headless compositor has no real input devices or decorations, so a
+compositor-driven popup dismissal and the decorated desktop path still need a real Wayland
+session; the suite does not claim desktop parity.
 
 ## A display on a remote X11 host
 
@@ -130,6 +131,8 @@ substitute: it lets X11 applications run on a Wayland host, which is the opposit
 
 ## CI
 
-The Linux debug and release jobs install the Wayland dependencies, libdecor and Weston, and
-both start headless Weston and run `albor-linux-tests` after `albor-tests`. A second run
-under a scale-2 Weston asserts the integer scale path.
+The Linux debug and release jobs are **temporarily disabled** in `.github/workflows/build.yml`
+until a Linux host can run the full vcpkg build and the platform suite. Re-enable the two
+matrix entries when the host is ready. The jobs install the Wayland dependencies, libdecor
+and Weston, run `albor-linux-tests` after `albor-tests`, and add a second run under a
+scale-2 Weston.
