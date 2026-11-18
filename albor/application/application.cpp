@@ -689,6 +689,20 @@ namespace albor
             (void)m_tasks.post([this] { drain_deferred_stages(); });
     }
 
+    void Application::clear_stage_hover(WindowHandle handle) {
+        // a stale handle or a window without a stage has no hover to end (§5.2, §8.3)
+        WindowStage* routed_to = stage(handle);
+        if (routed_to == nullptr)
+            return;
+        // the exits dispatch application code, so a teardown it asks for waits for the walk to unwind (§4.2)
+        m_dispatch_depth++;
+        routed_to->clear_hover();
+        m_dispatch_depth--;
+        // a teardown a handler requested is posted, because the window that raised the exit is still on its stack (§4.2)
+        if (m_dispatch_depth == 0 && !m_deferred.empty())
+            (void)m_tasks.post([this] { drain_deferred_stages(); });
+    }
+
     bool Application::deliver_input(WindowHandle handle, Event& event) {
         // a window an open modal constrains receives no input, whoever delivers it (§5.1, AD-08)
         if (input_blocked(handle))
@@ -762,7 +776,17 @@ namespace albor
                 owner_stage->set_window_active(true);
         });
         // a window that leaves the screen cancels the drag before it hides (§5.1, §8.3)
-        window.set_hidden_handler([this, handle] { cancel_stage_capture(handle, PointerCancelReason::WindowHidden); });
+        window.set_hidden_handler([this, handle] {
+            // the drag ends first, because the native surface is about to stop delivering its release (§8.3)
+            cancel_stage_capture(handle, PointerCancelReason::WindowHidden);
+            // a hidden window cannot be under the pointer, so the hover it kept ends with it (§8.3)
+            clear_stage_hover(handle);
+        });
+        // a pointer that leaves the window ends its hover, because no move can arrive from outside it (§5.3, §8.3)
+        window.set_pointer_exited_handler([this, handle] {
+            // the hover ends even while a modal constrains the window, because a stale hover is a paint (§5.1)
+            clear_stage_hover(handle);
+        });
         // a normalized input event reaches the application input handler, where routing belongs (§8.3)
         window.set_input_handler([this, handle](const Event& event) {
             // a window an open modal constrains receives no input at all, which is what modality means (§5.1, AD-08)
@@ -803,6 +827,8 @@ namespace albor
             if (keep_on_native_close) {
                 // the native surface left the screen, so its input cancels the drag it cannot release (§8.3)
                 cancel_stage_capture(handle, PointerCancelReason::WindowHidden);
+                // the reopened surface starts with no hover, because the stage it kept kept the old one (§5.1, §8.3)
+                clear_stage_hover(handle);
                 if (on_native_closed)
                     on_native_closed();
                 return;

@@ -54,6 +54,9 @@ namespace albor
         // replay the exits after the tree changed under the pointer, which an application calls once it mutated it (§8.3)
         void refresh_hover();
 
+        // replay a leave to every hovered node and empty the chain, which a window edge and a tree change both need (§8.3)
+        void clear_hover();
+
         // replay the exits for a subtree that is leaving the tree, which the tree reports before it goes (§8.3)
         void release_subtree(UiNode* node);
 
@@ -72,9 +75,6 @@ namespace albor
 
         // refresh the hover chain against the point, which synthesizes the enter and leave transitions (§8.3)
         void update_hover(Point point);
-
-        // replay a leave to every hovered node, which a tree change under the pointer needs (§8.3)
-        void clear_hover();
 
         // hand out the innermost node of a chain, or null when the chain is empty (§8.3)
         [[nodiscard]] static UiNode* deepest_of(const std::vector<UiNode*>& chain);

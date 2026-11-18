@@ -302,6 +302,9 @@ namespace albor
         // cancel a stage capture under the dispatch bracket, because its handler may tear a window down (§4.2, §8.3)
         void cancel_stage_capture(WindowHandle handle, PointerCancelReason reason);
 
+        // end a stage hover under the dispatch bracket, because a leave handler may tear a window down (§4.2, §8.3)
+        void clear_stage_hover(WindowHandle handle);
+
         // apply the teardowns that arrived while a frame pass was walking the stages (§4.2)
         void drain_deferred_stages();
 

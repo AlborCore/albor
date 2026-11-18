@@ -29,6 +29,9 @@ namespace
         // how many pointer leave transitions this node was told (§8.3)
         std::size_t leaves = 0;
 
+        // the log a leave appends this node to, which proves the deepest node is told first (§8.3)
+        std::vector<const RecordingNode*>* leave_log = nullptr;
+
         // how many cancel events this node was told, which a cancelled drag receives once (§8.3)
         std::size_t cancels = 0;
 
@@ -100,6 +103,9 @@ namespace
             }
             if (event.kind == EventKind::PointerLeave) {
                 leaves++;
+                // the node is recorded when a test asked for the order, because the chain order is the contract (§8.3)
+                if (leave_log != nullptr)
+                    leave_log->push_back(this);
                 return;
             }
             // a cancel and a release are counted apart, because that difference is the contract (§8.3)
@@ -2167,6 +2173,49 @@ TEST(HoverChecks, ARefreshOnACleanControllerDoesNothing) {
     EXPECT_EQ(controller.hovered(), nullptr);
     EXPECT_EQ(root.enters, 0u);
     EXPECT_EQ(root.leaves, 0u);
+}
+
+TEST(HoverChecks, ClearingTheHoverTellsEveryHoveredNode) {
+    // arrange a hovered child inside a hovered root, which is the chain a window edge ends (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    Event inside{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(inside);
+    ASSERT_EQ(controller.hovered(), child_ptr);
+    // the leave order is recorded, because the deepest node must be told before its parent (§8.3)
+    std::vector<const RecordingNode*> order;
+    root.leave_log = &order;
+    child_ptr->leave_log = &order;
+    // act the pointer leaves the window, which no further move can report (§8.3)
+    controller.clear_hover();
+    // assert the inner node was told before the outer one, and nothing stays hovered (§8.3)
+    EXPECT_EQ(child_ptr->leaves, 1u);
+    EXPECT_EQ(root.leaves, 1u);
+    ASSERT_EQ(order.size(), 2u);
+    EXPECT_EQ(order.at(0), child_ptr);
+    EXPECT_EQ(order.at(1), &root);
+    EXPECT_EQ(controller.hovered(), nullptr);
+}
+
+TEST(HoverChecks, ClearingACleanHoverTellsNothing) {
+    // arrange a controller that never saw the pointer, which is a window the pointer never entered (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    // act the window reports an exit it may always report, because the pointer can leave without entering first (§8.3)
+    controller.clear_hover();
+    // assert an empty chain replays nothing and invents no transition (§8.3)
+    EXPECT_EQ(root.enters, 0u);
+    EXPECT_EQ(root.leaves, 0u);
+    EXPECT_EQ(controller.hovered(), nullptr);
 }
 
 TEST(HoverChecks, RemovingAHoveredSubtreeReplaysItsExitBeforeItDies) {

@@ -1,3 +1,4 @@
+#include <functional>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -172,6 +173,46 @@ namespace
 
         // the reason the last cancel named, which the test asserts (§8.3)
         albor::PointerCancelReason& m_reason;
+    };
+
+    // the leaf that runs a callback when the pointer leaves it, which is the re-entrancy under test (§8.3)
+    class LeaveRecordingLeaf final : public albor::UiNode
+    {
+    public:
+        // build the leaf over the callback a leave runs and the counter the test reads back (§8.3)
+        LeaveRecordingLeaf(std::function<void()> on_leave, int& leaves) :
+            m_on_leave(std::move(on_leave)), m_leaves(leaves) {}
+
+        void measure(const albor::SizeConstraints& constraints, albor::Size& out_size) override {
+            // the leaf fills the offer, because the extent is not what this suite is about (§8.2)
+            out_size = constraints.constrain(albor::Size{50.0f, 50.0f});
+            m_measured_size = out_size;
+        }
+
+        [[nodiscard]] bool hit_test(albor::Point) const override {
+            // every point lands on the leaf, which is the whole hovered surface (§8.3)
+            return true;
+        }
+
+        void dispatch_event(albor::Event& event) override {
+            // only the leave runs the callback, because that is the edge under test (§8.3)
+            if (event.kind != albor::EventKind::PointerLeave)
+                return;
+            // the leave is counted, which proves the chain emptied before the dispatch (§8.3)
+            m_leaves++;
+            // a second leave is counted but runs nothing, which bounds a re-entrant clear instead of recursing (§4.2)
+            if (m_leaves > 1)
+                return;
+            event.handled = true;
+            m_on_leave();
+        }
+
+    private:
+        // the callback a leave runs, which hides or destroys the window the leaf sits in (§5.1)
+        std::function<void()> m_on_leave;
+
+        // how many leaves reached the leaf, which a re-entrant clear would raise twice (§8.3)
+        int& m_leaves;
     };
 
     // the leaf that schedules one repeating animation the first time it is measured (§7.3)
@@ -868,6 +909,170 @@ TEST(MainWindow, AWindowAddedWhileTheLoopRunsJoinsTheRun) {
     // act close the last one, which is what ends the run (§4.1)
     EXPECT_TRUE(application.destroy_window(second_handle));
     EXPECT_EQ(application.window_count(), 0u);
+}
+
+TEST(MainWindow, APointerExitEndsTheHoverTheWindowCanNoLongerFollow) {
+    // arrange a main window whose tree owns one button, which is the control a hover names (§8.1, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::Button* hovered = nullptr;
+    albor::RootBuilder form = [&hovered](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns the button, which is the only node under the pointer (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Hover");
+        // the pointer is kept, because the assertion reads the hover the move sets (§8.3)
+        hovered = button.get();
+        column->add_child(std::move(button));
+        return column;
+    };
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, form);
+    ASSERT_TRUE(handle.valid());
+    // the frame arranges the tree, which is what gives the button bounds to hover (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* stage = application.stage(handle);
+    ASSERT_NE(stage, nullptr);
+    ASSERT_NE(hovered, nullptr);
+    // act move the pointer onto the button, which synthesizes its enter (§8.3)
+    albor::Event move{.kind = albor::EventKind::PointerMove, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(move);
+    // assert the button holds the hover, so the exit below has a stale visual to end (§8.3)
+    ASSERT_TRUE(hovered->hovered());
+    // act the pointer leaves the window, which the platform reports because no move follows it (§5.3, §8.3)
+    application.window(handle)->on_platform_pointer_exited();
+    // assert the hover ended with the pointer, which is what a status readout was missing (§8.3)
+    EXPECT_FALSE(hovered->hovered());
+    // cleanup the window, which owns the tree the hover named (§5.1)
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(MainWindow, AHiddenWindowEndsTheHoverItCanNoLongerFollow) {
+    // arrange a main window whose button is hovered while the window is still on screen (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::Button* hovered = nullptr;
+    albor::RootBuilder form = [&hovered](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns the button, which is the only node under the pointer (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Hover");
+        // the pointer is kept, because the assertion reads the hover the move sets (§8.3)
+        hovered = button.get();
+        column->add_child(std::move(button));
+        return column;
+    };
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, form);
+    ASSERT_TRUE(handle.valid());
+    // the frame arranges the tree, which is what gives the button bounds to hover (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* stage = application.stage(handle);
+    ASSERT_NE(stage, nullptr);
+    ASSERT_NE(hovered, nullptr);
+    // act move the pointer onto the button, which synthesizes its enter (§8.3)
+    albor::Event move{.kind = albor::EventKind::PointerMove, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(move);
+    // assert the button holds the hover, so the hide below has a stale visual to end (§8.3)
+    ASSERT_TRUE(hovered->hovered());
+    // act hide the window, which no pointer can be over afterward (§5.1, §8.3)
+    application.window(handle)->hide();
+    // assert the hover ended with the surface, which keeps a shown window from painting a stale one (§8.3)
+    EXPECT_FALSE(hovered->hovered());
+    // cleanup the window, which owns the tree the hover named (§5.1)
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(MainWindow, ALeaveHandlerThatHidesItsWindowSettlesOnce) {
+    // arrange a window whose only node hides the window when the pointer leaves it (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle handle;
+    int leaves = 0;
+    albor::RootBuilder form = [&application, &handle, &leaves](albor::BindingEngine&, albor::TextEngine&) {
+        // the leaf hides the surface its own leave names, which is the hover popover idiom (§5.1, §8.3)
+        return std::make_unique<LeaveRecordingLeaf>([&application, &handle] { application.window(handle)->hide(); }, leaves);
+    };
+    handle = application.create_window(albor::WindowOptions{}, form);
+    ASSERT_TRUE(handle.valid());
+    // the frame arranges the tree, which is what gives the leaf bounds to hover (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* stage = application.stage(handle);
+    ASSERT_NE(stage, nullptr);
+    // act hover the leaf, then leave the window, which runs the hide from inside the exit (§8.3)
+    albor::Event move{.kind = albor::EventKind::PointerMove, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(move);
+    application.window(handle)->on_platform_pointer_exited();
+    // assert the hide did not re-enter the clear, because the chain emptied before the leave ran (§8.3)
+    EXPECT_EQ(leaves, 1);
+    EXPECT_FALSE(application.window(handle)->visible());
+    // cleanup the window, which the hide left alive (§5.1)
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(MainWindow, ALeaveHandlerThatDestroysItsWindowWaitsForTheWalk) {
+    // arrange a window whose only node destroys the window when the pointer leaves it (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowHandle handle;
+    int leaves = 0;
+    albor::RootBuilder form = [&application, &handle, &leaves](albor::BindingEngine&, albor::TextEngine&) {
+        // the leaf destroys the surface its own leave names, which a hover preview does when it commits (§5.1, §8.3)
+        return std::make_unique<LeaveRecordingLeaf>([&application, &handle] { (void)application.destroy_window(handle); }, leaves);
+    };
+    handle = application.create_window(albor::WindowOptions{}, form);
+    ASSERT_TRUE(handle.valid());
+    // the frame arranges the tree, which is what gives the leaf bounds to hover (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* stage = application.stage(handle);
+    ASSERT_NE(stage, nullptr);
+    // act hover the leaf, then leave the window, which asks for the teardown from inside the exit (§8.3)
+    albor::Event move{.kind = albor::EventKind::PointerMove, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(move);
+    application.window(handle)->on_platform_pointer_exited();
+    // assert the teardown is recorded rather than run, because the window is still on the stack (§4.2)
+    EXPECT_EQ(leaves, 1);
+    EXPECT_NE(application.window(handle), nullptr);
+    // act pump, which applies the teardown the exit deferred (§4.2)
+    application.pump();
+    // assert the window and the tree it owned are gone (§5.2)
+    EXPECT_EQ(application.window(handle), nullptr);
+    EXPECT_EQ(application.window_count(), 0U);
+}
+
+TEST(MainWindow, ANativelyDismissedPopupReopensWithNoHover) {
+    // arrange a main window and a popup whose button the pointer hovers (§5.1, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle owner = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(owner.valid());
+    albor::Button* hovered = nullptr;
+    albor::RootBuilder form = [&hovered](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns the button, which is the only node under the pointer (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Pick");
+        // the pointer is kept, because the assertion reads the hover the move sets (§8.3)
+        hovered = button.get();
+        column->add_child(std::move(button));
+        return column;
+    };
+    const albor::WindowHandle popup = application.open_popup(*application.root(owner), albor::Rect::from_origin_size(albor::Point{10.0f, 20.0f}, albor::Size{120.0f, 30.0f}), albor::Size{240.0f, 120.0f}, std::move(form), albor::Color::rgb(0.1f, 0.1f, 0.1f), [] {});
+    ASSERT_TRUE(popup.valid());
+    // the frame arranges the tree, which is what gives the button bounds to hover (§8.2, §8.3)
+    application.pump();
+    albor::WindowStage* stage = application.stage(popup);
+    ASSERT_NE(stage, nullptr);
+    ASSERT_NE(hovered, nullptr);
+    // act hover the popup's button, which a dismissal must not leave painted (§8.3)
+    albor::Event move{.kind = albor::EventKind::PointerMove, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(move);
+    ASSERT_TRUE(hovered->hovered());
+    // act dismiss the surface natively, which is the path a compositor and the system take (§5.1, §5.2)
+    application.window(popup)->on_platform_closed();
+    // assert the dismissal ended the hover while the stage the reopen needs survived (§5.1, §8.3)
+    EXPECT_FALSE(hovered->hovered());
+    application.show_popup(popup);
+    // assert the reopened surface paints no hover the pointer never came back to (§8.3)
+    EXPECT_FALSE(hovered->hovered());
+    // cleanup the popup and its owner (§5.1)
+    application.destroy_popup(popup);
+    EXPECT_TRUE(application.destroy_window(owner));
 }
 
 TEST(MainWindow, APopupPressThatClosesTheSurfaceDoesNotKeepTheNextPress) {

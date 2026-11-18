@@ -41,7 +41,9 @@ from 2027-04-17, and a floor package built there would be rejected by the symbol
 - `xdg-activation-v1` window activation, with a no-op fallback where the compositor does not
   offer it.
 - `text-input-v3` IME with the candidate anchor; surrounding text is not sent yet.
-- `wl_data_device` text clipboard and xkbcommon key and modifier normalization.
+- `wl_data_device` text clipboard and xkbcommon key and modifier normalization. Pointer motion
+  reaches the app through `wl_pointer.motion`, and the departure through `wl_pointer.leave`,
+  which ends the hover the pointer can no longer follow.
 - Integer output scale and timerfd frame pacing. The Wayland surface v6 scale/transform and
   pointer relative-direction listeners are compiled only on a Wayland 1.22+ client; the
   pointer high-resolution wheel event is compiled on 1.21+.

@@ -65,6 +65,9 @@ namespace
         // override: count the focus loss (§8.3)
         void on_platform_focus_lost() override { focus_losses++; }
 
+        // override: ignore the pointer exit, which only a compositor pointer raises (§8.3)
+        void on_platform_pointer_exited() override {}
+
         // override: count the appearance change (§8.4)
         void on_platform_appearance_changed(const SystemAppearance&) override { appearance_changes++; }
     };

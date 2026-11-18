@@ -35,6 +35,7 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Resize, DPI/scale changes | AppKit notifications | `WM_SIZE`, `WM_DPICHANGED`, tested | Parity |
 | Window size contract | `setContentSize`, metrics read the content view | `AdjustWindowRectEx`, metrics read the client rect | Parity |
 | Keyboard/mouse/wheel | Present, all four buttons, Control click is secondary | Present, all four buttons | Parity |
+| Button-less motion and pointer exit | `NSTrackingArea` delivers `mouseMoved:` and `mouseExited:`; the exit ends the hover | `WM_MOUSEMOVE` plus `TrackMouseEvent`/`WM_MOUSELEAVE`; the exit ends the hover | Parity |
 | Context-menu request | `ContextMenu` from a secondary press, menu key and `Shift+F10`, tested | `ContextMenu` from a secondary press, dedicated menu key and `Shift+F10`, tested | Parity, with Control click as the macOS-only gesture |
 | IME/text composition | `NSTextInputClient` | `WM_IME_*`, candidate anchor/selection, tested | Parity |
 | Clipboard | Pasteboard implementation | Win32 clipboard implementation, tested | Parity |
@@ -76,6 +77,16 @@ Losing key status now reconciles the framework capture on both platforms. AppKit
 `PointerCancelReason::WindowHidden` before the native surface leaves. The mirrored adapter suites carry the new
 notification test, and the application tests prove a live drag receives one `PointerCancel` and that the next press
 starts a fresh drag.
+
+Plain pointer motion and the departure now reach the framework on both platforms. `AlborContentView`
+installs an `NSTrackingArea` covering moves, entries and exits, because AppKit delivers no button-less motion
+without one, and Win32 arms `WM_MOUSELEAVE` with `TrackMouseEvent` from the first move. Both raise
+`PlatformWindowListener::on_platform_pointer_exited`, which `Application` routes to the stage as
+`InputController::clear_hover`, so a hover ends when the pointer leaves the content instead of staying lit. The
+motion and exit cases are mirrored in `MacosWindowInput` and `Win32WindowInput`, and the AppKit suite also asserts
+the tracking-area options. Win32 has no such assertion: `TrackMouseEvent` exposes no state to query, so the suite
+proves the `WM_MOUSELEAVE` handling while the arming itself rests on the platform call, and a test that moved the
+physical cursor would not be deterministic.
 
 The same key-status pair now drives the focus cue. AppKit observes `NSWindowDidBecomeKeyNotification` beside the
 resign observer, and Win32 handles `WM_SETFOCUS` beside `WM_ACTIVATE`; both raise
