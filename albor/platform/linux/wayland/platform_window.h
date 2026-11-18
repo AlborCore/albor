@@ -12,6 +12,22 @@
 
 namespace albor
 {
+    // the decoration a wayland window ends up with, which the strategy selects per compositor (§5.1, §5.3)
+    enum class WaylandDecorationMode
+    {
+        // the compositor draws no chrome and the client has no fallback
+        None,
+
+        // the compositor draws the native chrome through xdg-decoration
+        ServerSide,
+
+        // libdecor draws the client-side frame, which is what GNOME needs
+        ClientSide,
+    };
+
+    // choose the decoration for one toplevel, preferring the compositor's native chrome over libdecor (§5.3, AD-16)
+    [[nodiscard]] WaylandDecorationMode choose_decoration(bool server_side_available, bool client_side_available);
+
     // the opaque native state of one wayland window, defined only in the linux translation unit (§3.5)
     struct WaylandWindowState; // the xdg shell window that reports resize, close and scale changes (§5.3, AD-16, AD-22)
     class WaylandPlatformWindow final : public PlatformWindow
@@ -54,6 +70,12 @@ namespace albor
 
         // override: hand out the parent window state a popup attaches to (§5.1)
         [[nodiscard]] NativeWindowHandle native_window_handle() const override;
+
+        // report the decoration the window ended up with, which a test asserts on (§5.3)
+        [[nodiscard]] WaylandDecorationMode decoration_mode() const;
+
+        // report whether the window carries the libdecor client-side frame, which the decoration test asserts (§5.3)
+        [[nodiscard]] bool uses_client_side_frame() const;
 
         // override: report the portable dark scheme, which the portal-based appearance is tracked in #234 (§5.3, §8.4)
         [[nodiscard]] SystemAppearance system_appearance() const override;

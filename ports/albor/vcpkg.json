@@ -4,7 +4,7 @@
   "description": "Cross-platform declarative UI framework for C++",
   "homepage": "https://github.com/AlborCore/albor",
   "license": "Apache-2.0",
-  "supports": "((osx | windows) & !mingw & !uwp)",
+  "supports": "((osx | windows | linux) & !mingw & !uwp)",
   "dependencies": [
     {
       "name": "vcpkg-cmake",
@@ -45,6 +45,15 @@
       ]
     },
     {
+      "name": "blend2d",
+      "version>=": "2025-03-08#1",
+      "platform": "linux",
+      "default-features": false,
+      "features": [
+        "jit"
+      ]
+    },
+    {
       "name": "bzip2",
       "default-features": false
     },
@@ -69,6 +78,7 @@
         {
           "name": "blend2d",
           "version>=": "2025-03-08#1",
+          "platform": "!linux",
           "default-features": false,
           "features": [
             "jit"

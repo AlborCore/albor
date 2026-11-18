@@ -1,5 +1,8 @@
 # the wayland xdg adapter with its timer pacing (§3.2, AD-16, AD-22)
 
+# the build fact starts off, so a reconfigure without the development packages turns the umbrella off rather than keeping a stale success (§5.3)
+set(ALBOR_WAYLAND_FOUND OFF CACHE INTERNAL "the wayland adapter was configured" FORCE)
+
 # the adapter is written directly against the wayland client libraries, so it only builds on linux (AD-16)
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(STATUS "albor-platform-wayland: skipped, the wayland adapter only builds on linux")
@@ -20,10 +23,24 @@ if(NOT WAYLAND_CLIENT_PC_FOUND OR NOT XKBCOMMON_PC_FOUND)
     return()
 endif()
 
-# libdecor draws the client side chrome where the compositor draws none, and the adapter falls back to xdg-decoration when absent (§5.3)
-pkg_check_modules(LIBDECOR_PC IMPORTED_TARGET libdecor-0)
-if(NOT LIBDECOR_PC_FOUND)
-    message(STATUS "albor-platform-wayland: libdecor is not present, the xdg-decoration fallback is used")
+# the private libdecor 0.2.2 and its cairo frame draw the client side chrome where the compositor draws none (§5.3, AD-16)
+# the frame needs pango/cairo, wayland-cursor and dbus, which a desktop host already has at runtime; a host without them keeps the xdg-decoration fallback
+pkg_check_modules(PANGOCAIRO_PC IMPORTED_TARGET pangocairo)
+pkg_check_modules(WAYLAND_CURSOR_PC IMPORTED_TARGET wayland-cursor)
+pkg_check_modules(DBUS_PC IMPORTED_TARGET dbus-1)
+if(PANGOCAIRO_PC_FOUND AND WAYLAND_CURSOR_PC_FOUND AND DBUS_PC_FOUND)
+    set(ALBOR_LIBDECOR_AVAILABLE ON)
+    set(LIBDECOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/libdecor")
+    set(LIBDECOR_SOURCES
+        "${LIBDECOR_DIR}/src/libdecor.c"
+        "${LIBDECOR_DIR}/src/libdecor-fallback.c"
+        "${LIBDECOR_DIR}/src/cursor-settings.c"
+        "${LIBDECOR_DIR}/src/os-compatibility.c"
+        "${LIBDECOR_DIR}/src/plugins/cairo/libdecor-cairo.c"
+        "${LIBDECOR_DIR}/src/plugins/common/libdecor-cairo-blur.c")
+else()
+    set(ALBOR_LIBDECOR_AVAILABLE OFF)
+    message(STATUS "albor-platform-wayland: libdecor's cairo dependencies are not present, the xdg-decoration fallback is used")
 endif()
 
 # the scanner generates the protocol bindings from the xml definitions, which the adapter builds against (§5.3)
@@ -33,25 +50,14 @@ if(NOT WAYLAND_SCANNER_BIN)
     return()
 endif()
 
-# the protocol xml definitions ship in the wayland-protocols package, which carries xdg-shell, xdg-decoration, text-input and xdg-activation (§5.3)
-pkg_get_variable(WAYLAND_PROTOCOLS_DATA_DIR wayland-protocols pkgdatadir)
-set(XDG_SHELL_XML "")
-foreach(CANDIDATE_DIR "${WAYLAND_PROTOCOLS_DATA_DIR}" "/usr/share/wayland-protocols" "/usr/share/qt6/wayland/protocols")
-    if(XDG_SHELL_XML STREQUAL "" AND EXISTS "${CANDIDATE_DIR}/stable/xdg-shell/xdg-shell.xml")
-        set(XDG_SHELL_XML "${CANDIDATE_DIR}/stable/xdg-shell/xdg-shell.xml")
-        set(XDG_DECORATION_XML "${CANDIDATE_DIR}/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml")
-        set(TEXT_INPUT_XML "${CANDIDATE_DIR}/unstable/text-input/text-input-unstable-v3.xml")
-        # xdg-activation is stable upstream, while older wayland-protocols ships it under staging
-        if(EXISTS "${CANDIDATE_DIR}/stable/xdg-activation/xdg-activation-v1.xml")
-            set(XDG_ACTIVATION_XML "${CANDIDATE_DIR}/stable/xdg-activation/xdg-activation-v1.xml")
-        else()
-            set(XDG_ACTIVATION_XML "${CANDIDATE_DIR}/staging/xdg-activation/xdg-activation-v1.xml")
-        endif()
-    endif()
-endforeach()
-if(NOT XDG_SHELL_XML OR NOT EXISTS "${XDG_DECORATION_XML}" OR NOT EXISTS "${TEXT_INPUT_XML}" OR NOT EXISTS "${XDG_ACTIVATION_XML}")
-    message(STATUS "albor-platform-wayland: skipped, the wayland protocol definitions are not present")
-    return()
+# the protocol xml definitions are vendored at wayland-protocols 1.37, so the distro package cannot change the generated API (§5.3, AD-16)
+set(PROTOCOLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/protocols")
+set(XDG_SHELL_XML "${PROTOCOLS_DIR}/xdg-shell.xml")
+set(XDG_DECORATION_XML "${PROTOCOLS_DIR}/xdg-decoration-unstable-v1.xml")
+set(TEXT_INPUT_XML "${PROTOCOLS_DIR}/text-input-unstable-v3.xml")
+set(XDG_ACTIVATION_XML "${PROTOCOLS_DIR}/xdg-activation-v1.xml")
+if(NOT EXISTS "${XDG_SHELL_XML}" OR NOT EXISTS "${XDG_DECORATION_XML}" OR NOT EXISTS "${TEXT_INPUT_XML}" OR NOT EXISTS "${XDG_ACTIVATION_XML}")
+    message(FATAL_ERROR "albor-platform-wayland: the vendored protocol definitions are missing")
 endif()
 
 # the protocol bindings are generated once into the build tree, which the sources include through the output directory (§14.2)
@@ -88,27 +94,46 @@ file(GLOB_RECURSE LINUX_SOURCES "./*.linux.c++")
 # gather the portable sources, which the adapter carries for the self install that linking selects (§5.3, AD-16)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
-# create the static library from the gathered sources and the generated bindings
-add_library(albor-platform-wayland STATIC ${LINUX_SOURCES} ${CPP_SOURCES} "${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}")
+# create the static library from the gathered sources, the private libdecor and the generated bindings
+add_library(albor-platform-wayland STATIC ${LINUX_SOURCES} ${CPP_SOURCES} ${LIBDECOR_SOURCES} "${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}")
 
 # the adapter implements the framework's platform interfaces, which stay free of wayland types (§3.5, AD-05)
 target_include_directories(albor-platform-wayland PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<BUILD_INTERFACE:${PROTOCOL_OUTPUT_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-platform-wayland PUBLIC cxx_std_23)
+target_compile_features(albor-platform-wayland PUBLIC cxx_std_20)
+if(ALBOR_LIBDECOR_AVAILABLE)
+    # the private libdecor headers stay private to this target, and the cairo plugin's description is renamed (§3.5, AD-05)
+    target_include_directories(albor-platform-wayland PRIVATE "${LIBDECOR_DIR}" "${LIBDECOR_DIR}/src" "${LIBDECOR_DIR}/src/plugins")
+    target_compile_definitions(albor-platform-wayland PRIVATE _GNU_SOURCE)
+    set_source_files_properties("${LIBDECOR_DIR}/src/plugins/cairo/libdecor-cairo.c" PROPERTIES COMPILE_DEFINITIONS "libdecor_plugin_description=albor_libdecor_cairo_plugin_description")
+endif()
 
 # the adapter needs the application loop it implements, and reaches wayland and xkbcommon directly (AD-16)
 # albor-window arrives transitively through albor-application, so naming it again would duplicate the archive on the link line
 target_link_libraries(albor-platform-wayland PUBLIC albor-application PkgConfig::WAYLAND_CLIENT_PC PkgConfig::XKBCOMMON_PC)
-if(LIBDECOR_PC_FOUND)
-    # the client side decoration library is optional, and its presence selects the primary decorated path (§5.3)
-    target_compile_definitions(albor-platform-wayland PRIVATE ALBOR_WAYLAND_LIBDECOR=1)
-    target_link_libraries(albor-platform-wayland PUBLIC PkgConfig::LIBDECOR_PC)
+
+# wayland 1.21 added the pointer value120 event, which the 1.20 headers lack (AD-27)
+if(WAYLAND_CLIENT_PC_VERSION VERSION_GREATER_EQUAL 1.21)
+    target_compile_definitions(albor-platform-wayland PRIVATE ALBOR_WAYLAND_AXIS_VALUE120=1)
 endif()
 
-# the machine generated protocol bindings carry no fixable warnings, which the suppression records (§14.2)
+# wayland 1.22 added the surface v6 scale/transform and pointer relative-direction events, which the 1.21 headers lack (AD-27)
+if(WAYLAND_CLIENT_PC_VERSION VERSION_GREATER_EQUAL 1.22)
+    target_compile_definitions(albor-platform-wayland PRIVATE ALBOR_WAYLAND_SURFACE_V6=1)
+endif()
+if(ALBOR_LIBDECOR_AVAILABLE)
+    # the private libdecor is compiled into the adapter, so the consumer installs no libdecor package or runtime plugin (§5.3)
+    target_compile_definitions(albor-platform-wayland PRIVATE ALBOR_WAYLAND_LIBDECOR=1)
+    target_link_libraries(albor-platform-wayland PRIVATE PkgConfig::PANGOCAIRO_PC PkgConfig::WAYLAND_CURSOR_PC PkgConfig::DBUS_PC ${CMAKE_DL_LIBS} m)
+endif()
+
+# the third party sources and the machine generated bindings carry no fixable warnings, which the suppression records (§14.2)
 set_source_files_properties("${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}" PROPERTIES COMPILE_OPTIONS "-w")
+if(ALBOR_LIBDECOR_AVAILABLE)
+    set_source_files_properties(${LIBDECOR_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+endif()
 
 # the adapter build is published, so the conditional suite and the real runners see it (§5.3, AD-22)
-set(ALBOR_WAYLAND_FOUND ON CACHE INTERNAL "the wayland adapter was configured")
+set(ALBOR_WAYLAND_FOUND ON CACHE INTERNAL "the wayland adapter was configured" FORCE)
 set(ALBOR_WAYLAND_PROTOCOL_HEADER_DIR "${PROTOCOL_OUTPUT_DIR}" CACHE INTERNAL "the directory the generated protocol headers live in")
 
 # the auto target links the archive whole, so the adapter installs itself at load without a call (§5.3, AD-16)

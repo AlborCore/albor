@@ -8,7 +8,7 @@ add_library(albor-layout STATIC ${CPP_SOURCES})
 
 # the layout containers are header visible, because a ui tree is declared in terms of them (§3.5)
 target_include_directories(albor-layout PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-layout PUBLIC cxx_std_23)
+target_compile_features(albor-layout PUBLIC cxx_std_20)
 
 # the layout module needs the ui tree it arranges and the size constraints it measures against (§3.2)
 target_link_libraries(albor-layout PUBLIC albor-ui)

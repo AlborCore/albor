@@ -8,7 +8,7 @@ add_library(albor-input STATIC ${CPP_SOURCES})
 
 # the input types are header visible, because a window routes events through them (§3.5)
 target_include_directories(albor-input PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-input PUBLIC cxx_std_23)
+target_compile_features(albor-input PUBLIC cxx_std_20)
 
 # the input module needs the ui tree it routes into, the normalized event it carries, the focus ring it drives and the
 # shared commands an accelerator is routed through (§3.2, §18.5)

@@ -19,8 +19,8 @@ permissions:
 env:
   CMAKE_VERSION: 4.4.4
   NINJA_VERSION: 1.13.2
-  MSVC_TOOLSET: 14.51.36231
-  WINDOWS_SDK: 10.0.26100.0
+  MSVC_TOOLSET: 14.44
+  WINDOWS_SDK: 10.0.22621.0
   VCPKG_ABI_POLICY: pinned-toolchain-v2
 
 concurrency:
@@ -105,10 +105,10 @@ jobs:
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               # ccache cuts the staged build to its misses after the first review (AD-16)
               ccache --max-size 2G
-              # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+              # the framework is c++20, and the build uses the pinned xcode 16.4 rather than the image default
+              sudo xcode-select --switch /Applications/Xcode_16.4.app
           - name: windows
-            os: windows-latest
+            os: windows-2022
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
@@ -174,7 +174,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DVCPKG_MANIFEST_DIR="$PWD/tests/consumer" \
             -DALBOR_EXAMPLES=OFF -DALBOR_TESTS=OFF \
-            -DALBOR_RENDERER_BLEND2D=OFF
+            ${{ runner.os != 'Linux' && '-DALBOR_RENDERER_BLEND2D=OFF' || '' }}
           cmake --build .build-port-stage --parallel 4
       - name: install the staged package
         run: cmake --install .build-port-stage --prefix .build-port-stage/stage
@@ -224,15 +224,15 @@ jobs:
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             pinned: true
           - name: windows-default
-            os: windows-latest
+            os: windows-2022
             consumer: tests/port-consumer
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
           - name: windows-blend2d
-            os: windows-latest
+            os: windows-2022
             consumer: tests/port-consumer-blend2d
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
           - name: windows-pinned-release
-            os: windows-latest
+            os: windows-2022
             consumer: tests/port-consumer
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             pinned: true
@@ -256,8 +256,8 @@ jobs:
             HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
             # ccache cuts the port build to its misses after the first run (AD-16)
             ccache --max-size 2G
-            # the preset is c++23, so take the newest xcode the image carries rather than its default
-            sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+            # the framework is c++20, and the build uses the pinned xcode 16.4 rather than the image default
+            sudo xcode-select --switch /Applications/Xcode_16.4.app
           else
             choco install ccache --no-progress -y
           fi

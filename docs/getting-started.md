@@ -2,16 +2,22 @@
 
 ## Requirements
 
-- **C++23** toolchain
+- **C++20** toolchain
 - **CMake** ≥ 3.28 and **Ninja** — the presets pin Ninja as the generator, so a build directory
   configured with another one has to be configured fresh
 - **[vcpkg](https://vcpkg.io)** in manifest mode — dependencies are pinned in `vcpkg.json`
   and are fetched on the first configure. The build declares the floor to the install itself,
   so the ports are stamped with the same 13.3 the framework is tested at; a port built for a
   newer floor links with a warning and may call an API the minimum system lacks
-- **macOS 13.3 or later** on Intel or Apple silicon for the macOS targets, or a supported
-  Windows 10/11 MSVC toolchain and SDK for the Windows targets. See
-  [Status and platforms](status.md)
+- A supported platform at or above its runtime floor:
+  - **macOS 13.3 or later** on Intel or Apple silicon.
+  - **Windows 10 1809 (build 17763) or later** with the Microsoft Visual C++ 2015-2022
+    Redistributable.
+  - **RHEL/AlmaLinux 9 or later** (glibc 2.34, GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21) with the
+    Wayland, xkbcommon and Pango/Cairo/D-Bus development packages. Ubuntu 24.04 is the
+    current configuration; [Linux](linux.md) records the baseline and its container.
+
+  See [Status and platforms](status.md) for the build baselines and toolchains.
 - **No shader toolchain is needed to build** — the Metal and Direct3D shaders ship as
   compiled artifacts. Only a change to a shader source needs the matching compiler; see
   [Tooling](tooling.md#the-shaders)
@@ -58,9 +64,9 @@ selection**, but a normal application makes that choice once.
 | `albor-blend2d` | the same runtime with the portable Blend2D renderer |
 | `albor-devrt-auto` | dev runtime: hot swap of `.ui` structure (optional, see [Tooling](tooling.md)) |
 
-`albor` is available on the desktop platforms with an adapter (macOS and Windows today).
-On a platform without a desktop adapter, use the headless or granular targets; see
-[Consuming Albor](consuming.md#advanced-composition).
+`albor` is available on the desktop platforms with an adapter (macOS, Windows and Linux
+Wayland today). On a platform without a desktop adapter, use the headless or granular
+targets; see [Consuming Albor](consuming.md#advanced-composition).
 
 ## Embedding fonts
 

@@ -8,4 +8,4 @@ add_library(albor-i18n STATIC ${CPP_SOURCES})
 
 # the module reaches the project root, which is where the includes point (§3.2)
 target_include_directories(albor-i18n PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-i18n PUBLIC cxx_std_23)
+target_compile_features(albor-i18n PUBLIC cxx_std_20)

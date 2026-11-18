@@ -15,7 +15,7 @@ add_executable(albor-lsp ${ALBOR_LSP_SOURCES})
 
 # the launcher reaches the project root, which is where the module includes point (§3.2)
 target_include_directories(albor-lsp PRIVATE ${ALBOR_SOURCE_DIR})
-target_compile_features(albor-lsp PRIVATE cxx_std_23)
+target_compile_features(albor-lsp PRIVATE cxx_std_20)
 
 # the server library carries the compiler and core, because the editor sees the compiler's diagnostics (§12.2)
 target_link_libraries(albor-lsp PRIVATE albor-language-server)

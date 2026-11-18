@@ -31,6 +31,17 @@ namespace albor
     using wayland::WaylandConnection;
     using wayland::WaylandNativeSurface;
 
+    WaylandDecorationMode choose_decoration(bool server_side_available, bool client_side_available) {
+        // the compositor's native chrome is the first choice, because it follows the desktop's own theme (§5.3)
+        if (server_side_available)
+            return WaylandDecorationMode::ServerSide;
+        // libdecor draws the frame where the compositor has no xdg-decoration, which is what GNOME needs (§5.3)
+        if (client_side_available)
+            return WaylandDecorationMode::ClientSide;
+        // a host with neither draws the content without chrome rather than refusing the window (§5.3)
+        return WaylandDecorationMode::None;
+    }
+
     // the opaque xdg state, defined here so that no wayland type reaches a public header (§3.5, AD-05)
     struct WaylandWindowState;
 
@@ -196,6 +207,9 @@ namespace albor
         // whether the window is a popup, which the decoration path consults (§5.1)
         bool popup_role = false;
 
+        // the decoration the window uses, which the strategy and the compositor's mode answer decide (§5.3)
+        WaylandDecorationMode decoration_mode = WaylandDecorationMode::None;
+
         // whether the native proxies were created, which a dismissed popup keeps after its surface goes (§5.1)
         bool created = false;
 
@@ -303,11 +317,13 @@ namespace albor
 
         // apply a new buffer scale, which a preferred scale and an output change drive (AD-27)
         void apply_scale(WaylandWindowState* state, int scale) {
+            // a compositor that reports no scale yet keeps the integer default, which a layout divides by (AD-27)
+            const int effective_scale = std::max(1, scale);
             // a scale that did not change applies nothing, which is what the comparison guards (AD-27)
-            if (state->scale == scale)
+            if (state->scale == effective_scale)
                 return;
             // the scale moves first, because a metrics listener reads it while handling the change (AD-27)
-            state->scale = scale;
+            state->scale = effective_scale;
             // the shared state is held locally, because a listener may tear the window down later (§4.2, §10.5)
             const std::shared_ptr<wayland::WaylandSurfaceState> surface_state = state->native.state;
             // a surface and its state live together, which a teardown clears (§10.5)
@@ -315,10 +331,10 @@ namespace albor
                 // the surface is locked, so the scale change lands atomically against a present (AD-27, §10.5)
                 const std::lock_guard<std::mutex> surface_lock(surface_state->mutex);
                 // the compositor is told the scale, which the buffer it reads is interpreted at (AD-27)
-                wl_surface_set_buffer_scale(state->surface, static_cast<std::int32_t>(scale));
+                wl_surface_set_buffer_scale(state->surface, static_cast<std::int32_t>(effective_scale));
             }
             // the metrics are rebuilt at the new scale, which is what a scale flip changes (AD-27)
-            const WindowMetrics metrics = WindowMetrics::from_logical(state->metrics.logical_size, static_cast<float>(scale));
+            const WindowMetrics metrics = WindowMetrics::from_logical(state->metrics.logical_size, static_cast<float>(effective_scale));
             // an unchanged pixel size raises nothing, which is what the comparison guards (§9.1)
             if (metrics == state->metrics)
                 return;
@@ -580,6 +596,27 @@ namespace albor
             state->frame_requested = false;
         }
 
+#ifdef ALBOR_WAYLAND_LIBDECOR
+        // destroy the raw xdg toplevel role, which a client-side decoration answer replaces with libdecor (§5.3)
+        void destroy_toplevel_role(WaylandWindowState* state) {
+            // the decoration is released first, because it references the toplevel it was created for (§5.3)
+            if (state->decoration != nullptr) {
+                zxdg_toplevel_decoration_v1_destroy(state->decoration);
+                state->decoration = nullptr;
+            }
+            // the toplevel is destroyed, which takes the role state down (§5.3)
+            if (state->toplevel != nullptr) {
+                xdg_toplevel_destroy(state->toplevel);
+                state->toplevel = nullptr;
+            }
+            // the shell surface follows, which leaves the wl_surface reusable (§5.3)
+            if (state->shell_surface != nullptr) {
+                xdg_surface_destroy(state->shell_surface);
+                state->shell_surface = nullptr;
+            }
+        }
+#endif
+
         // destroy the popup role a dismissal spent, which a reopen rebuilds on a fresh surface (§5.1)
         void destroy_popup_role(WaylandWindowState* state) {
             // the popup object is spent after its done event, which the protocol asks the client to destroy (§5.1)
@@ -718,9 +755,11 @@ namespace albor
         void on_surface_enter(void* data, wl_surface*, wl_output*) {
             // the state is kept alive across the listener, because the scale may tear the window down (§4.2)
             const std::shared_ptr<WaylandWindowState> state = static_cast<WaylandWindowState*>(data)->shared_from_this();
+#ifdef ALBOR_WAYLAND_SURFACE_V6
             // a surface version six carries the preferred scale, so the output is not the authority (AD-27)
             if (state->connection->compositor_version() >= 6)
                 return;
+#endif
             // the scale of the output the window sits on is applied, which is the fallback authority (AD-27)
             apply_scale(state.get(), state->connection->output_scale());
         }
@@ -730,6 +769,7 @@ namespace albor
             // the scale of the next enter event applies, which is what the fallback waits for (AD-27)
         }
 
+#ifdef ALBOR_WAYLAND_SURFACE_V6
         // the preferred scale the compositor announced, which is the scale authority from surface version six on (AD-27)
         void on_surface_preferred_scale(void* data, wl_surface*, std::int32_t factor) {
             // the state is kept alive across the listener, because the scale may tear the window down (§4.2)
@@ -742,6 +782,7 @@ namespace albor
         void on_surface_preferred_transform(void*, wl_surface*, std::uint32_t) {
             // a rotated transform is out of scope, which the identity keeps (AD-27)
         }
+#endif
 
         // the configure the shell surface sent, which is acknowledged and read as metrics (§5.3)
         void on_shell_surface_configure(void* data, xdg_surface* shell_surface, std::uint32_t serial) {
@@ -781,6 +822,22 @@ namespace albor
         // the capabilities the compositor announced, which no framework path reads (§5.3)
         void on_toplevel_wm_capabilities(void*, xdg_toplevel*, wl_array*) {
             // the capabilities name compositor chrome, which the framework draws none of (§5.3)
+        }
+
+        // the mode the compositor chose, which says whether it draws the chrome or the client must (§5.3)
+        void on_decoration_configure(void* data, zxdg_toplevel_decoration_v1*, std::uint32_t mode) {
+            // the listener was installed with the state, which is the only receiver (§5.3)
+            WaylandWindowState* state = static_cast<WaylandWindowState*>(data);
+            // a client-side answer is honoured only where the private frame can draw it (§5.3)
+            bool client_side_available = false;
+#ifdef ALBOR_WAYLAND_LIBDECOR
+            client_side_available = state->connection->decoration_context() != nullptr;
+#endif
+            // the server mode is the compositor's chrome, while the client mode asks the client to draw a frame (§5.3)
+            if (mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE)
+                state->decoration_mode = WaylandDecorationMode::ServerSide;
+            else
+                state->decoration_mode = client_side_available ? WaylandDecorationMode::ClientSide : WaylandDecorationMode::None;
         }
 
         // the size the popup configure proposed, which the shell surface configure applies (§5.1)
@@ -855,6 +912,30 @@ namespace albor
 
         // the interface every decorated frame is built with, which carries the four events the adapter reads (§5.3)
         constexpr libdecor_frame_interface FRAME_INTERFACE = {&on_frame_configure, &on_frame_close, &on_frame_commit, &on_frame_dismiss_popup};
+
+        // create the libdecor frame that owns the xdg role, which the fallback and a client-side answer share (§5.3)
+        bool create_frame(WaylandWindowState* state, const WindowOptions& options) {
+            // the frame decorates the surface of an ordinary, dialog or tool window (§5.3)
+            state->frame = libdecor_decorate(state->connection->decoration_context(), state->surface, const_cast<libdecor_frame_interface*>(&FRAME_INTERFACE), state);
+            // a frame libdecor refused leaves the caller to tear the window down (§5.3)
+            if (state->frame == nullptr)
+                return false;
+            // the frame owns the xdg surface and toplevel, which the popup parent and the metrics read (§5.3)
+            state->shell_surface = libdecor_frame_get_xdg_surface(state->frame);
+            state->toplevel = libdecor_frame_get_xdg_toplevel(state->frame);
+            // the title and the app id are frame state, which the decoration draws (§5.3)
+            libdecor_frame_set_title(state->frame, options.title.c_str());
+            libdecor_frame_set_app_id(state->frame, "albor");
+            // a dialog or tool names its parent frame, which the compositor uses for stacking and focus (§5.1)
+            if (options.native_parent.valid()) {
+                // the parent state is cast back from the opaque handle, which only the adapter reads (§3.5, AD-05)
+                WaylandWindowState* parent = static_cast<WaylandWindowState*>(const_cast<void*>(options.native_parent.object()));
+                // a parent that rides a frame names it, which is what the relation reads (§5.1)
+                if (parent != nullptr && parent->frame != nullptr)
+                    libdecor_frame_set_parent(state->frame, parent->frame);
+            }
+            return true;
+        }
 #endif
 
         // the surface the pointer entered, which names where the button and the wheel land (§8.3)
@@ -988,6 +1069,7 @@ namespace albor
             state->wheel[AXIS_VERTICAL].note_discrete(-steps);
         }
 
+#ifdef ALBOR_WAYLAND_AXIS_VALUE120
         // the high resolution count a wheel reported, which the batch carries until the frame (§8.3)
         void on_pointer_axis_value120(void* data, wl_pointer*, std::uint32_t axis, std::int32_t value120) {
             // the listener was installed with the state, which is the only receiver (§8.3)
@@ -1001,11 +1083,14 @@ namespace albor
             // the count joins the batch, which the frame emits once (§8.3)
             state->wheel[AXIS_VERTICAL].note_value120(-value120);
         }
+#endif
 
+#ifdef ALBOR_WAYLAND_SURFACE_V6
         // the relative direction an axis reported, which the flavour already carries (§8.3)
         void on_pointer_axis_relative_direction(void*, wl_pointer*, std::uint32_t, std::uint32_t) {
             // the direction is a hint for touchpads, which the pass through keeps raw (§8.3)
         }
+#endif
 
         // the keymap the compositor shared, which the keys are translated through (§8.3)
         void on_keyboard_keymap(void* data, wl_keyboard*, std::uint32_t format, std::int32_t fd, std::uint32_t size) {
@@ -1237,7 +1322,14 @@ namespace albor
         }
 
         // the listener set of the surface, which carries the scale facts (AD-27)
-        constexpr wl_surface_listener SURFACE_LISTENER = {&on_surface_enter, &on_surface_leave, &on_surface_preferred_scale, &on_surface_preferred_transform};
+        constexpr wl_surface_listener SURFACE_LISTENER = {
+            &on_surface_enter,
+            &on_surface_leave,
+#ifdef ALBOR_WAYLAND_SURFACE_V6
+            &on_surface_preferred_scale,
+            &on_surface_preferred_transform,
+#endif
+        };
 
         // the listener set of the shell surface, which carries the configure (§5.3)
         constexpr xdg_surface_listener SHELL_SURFACE_LISTENER = {&on_shell_surface_configure};
@@ -1248,8 +1340,27 @@ namespace albor
         // the listener set of the popup, which carries its configure and dismissal (§5.1)
         constexpr xdg_popup_listener POPUP_LISTENER = {&on_popup_configure, &on_popup_done, &on_popup_repositioned};
 
+        // the listener set of the decoration, which carries the mode the compositor chose (§5.3)
+        constexpr zxdg_toplevel_decoration_v1_listener DECORATION_LISTENER = {&on_decoration_configure};
+
         // the listener set of the pointer, which carries the normalized input of §8.3
-        constexpr wl_pointer_listener POINTER_LISTENER = {&on_pointer_enter, &on_pointer_leave, &on_pointer_motion, &on_pointer_button, &on_pointer_axis, &on_pointer_frame, &on_pointer_axis_source, &on_pointer_axis_stop, &on_pointer_axis_discrete, &on_pointer_axis_value120, &on_pointer_axis_relative_direction};
+        constexpr wl_pointer_listener POINTER_LISTENER = {
+            &on_pointer_enter,
+            &on_pointer_leave,
+            &on_pointer_motion,
+            &on_pointer_button,
+            &on_pointer_axis,
+            &on_pointer_frame,
+            &on_pointer_axis_source,
+            &on_pointer_axis_stop,
+            &on_pointer_axis_discrete,
+#ifdef ALBOR_WAYLAND_AXIS_VALUE120
+            &on_pointer_axis_value120,
+#endif
+#ifdef ALBOR_WAYLAND_SURFACE_V6
+            &on_pointer_axis_relative_direction,
+#endif
+        };
 
         // the listener set of the keyboard, which carries the normalized input of §8.3
         constexpr wl_keyboard_listener KEYBOARD_LISTENER = {&on_keyboard_keymap, &on_keyboard_enter, &on_keyboard_leave, &on_keyboard_key, &on_keyboard_modifiers, &on_keyboard_repeat_info};
@@ -1269,10 +1380,34 @@ namespace albor
 
     namespace
     {
+        // the shell surface a window's role owns, which libdecor creates after its first dispatch (§5.3)
+        xdg_surface* role_shell_surface(WaylandWindowState* state) {
+#ifdef ALBOR_WAYLAND_LIBDECOR
+            // a frame owns the role, which the getter answers once libdecor finished its init (§5.3)
+            if (state->frame != nullptr) {
+                if (xdg_surface* surface = libdecor_frame_get_xdg_surface(state->frame))
+                    return surface;
+            }
+#endif
+            return state->shell_surface;
+        }
+
+        // the toplevel a window's role owns, which libdecor creates after its first dispatch (§5.3)
+        xdg_toplevel* role_toplevel(WaylandWindowState* state) {
+#ifdef ALBOR_WAYLAND_LIBDECOR
+            // a frame owns the role, which the getter answers once libdecor finished its init (§5.3)
+            if (state->frame != nullptr) {
+                if (xdg_toplevel* toplevel = libdecor_frame_get_xdg_toplevel(state->frame))
+                    return toplevel;
+            }
+#endif
+            return state->toplevel;
+        }
+
         // create the popup role the shell surface hosts, which a dismissal rebuilds rather than reuses (§5.1)
         bool create_popup_role(WaylandWindowState* state) {
             // the parent must still be alive, which the framework's teardown order guarantees (§5.1)
-            if (state->parent == nullptr || state->parent->shell_surface == nullptr || state->shell_surface == nullptr)
+            if (state->parent == nullptr || role_shell_surface(state->parent) == nullptr || state->shell_surface == nullptr)
                 return false;
             // the positioner is what places the popup relative to the parent surface (§5.1)
             state->positioner = xdg_wm_base_create_positioner(state->connection->shell());
@@ -1292,7 +1427,7 @@ namespace albor
             xdg_positioner_set_gravity(state->positioner, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
             xdg_positioner_set_constraint_adjustment(state->positioner, XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y);
             // the popup role attaches to the parent shell surface the positioner names (§5.1)
-            state->popup = xdg_surface_get_popup(state->shell_surface, state->parent->shell_surface, state->positioner);
+            state->popup = xdg_surface_get_popup(state->shell_surface, role_shell_surface(state->parent), state->positioner);
             // a popup the compositor refused leaves the positioner destroyed here, which the caller does not own (§5.1)
             if (state->popup == nullptr) {
                 xdg_positioner_destroy(state->positioner);
@@ -1310,7 +1445,7 @@ namespace albor
         // build a fresh surface and popup role for a dismissed popup, which a reopen requires (§5.1)
         bool rebuild_popup_surface(WaylandWindowState* state) {
             // the parent must still be alive, which the framework's teardown order guarantees (§5.1)
-            if (state->parent == nullptr || state->parent->shell_surface == nullptr || state->connection->compositor() == nullptr || state->connection->shell() == nullptr)
+            if (state->parent == nullptr || role_shell_surface(state->parent) == nullptr || state->connection->compositor() == nullptr || state->connection->shell() == nullptr)
                 return false;
             // the surface is created on the compositor, which no buffer may touch before the first configure (§5.3)
             state->surface = wl_compositor_create_surface(state->connection->compositor());
@@ -1392,11 +1527,13 @@ namespace albor
         state->native.state->mapped = false;
         // the native window exists from here, which a teardown of every proxy keys on (§5.1)
         state->created = true;
-        // a decorated ordinary window rides libdecor, which owns its xdg role and chrome (§5.3)
-        bool use_libdecor = false;
+        // native chrome is preferred, and libdecor is the fallback where the compositor has no xdg-decoration (§5.3)
+        bool client_side_available = false;
 #ifdef ALBOR_WAYLAND_LIBDECOR
-        use_libdecor = !state->popup_role && connection->decoration_context() != nullptr;
+        client_side_available = connection->decoration_context() != nullptr;
 #endif
+        state->decoration_mode = choose_decoration(connection->decorations() != nullptr, client_side_available);
+        const bool use_libdecor = !state->popup_role && state->decoration_mode == WaylandDecorationMode::ClientSide;
         // the raw shell path carries a popup and the xdg-decoration fallback (§5.1, §5.3)
         if (!use_libdecor) {
             // the shell surface carries the xdg role, created before any buffer exists (§5.3)
@@ -1424,7 +1561,7 @@ namespace albor
                 // the parent state is cast back from the opaque handle, which only the adapter reads (§3.5, AD-05)
                 WaylandWindowState* parent = static_cast<WaylandWindowState*>(const_cast<void*>(options.native_parent.object()));
                 // a parent without a shell surface cannot host a popup, which the refusal reports (§5.1)
-                if (parent == nullptr || parent->shell_surface == nullptr) {
+                if (parent == nullptr || role_shell_surface(parent) == nullptr) {
                     destroy_native(state.get());
                     if (state->xkb != nullptr)
                         xkb_context_unref(state->xkb);
@@ -1461,44 +1598,31 @@ namespace albor
                     // the parent state is cast back from the opaque handle, which only the adapter reads (§3.5, AD-05)
                     WaylandWindowState* parent = static_cast<WaylandWindowState*>(const_cast<void*>(options.native_parent.object()));
                     // a parent with a toplevel is what the parent relation names (§5.1)
-                    if (parent != nullptr && parent->toplevel != nullptr)
-                        xdg_toplevel_set_parent(state->toplevel, parent->toplevel);
+                    if (xdg_toplevel* parent_toplevel = parent != nullptr ? role_toplevel(parent) : nullptr)
+                        xdg_toplevel_set_parent(state->toplevel, parent_toplevel);
                 }
                 // the decorations are negotiated where the manager exists, and a popup rides none (§5.1, §5.3)
                 if (connection->decorations() != nullptr) {
                     // the decoration object is created for the toplevel, which carries the mode
                     state->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(connection->decorations(), state->toplevel);
                     // a decoration the compositor refused leaves its own default, which the guard keeps (§5.3)
-                    if (state->decoration != nullptr)
-                        // the mode is server side, which is the chrome the compositor draws (§5.3)
+                    if (state->decoration != nullptr) {
+                        // the mode event reports what the compositor will draw, which the strategy records (§5.3)
+                        zxdg_toplevel_decoration_v1_add_listener(state->decoration, &DECORATION_LISTENER, state.get());
+                        // the mode is requested server side, which is the chrome the compositor draws (§5.3)
                         zxdg_toplevel_decoration_v1_set_mode(state->decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+                    }
                 }
             }
         }
 #ifdef ALBOR_WAYLAND_LIBDECOR
         else {
             // the frame decorates the surface of an ordinary, dialog or tool window (§5.3)
-            state->frame = libdecor_decorate(connection->decoration_context(), state->surface, const_cast<libdecor_frame_interface*>(&FRAME_INTERFACE), state.get());
-            // a frame libdecor refused leaves the proxies destroyed, which the null reports (§5.3)
-            if (state->frame == nullptr) {
+            if (!create_frame(state.get(), options)) {
                 destroy_native(state.get());
                 if (state->xkb != nullptr)
                     xkb_context_unref(state->xkb);
                 return nullptr;
-            }
-            // the frame owns the xdg surface and toplevel, which the popup parent and the metrics read (§5.3)
-            state->shell_surface = libdecor_frame_get_xdg_surface(state->frame);
-            state->toplevel = libdecor_frame_get_xdg_toplevel(state->frame);
-            // the title and the app id are frame state, which the decoration draws (§5.3)
-            libdecor_frame_set_title(state->frame, options.title.c_str());
-            libdecor_frame_set_app_id(state->frame, "albor");
-            // a dialog or tool names its parent frame, which the compositor uses for stacking and focus (§5.1)
-            if (options.native_parent.valid()) {
-                // the parent state is cast back from the opaque handle, which only the adapter reads (§3.5, AD-05)
-                WaylandWindowState* parent = static_cast<WaylandWindowState*>(const_cast<void*>(options.native_parent.object()));
-                // a parent that rides a frame names it, which is what the relation reads (§5.1)
-                if (parent != nullptr && parent->frame != nullptr)
-                    libdecor_frame_set_parent(state->frame, parent->frame);
             }
         }
 #endif
@@ -1512,6 +1636,39 @@ namespace albor
                     xkb_context_unref(state->xkb);
                 return nullptr;
             }
+#ifdef ALBOR_WAYLAND_LIBDECOR
+            // a compositor that advertises xdg-decoration but answers client-side asks the client to draw the frame (§5.3)
+            if (state->decoration_mode == WaylandDecorationMode::ClientSide && client_side_available) {
+                // the raw role is spent, and a fresh surface gives libdecor the role it owns (§5.3)
+                destroy_toplevel_role(state.get());
+                if (state->surface != nullptr) {
+                    wl_surface_destroy(state->surface);
+                    state->surface = nullptr;
+                }
+                state->surface = wl_compositor_create_surface(connection->compositor());
+                // a surface the compositor refused leaves no window, which the null reports (§5.3)
+                if (state->surface == nullptr) {
+                    destroy_native(state.get());
+                    if (state->xkb != nullptr)
+                        xkb_context_unref(state->xkb);
+                    return nullptr;
+                }
+                // the surface listener carries the scale facts, installed with the state (AD-27)
+                wl_surface_add_listener(state->surface, &SURFACE_LISTENER, state.get());
+                // the native handle follows the replacement surface, which a renderer attaches through (§3.5, AD-05)
+                if (state->native.state != nullptr) {
+                    const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
+                    state->native.state->surface = state->surface;
+                }
+                // the frame draws the chrome the compositor declined to draw (§5.3)
+                if (!create_frame(state.get(), options)) {
+                    destroy_native(state.get());
+                    if (state->xkb != nullptr)
+                        xkb_context_unref(state->xkb);
+                    return nullptr;
+                }
+            }
+#endif
         }
         // a compositor that proposed no size leaves the requested one, which the metrics carry now (§5.3)
         if (!state->metrics.valid())
@@ -1785,6 +1942,21 @@ namespace albor
         // a closed window has nothing left to draw (§4.3)
         m_state->frame_requested = false;
         m_state->visible = false;
+    }
+
+    WaylandDecorationMode WaylandPlatformWindow::decoration_mode() const {
+        // the strategy and the compositor's mode answer decide the chrome, which a test reads (§5.3)
+        return m_state->decoration_mode;
+    }
+
+    bool WaylandPlatformWindow::uses_client_side_frame() const {
+#ifdef ALBOR_WAYLAND_LIBDECOR
+        // the frame is the client-side chrome, which only the fallback creates (§5.3)
+        return m_state->frame != nullptr;
+#else
+        // a build without the private frame draws no client-side chrome (§5.3)
+        return false;
+#endif
     }
 
     WaylandPlatformWindow::WaylandPlatformWindow(std::shared_ptr<WaylandWindowState> state) :

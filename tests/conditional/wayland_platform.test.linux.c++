@@ -9,6 +9,7 @@
 #include "albor/core/clipboard.h"
 #include "albor/platform/linux/wayland/event_loop.h"
 #include "albor/platform/linux/wayland/input_normalization.h"
+#include "albor/platform/linux/wayland/platform_window.h"
 #include "albor/ui/ui_event.h"
 #include "albor/window/platform_window.h"
 #include "albor/window/window_metrics.h"
@@ -198,6 +199,66 @@ TEST(WaylandPlatform, ActivationIsReachableAndReleasesItsToken) {
     window->close();
     // assert the close left the window off screen (§5.2)
     EXPECT_FALSE(window->visible());
+}
+
+TEST(WaylandPlatform, PrefersNativeDecorationsOverLibdecor) {
+    // act, assert the compositor chrome wins whenever xdg-decoration is advertised (§5.3)
+    EXPECT_EQ(choose_decoration(true, true), WaylandDecorationMode::ServerSide);
+    EXPECT_EQ(choose_decoration(true, false), WaylandDecorationMode::ServerSide);
+    // act, assert libdecor is the fallback where the compositor has no xdg-decoration (§5.3)
+    EXPECT_EQ(choose_decoration(false, true), WaylandDecorationMode::ClientSide);
+    // act, assert a host with neither still opens the window, without chrome (§5.3)
+    EXPECT_EQ(choose_decoration(false, false), WaylandDecorationMode::None);
+}
+
+TEST(WaylandPlatform, SelectsADecorationForAWindow) {
+    // arrange a shown window on the headless compositor, which uses one of the two decoration paths (§5.3)
+    WindowOptions options;
+    options.title = "albor-wayland-decoration";
+    options.size = Size{200.0f, 120.0f};
+    const std::unique_ptr<PlatformWindow> window = PlatformWindow::create(options);
+    ASSERT_NE(window, nullptr);
+    // act the platform window reports the decoration it selected (§5.3)
+    const auto* wayland = dynamic_cast<const WaylandPlatformWindow*>(window.get());
+    ASSERT_NE(wayland, nullptr);
+    // assert the selected decoration and the chrome that carries it agree (§5.3)
+    const WaylandDecorationMode mode = wayland->decoration_mode();
+    if (mode == WaylandDecorationMode::ClientSide)
+        EXPECT_TRUE(wayland->uses_client_side_frame());
+    else
+        EXPECT_FALSE(wayland->uses_client_side_frame());
+    window->close();
+}
+
+TEST(WaylandPlatform, CreatesAPopupUnderAClientSideDecoratedWindow) {
+    // arrange a parent window whose decoration the compositor answers (§5.3)
+    WindowOptions parent_options;
+    parent_options.title = "albor-wayland-decorated-parent";
+    parent_options.size = Size{240.0f, 160.0f};
+    const std::unique_ptr<PlatformWindow> parent = PlatformWindow::create(parent_options);
+    ASSERT_NE(parent, nullptr);
+    const auto* wayland_parent = dynamic_cast<const WaylandPlatformWindow*>(parent.get());
+    ASSERT_NE(wayland_parent, nullptr);
+    // the frame path needs a compositor without server-side chrome, which headless weston does not provide (§5.3)
+    if (wayland_parent->decoration_mode() != WaylandDecorationMode::ClientSide)
+        GTEST_SKIP() << "the compositor draws server-side decorations, so the libdecor parent path is not exercised";
+    parent->show();
+    ASSERT_TRUE(parent->visible());
+    // arrange a popup parented to the decorated window, which needs the frame-owned shell surface (§5.1)
+    WindowOptions popup_options;
+    popup_options.title = "albor-wayland-decorated-popup";
+    popup_options.size = Size{120.0f, 80.0f};
+    popup_options.role = WindowRole::Popup;
+    popup_options.native_parent = parent->native_window_handle();
+    popup_options.anchor = Rect{.x = 20.0f, .y = 20.0f, .width = 80.0f, .height = 24.0f};
+    // act
+    const std::unique_ptr<PlatformWindow> popup = PlatformWindow::create(popup_options);
+    // assert the parent's frame-owned role accepted the popup (§5.1, §5.3)
+    ASSERT_NE(popup, nullptr);
+    popup->show();
+    EXPECT_TRUE(popup->visible());
+    popup->close();
+    parent->close();
 }
 
 TEST(WaylandPlatform, MapsXkbKeysAndModifiers) {

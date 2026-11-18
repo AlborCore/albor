@@ -10,7 +10,7 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/task_
 target_include_directories(albor-vector-fixture PRIVATE ${ALBOR_SOURCE_DIR})
 # the generated directory is on the include path from the start, because the fixture includes its facades (§11.3, §14.2)
 target_include_directories(albor-vector-fixture PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-vector-fixture")
-target_compile_features(albor-vector-fixture PRIVATE cxx_std_23)
+target_compile_features(albor-vector-fixture PRIVATE cxx_std_20)
 
 # the record struct is generated from the manifest, which is the single source of truth for its shape (§11.2, AD-17)
 albor_build_native_record(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")

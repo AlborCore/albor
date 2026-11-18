@@ -17,8 +17,8 @@ permissions:
 env:
   CMAKE_VERSION: 4.4.4
   NINJA_VERSION: 1.13.2
-  MSVC_TOOLSET: 14.51.36231
-  WINDOWS_SDK: 10.0.26100.0
+  MSVC_TOOLSET: 14.44
+  WINDOWS_SDK: 10.0.22621.0
   VCPKG_ABI_POLICY: pinned-toolchain-v2
 
 concurrency:
@@ -59,8 +59,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: metal toolchain
         run: |
-          # the image's newest xcode is selected, and xcode 26 ships the compiler as a component that may be absent
-          sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          # the framework's xcode is pinned, and xcode 26 ships the metal compiler as a component that may be absent
+          sudo xcode-select --switch /Applications/Xcode_16.4.app
           xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
       - name: committed shader artifact
         run: bash build/shaders.sh
@@ -72,7 +72,7 @@ jobs:
     if: |-
       !cancelled() &&
       (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 15
     defaults:
       run:
@@ -112,8 +112,8 @@ jobs:
               # the preset launches the compiler through ccache, which the runner image does not ship
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               ccache --max-size 2G
-              # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+              # the framework is c++20, and the build uses the pinned xcode 16.4 rather than the image default
+              sudo xcode-select --switch /Applications/Xcode_16.4.app
           - name: macos-debug
             os: macos-15
             enable: true
@@ -125,8 +125,8 @@ jobs:
               # the preset launches the compiler through ccache, which the runner image does not ship
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               ccache --max-size 2G
-              # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+              # the framework is c++20, and the build uses the pinned xcode 16.4 rather than the image default
+              sudo xcode-select --switch /Applications/Xcode_16.4.app
           - name: macos-coverage
             os: macos-15
             # the coverage report belongs to a review, which is the only event that carries the PR context (AD-16)
@@ -139,10 +139,10 @@ jobs:
               # the preset launches the compiler through ccache, which the runner image does not ship
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               ccache --max-size 2G
-              # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+              # the framework is c++20, and the build uses the pinned xcode 16.4 rather than the image default
+              sudo xcode-select --switch /Applications/Xcode_16.4.app
           - name: windows-release
-            os: windows-latest
+            os: windows-2022
             enable: true
             preset: release
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
@@ -152,7 +152,7 @@ jobs:
               # the preset launches the compiler through ccache, which the runner image does not ship
               choco install ccache --no-progress -y
           - name: windows-debug
-            os: windows-latest
+            os: windows-2022
             enable: true
             preset: debug
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
@@ -162,19 +162,21 @@ jobs:
               # the preset launches the compiler through ccache, which the runner image does not ship
               choco install ccache --no-progress -y
           - name: linux-release
-            os: ubuntu-latest
+            os: ubuntu-24.04
             # disabled until a Linux host runs the full vcpkg build and platform suite (docs/linux.md)
             enable: false
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev wayland-protocols libxkbcommon-dev libdecor-0-dev libdecor-0-plugin-1-cairo weston pkg-config libgl1-mesa-dri libegl1
+            # wayland-protocols and libdecor are vendored, so the job installs the frame's system libraries instead (AD-16)
+            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev weston pkg-config libgl1-mesa-dri libegl1
           - name: linux-debug
-            os: ubuntu-latest
+            os: ubuntu-24.04
             # disabled until a Linux host runs the full vcpkg build and platform suite (docs/linux.md)
             enable: false
             preset: debug
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev wayland-protocols libxkbcommon-dev libdecor-0-dev libdecor-0-plugin-1-cairo weston pkg-config libgl1-mesa-dri libegl1
+            # wayland-protocols and libdecor are vendored, so the job installs the frame's system libraries instead (AD-16)
+            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev weston pkg-config libgl1-mesa-dri libegl1
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3
@@ -346,3 +348,144 @@ jobs:
         with:
           path: ${{ github.workspace }}/.ccache
           key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
+
+  # the RHEL/Alma 9 baseline runs in its own container, because its glibc and libstdc++ floor is what the job proves (§5.3, AD-16)
+  # disabled with the linux matrix entries until a Linux host runs the full vcpkg build (docs/linux.md); remove the `if` to enable it
+  linux-floor:
+    name: build (linux-alma9-release)
+    needs: [check-pr]
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    container: almalinux:9
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      # checkout needs git, which the AlmaLinux base image does not carry, so the prerequisites come before it
+      - name: container prerequisites
+        run: dnf install -y git tar gzip
+
+      - uses: actions/checkout@v7
+
+      - name: platform setup
+        run: |
+          # ninja and ccache are in crb and epel, which the baseline image does not enable
+          dnf install -y 'dnf-command(config-manager)'
+          dnf config-manager --set-enabled crb
+          dnf install -y epel-release
+          # wayland-protocols and libdecor are vendored, so the job installs the frame's system libraries instead (AD-16)
+          dnf install -y ccache gcc-c++ ninja-build pkgconf-pkg-config libpng-devel wayland-devel libxkbcommon-devel pango-devel cairo-devel dbus-devel mesa-libEGL mesa-dri-drivers weston
+          ccache --max-size 2G
+
+      - name: pinned cmake
+        uses: lukka/get-cmake@v4.4.4
+        with:
+          cmakeVersion: ${{ env.CMAKE_VERSION }}
+          ninjaVersion: ${{ env.NINJA_VERSION }}
+
+      - name: pinned vcpkg
+        uses: lukka/run-vcpkg@v11.6
+        with:
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
+          vcpkgGitCommitId: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
+          vcpkgJsonGlob: vcpkg.json
+          doNotCache: true
+
+      - name: toolchain fingerprint
+        id: toolchain
+        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: restore - vcpkg cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-linux-alma9-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          restore-keys: |
+            vcpkg-linux-alma9-${{ steps.toolchain.outputs.fingerprint }}-
+            vcpkg-Linux-
+
+      - name: restore - ccache directory
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-linux-alma9-release-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-alma9-release-
+
+      - name: configure
+        run: cmake --preset release
+
+      - name: build
+        run: cmake --build --preset release --parallel 4
+
+      - name: unit tests
+        working-directory: .build-release/tests
+        run: ./albor-tests && ./albor-generated-font-checks
+
+      - name: linux wayland tests
+        working-directory: .build-release/tests
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-0 --idle-time=0 > "$RUNNER_TEMP/weston.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+            cat "$RUNNER_TEMP/weston.log"
+            exit 1
+          fi
+          export WAYLAND_DISPLAY=wayland-0
+          ./albor-linux-tests
+
+      - name: linux wayland tests at scale 2
+        working-directory: .build-release/tests
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg-scale"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-scale --scale=2 --idle-time=0 > "$RUNNER_TEMP/weston-scale.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S "$XDG_RUNTIME_DIR/wayland-scale" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/wayland-scale" ]; then
+            cat "$RUNNER_TEMP/weston-scale.log"
+            exit 1
+          fi
+          export WAYLAND_DISPLAY=wayland-scale
+          export ALBOR_EXPECT_SCALE=2
+          ./albor-linux-tests
+
+      # the baseline artifact must not reference a glibc or libstdc++ newer than Alma 9 carries (AD-16)
+      - name: symbol floor
+        run: bash build/check-linux-floor.sh .build-release
+
+      - name: save - vcpkg cache
+        if: success()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-linux-alma9-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+
+      - name: save - ccache directory
+        if: success()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-linux-alma9-release-${{ github.sha }}

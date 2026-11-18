@@ -8,7 +8,7 @@ add_library(albor-commands STATIC ${CPP_SOURCES})
 
 # the command types are header visible, because a scene binds controls to them from outside the module (§3.5)
 target_include_directories(albor-commands PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-commands PUBLIC cxx_std_23)
+target_compile_features(albor-commands PUBLIC cxx_std_20)
 
 # the module needs the shared value types and the normalized key vocabulary an accelerator is written in, because a
 # shortcut is defined in terms of the portable event types of §8.3 (§3.2, §18.5)

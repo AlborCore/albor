@@ -14,7 +14,7 @@ endif()
 # the host links the core, commands, semantics, ui and application modules it reaches (§10.3)
 add_library(albor-automation-host STATIC ${HOST_SOURCES} ${HOST_PLATFORM_SOURCES})
 target_include_directories(albor-automation-host PUBLIC ${ALBOR_SOURCE_DIR})
-target_compile_features(albor-automation-host PUBLIC cxx_std_23)
+target_compile_features(albor-automation-host PUBLIC cxx_std_20)
 target_link_libraries(albor-automation-host PUBLIC albor-automation albor-application albor-commands albor-semantics albor-ui albor-core)
 
 # the umbrella links the whole archive, which pulls the installer and the host at load (§10.3, AD-02)

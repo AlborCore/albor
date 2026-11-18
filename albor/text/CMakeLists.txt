@@ -11,7 +11,7 @@ add_library(albor-text STATIC ${CPP_SOURCES})
 
 # the contract is header visible, because the standard widgets measure through it (§3.5)
 target_include_directories(albor-text PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-text PUBLIC cxx_std_23)
+target_compile_features(albor-text PUBLIC cxx_std_20)
 
 # the text module needs the run type it measures into and nothing else, so it sits below widgets (§3.2)
 target_link_libraries(albor-text PUBLIC albor-render)

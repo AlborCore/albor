@@ -12,8 +12,8 @@ permissions:
 env:
   CMAKE_VERSION: 4.4.4
   NINJA_VERSION: 1.13.2
-  MSVC_TOOLSET: 14.51.36231
-  WINDOWS_SDK: 10.0.26100.0
+  MSVC_TOOLSET: 14.44
+  WINDOWS_SDK: 10.0.22621.0
   VCPKG_ABI_POLICY: pinned-toolchain-v2
 
 concurrency:
@@ -43,10 +43,10 @@ jobs:
               # the preset launches the compiler through ccache, which the runner image does not ship
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               ccache --max-size 2G
-              # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+              # the framework is c++20, and the build uses the pinned xcode 16.4 rather than the image default
+              sudo xcode-select --switch /Applications/Xcode_16.4.app
           - name: windows-release
-            os: windows-latest
+            os: windows-2022
             enable: true
             preset: release
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
@@ -56,11 +56,12 @@ jobs:
               # the preset launches the compiler through ccache, which the runner image does not ship
               choco install ccache --no-progress -y
           - name: linux-release
-            os: ubuntu-latest
+            os: ubuntu-24.04
             enable: false
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-            setup: sudo apt-get update && sudo apt-get install -y ccache
+            # wayland-protocols and libdecor are vendored, so the cache job installs the frame's system libraries instead (AD-16)
+            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev weston pkg-config libgl1-mesa-dri libegl1
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3

@@ -53,6 +53,10 @@ fi
 # generated sources that clang-format must not reformat
 EXCLUDED=()
 
+# vendored sources keep their upstream format, so the third-party and module-private vendor trees are not reformatted
+THIRD_PARTY_PREFIX='third-party/'
+VENDOR_PREFIX='albor/platform/linux/wayland/vendor/'
+
 # the regex below matches every extension family in this repository:
 #   *.cpp   *.h            — core, tests
 #   *.mm    (e.g. *.macos.mm)   — Objective-C++
@@ -66,7 +70,7 @@ files=()
 while IFS= read -r file; do
     [ -z "$file" ] && continue
     [ -f "$file" ] && files+=("$file")
-done < <(git ls-files --cached --others --exclude-standard './**' | grep -E '\.(cpp|h|c\+\+|mm)$' | { if [ ${#EXCLUDED[@]} -gt 0 ]; then grep -Fxv -e "${EXCLUDED[0]}"; else cat; fi; })
+done < <(git ls-files --cached --others --exclude-standard './**' | grep -E '\.(cpp|h|c\+\+|mm)$' | grep -v -e "^${THIRD_PARTY_PREFIX}" -e "^${VENDOR_PREFIX}" | { if [ ${#EXCLUDED[@]} -gt 0 ]; then grep -Fxv -e "${EXCLUDED[0]}"; else cat; fi; })
 
 if [ ${#files[@]} -eq 0 ]; then
     echo "error: no C++ source files found" >&2
@@ -92,7 +96,7 @@ check_comment_rules() {
     while IFS= read -r file; do
         [ -z "$file" ] && continue
         [ -f "$file" ] && changed+=("$file")
-    done < <({ git diff --name-only --diff-filter=ACMR "$base" -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal' '*.hlsl'; git ls-files --others --exclude-standard -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal' '*.hlsl'; } | sort -u)
+    done < <({ git diff --name-only --diff-filter=ACMR "$base" -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal' '*.hlsl'; git ls-files --others --exclude-standard -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal' '*.hlsl'; } | grep -v -e "^${THIRD_PARTY_PREFIX}" -e "^${VENDOR_PREFIX}" | sort -u)
 
     if [ ${#changed[@]} -eq 0 ]; then
         # nothing changed, so there is nothing to hold to the rules

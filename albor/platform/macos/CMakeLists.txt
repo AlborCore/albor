@@ -17,7 +17,7 @@ add_library(albor-platform-macos STATIC ${MACOS_SOURCES} ${CPP_SOURCES})
 
 # the adapter implements the framework's platform interfaces, which stay free of appkit types (§3.5, AD-05)
 target_include_directories(albor-platform-macos PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_compile_features(albor-platform-macos PUBLIC cxx_std_23)
+target_compile_features(albor-platform-macos PUBLIC cxx_std_20)
 
 # the adapter owns appkit objects, so arc manages their lifetime rather than hand written retain and release (§5.3)
 target_compile_options(albor-platform-macos PRIVATE -fobjc-arc)

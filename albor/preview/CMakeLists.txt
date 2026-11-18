@@ -9,7 +9,7 @@ add_library(albor-preview-objects OBJECT ${CPP_SOURCES})
 
 # the objects reach the project root, which is where the module includes point (§3.2)
 target_include_directories(albor-preview-objects PUBLIC ${ALBOR_SOURCE_DIR})
-target_compile_features(albor-preview-objects PUBLIC cxx_std_23)
+target_compile_features(albor-preview-objects PUBLIC cxx_std_20)
 
 # the host drives the compiler and the widgets, so it links them (§12.2)
 target_link_libraries(albor-preview-objects PUBLIC albor-compiler albor-widgets albor-layout albor-text albor-i18n albor-runtime PRIVATE albor-resources)

@@ -35,6 +35,15 @@
       ]
     },
     {
+      "name": "blend2d",
+      "version>=": "2025-03-08#1",
+      "platform": "linux",
+      "default-features": false,
+      "features": [
+        "jit"
+      ]
+    },
+    {
       "name": "bzip2",
       "default-features": false
     },

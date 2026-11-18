@@ -266,6 +266,32 @@ the host with `albor automation: serving <descriptor>` instead of the previous n
 
 ## 6. CI and verification
 
+### Pinned platform floors
+
+The artifact jobs use explicit images and toolchains rather than floating `*-latest` labels. The pins live in
+`.github/workflows/build.yml`, `cache.yml` and `port.yml`:
+
+| platform | runtime floor | build image | toolchain |
+| --- | --- | --- | --- |
+| macOS | 13.3 | `macos-15` | `Xcode_16.4.app`, `MACOSX_DEPLOYMENT_TARGET=13.3` |
+| Windows | Windows 10 1809 (build 17763, LTSC 2019) | `windows-2022` | VS 2022 17.14, MSVC 14.44.35211, Windows SDK 10.0.22621.0 |
+
+The Windows build declares the target floor in every translation unit (`WINVER=0x0A00`,
+`_WIN32_WINNT=0x0A00`, `NTDDI_VERSION=0x0A000006`), so the SDK headers refuse an API newer
+than Windows 10 1809. A consumer needs the **Microsoft Visual C++ 2015-2022 Redistributable**,
+which is the runtime the MSVC 14.44 toolset links. The GitHub `windows-2022` runner is Server
+2022 and cannot boot a Windows 10 1809 image, so the runtime floor is enforced by the target
+macros, the pinned SDK and the API surface; a Windows 10 1809 smoke run stays a host check.
+
+`macos-15` is the arm64 image, and Intel coverage is not a separate job in this baseline.
+The shader jobs use the same macOS and Windows images, so a regenerated artifact comes from
+the pinned toolchain.
+
+Linux is not part of this parity ledger. Its baseline is RHEL/Alma 9 (glibc 2.34,
+GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21), its current configuration is Ubuntu 24.04, and its CI jobs
+remain disabled until a Linux host runs the full vcpkg build; `docs/linux.md` records the
+baseline, the symbol check and the container workflow.
+
 The latest full Windows run, CI `43962099371` at `7c13661`, recorded:
 
 | configuration | suite | result |

@@ -25,14 +25,15 @@ target_link_libraries(my_app PRIVATE albor-blend2d)
 
 | target | renderer | availability |
 | --- | --- | --- |
-| `albor` | `render-albor` GPU (Metal on macOS, Direct3D on Windows) | macOS and Windows |
-| `albor-blend2d` | Blend2D CPU rasterizer | macOS and Windows |
+| `albor` | `render-albor` GPU on macOS and Windows; Blend2D on Linux | macOS, Windows and Linux Wayland |
+| `albor-blend2d` | Blend2D CPU rasterizer | macOS, Windows and Linux Wayland |
 | advanced `-auto` targets | explicit choice, see below | where the module is built |
 
-The umbrella is offered only where a desktop platform adapter exists. Linux currently has
-the headless platform only, so `albor` and `albor-blend2d` are not defined there until the
-Wayland/X11 adapter lands; use the granular targets below for a headless or test
-application.
+The umbrella is offered only where a desktop platform adapter exists: macOS, Windows and
+Linux Wayland today. The Linux adapter needs the Wayland, xkbcommon and Pango/Cairo/D-Bus
+development packages, and the Linux `albor` umbrella carries Blend2D until the Vulkan
+backend lands (#110). On a host without a desktop adapter, use the granular targets below
+for a headless or test application.
 
 ## A minimal consumer project
 
@@ -80,13 +81,14 @@ target_link_libraries(my_app PRIVATE albor)
 
 `albor` installs the recommended runtime: platform adapter, HarfBuzz, widgets, layout,
 accessibility, i18n, resources and the in-repo GPU renderer. The portable renderer is a
-package feature rather than a default dependency — a plain install carries no Blend2D
-binaries, because the default umbrella needs none:
+package feature on macOS and Windows, where a plain install carries no Blend2D binaries.
+The Linux package carries Blend2D by default, because it is the only renderer the Linux
+umbrella can carry until the Vulkan backend lands (#110):
 
 | feature | what the package gains |
 | --- | --- |
-| *(none)* | `albor`, the recommended GPU runtime |
-| `blend2d` | `albor-blend2d`, the portable CPU renderer umbrella |
+| *(none)* | `albor`, the recommended runtime; on Linux it carries Blend2D by default |
+| `blend2d` | `albor-blend2d`, the portable CPU renderer umbrella on macOS and Windows |
 
 Until the framework sits in a vcpkg registry, the port ships inside the repository
 (`ports/albor/`) and a consumer wires it through an overlay:
@@ -145,9 +147,10 @@ underlying targets directly. The framework's public building blocks are:
 
 | target | carries |
 | --- | --- |
-| `albor-platform-auto` | the selected desktop platform adapter (`-macos-auto` or `-windows-auto`) |
+| `albor-platform-auto` | the selected desktop platform adapter (`-macos-auto`, `-windows-auto` or `-wayland-auto`) |
 | `albor-platform-macos-auto` | AppKit window, input and display-link pacing |
 | `albor-platform-windows-auto` | Win32 window, input and event loop |
+| `albor-platform-wayland-auto` | Wayland window, input, xdg-shell, activation and decorations |
 | `albor-platform-headless-auto` | the headless platform for tests and CI |
 | `albor-text-auto` | the recommended text engine |
 | `albor-text-harfbuzz-auto` | HarfBuzz shaping, line breaking and font resolution |
@@ -297,13 +300,20 @@ design (AD-04, AD-10). See [Tooling](tooling.md#hot-reload) and
 
 ## Requirements and deployment
 
-- C++23 toolchain.
+- C++20 toolchain.
 - CMake 3.28 or newer, with Ninja.
 - vcpkg in manifest mode. In the package route the port declares the dependency closure
   itself; in the source route the dependencies are pinned by the framework's `vcpkg.json`,
   or by the consumer's own manifest naming the same packages.
-- macOS 13.3 or newer for the macOS targets; a supported Windows 10/11 toolchain and SDK for
-  the Windows targets.
+- macOS 13.3 or newer for the macOS targets; Windows 10 1809 or newer and the
+  Microsoft Visual C++ 2015-2022 Redistributable for the Windows targets; RHEL/Alma 9 or
+  newer (glibc 2.34, GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21) for the Linux targets. The build images
+  and toolchains behind those floors are pinned in CI and recorded in
+  [Status and platforms](status.md) and `macos-windows.md` §6.
+- On Linux, the Wayland, xkbcommon and Pango/Cairo/D-Bus development packages. libdecor and
+  the Wayland protocol XMLs are vendored into the framework, so no libdecor package, plugin
+  directory or `wayland-protocols` package is needed. [Linux](linux.md) lists the packages
+  and the Alma 9 container.
 - **No shader toolchain is needed to build.** The Metal `.metallib` and the Direct3D `.dxbc`
   are committed artifacts. Only a change to a shader source needs the matching compiler; see
   [Tooling](tooling.md#the-shaders).
@@ -330,9 +340,9 @@ without changing consumer CMake. When that lands, the consumer still links `albo
 
 ## Troubleshooting
 
-- **`albor` is not defined.** The host has no desktop platform adapter yet. Use the
-  granular targets, or `albor-platform-headless-auto` for a test/CI surface; see
-  [Status and platforms](status.md).
+- **`albor` is not defined.** The host has no desktop platform adapter, or a Linux host is
+  missing the Wayland development packages. Use the granular targets, or
+  `albor-platform-headless-auto` for a test/CI surface; see [Status and platforms](status.md).
 - **No window appears.** The target has a platform adapter but no window was created, or a
   headless platform was linked. Link `albor` for a desktop build.
 - **Duplicate symbols or duplicate backend registration.** The umbrella was linked together
