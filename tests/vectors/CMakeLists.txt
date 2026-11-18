@@ -33,6 +33,9 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/wavef
 # the facade units are generated through the shared rule, which wires them into the fixture (§11.3, §14.2)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/vector_panel.ui")
 
+# the multi-component fixture proves the documented base-first shape builds, with only the export's pair declared (§11.1, §14.2)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/wide.ui")
+
 # the facade units are generated through the shared rule, with the manifest that declares the records it names (§11.2, AD-17)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/record_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
 

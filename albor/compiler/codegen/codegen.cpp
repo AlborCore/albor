@@ -4723,7 +4723,12 @@ namespace albor::compiler
         std::vector<GeneratedFile> files;
         // the implementation units accumulate when chunking, which the merge below groups (AD-03b)
         std::vector<std::string> chunk_contents;
+        // a file with an export emits only that component, because the build declares one pair per file (§11.1, §14.2)
+        const bool exported_only = !file.exported_component.empty();
         for (const CheckedComponent& component : file.components) {
+            // a same-file base is flattened into the export, so it carries no unit of its own (§11.1)
+            if (exported_only && component.name != file.exported_component)
+                continue;
             // the emitter is built per component, because the output files are per component (§14.1)
             ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions, &file.globals, &file.components, &file.imported_components, assets);
             // a component that was blocked empties the whole output, which the driver then treats as failed (§11.3)

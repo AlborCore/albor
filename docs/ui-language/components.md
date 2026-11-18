@@ -67,7 +67,7 @@ An imported file is stricter: it declares exactly one component (`E0804`) named 
 (`E0805`), because importing brings one facade into scope. A file that declares a base and its
 derived component is therefore a composition root and cannot be imported. If two independent
 components both need to be reused, give each its own file and import them; a further component
-that is not the exported component's base is not built, so split it into its own file.
+that is not the exported component's base is refused with `E0806`, so split it into its own file.
 
 ## Using a component as an element
 

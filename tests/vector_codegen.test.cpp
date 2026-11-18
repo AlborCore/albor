@@ -29,6 +29,7 @@
 #include "tests/vectors/waveform_fixture.h"
 #include "vector_panel.h"
 #include "waveform_panel.h"
+#include "wide.h"
 
 using namespace albor;
 
@@ -749,6 +750,22 @@ TEST(RepeatHandlerCodegen, TheGeneratedHandlerFacadesLink) {
     EXPECT_TRUE(panel.tasks().empty());
     EXPECT_TRUE(component.tasks().empty());
     EXPECT_FALSE(guarded.show());
+}
+
+TEST(VectorCodegen, AMultiComponentFacadeBuildsItsBaseTree) {
+    // arrange a saved root whose base is declared first and whose derived component is the export (§11.1)
+    BindingEngine engine;
+    // act the exported facade constructs the flattened tree, which compiled without a base pair (§11.1, §14.2)
+    Wide wide(&engine, nullptr);
+    // assert the base column is the root child, because the base tree is what the export flattens (§11.1)
+    ASSERT_EQ(wide.children().size(), 1U);
+    UiNode* const column = wide.child_at(0);
+    ASSERT_NE(column, nullptr);
+    // assert the derived label fills the base slot, which is what the splice produced (§11.1)
+    ASSERT_EQ(column->children().size(), 1U);
+    auto* const label = dynamic_cast<Label*>(column->child_at(0));
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->text(), "Wide");
 }
 
 TEST(RepeatHandlerCodegen, ARowHandlerRunsWithTheRowContext) {
