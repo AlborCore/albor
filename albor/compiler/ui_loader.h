@@ -41,6 +41,9 @@ namespace albor::compiler
         // hand out every file the last run read or tried to read, the root first and each import in load order (§14.2)
         [[nodiscard]] const std::vector<std::filesystem::path>& dependencies() const;
 
+        // hand out the root parse tree the checked file aliases, which an editor index reads after the check (§12.2)
+        [[nodiscard]] const SourceFile* root_source() const;
+
     private:
         // load one file, reporting a missing, cyclic or invalid import against the span that named it (§11.1)
         [[nodiscard]] std::optional<CheckedFile> load(const std::filesystem::path& source, const SourceSpan& import_span, bool root, const std::filesystem::path& importing);
@@ -68,6 +71,9 @@ namespace albor::compiler
 
         // the parse trees the checked expressions alias, which stay alive for every result the loader returned (§11.1)
         std::vector<std::unique_ptr<SourceFile>> m_parsed;
+
+        // the root parse tree of the last run, which an editor index reads before the result is cached (§12.2)
+        const SourceFile* m_root_source = nullptr;
 
         // the files currently open on the import path, which is what makes a cycle detectable (§11.1)
         std::vector<std::filesystem::path> m_stack;

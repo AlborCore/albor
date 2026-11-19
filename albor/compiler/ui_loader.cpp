@@ -16,11 +16,18 @@ namespace albor::compiler
         return m_dependencies;
     }
 
+    const SourceFile* UiImportLoader::root_source() const {
+        // the root parse tree is what the checked file aliases, which an editor index reads (§12.2)
+        return m_root_source;
+    }
+
     std::optional<CheckedFile> UiImportLoader::check(const std::filesystem::path& source, RootNameCheck root_name) {
         // the catalog is reset first, because a declaration a previous root added must not leak into this run (§11.1)
         m_catalog = m_initial_catalog;
         // the previous checked cache is dropped while the parse trees stay alive for retained results (§11.1)
         m_checked.clear();
+        // the previous root tree is dropped, because an index names this run alone (§12.2)
+        m_root_source = nullptr;
         // the open path starts empty, because the root has no importer (§11.1)
         m_stack.clear();
         // the dependency list starts empty, because it names this run alone (§14.2)
@@ -64,6 +71,9 @@ namespace albor::compiler
         const std::vector<Token> tokens = Lexer(*text, file_diagnostics).tokenize();
         // the parse tree is owned by the loader, because every checked expression aliases it (§11.1)
         auto parsed = std::make_unique<SourceFile>(Parser(tokens, file_diagnostics).parse());
+        // the root tree is remembered, because an editor index reads it after the check (§12.2)
+        if (root)
+            m_root_source = parsed.get();
         // the structs the file declares join the catalog, because an imported component property may name one (§11.1)
         register_ui_structs(*parsed, m_catalog, file_diagnostics);
         // the enums the file declares join the catalog for the same reason (§11.1)
@@ -108,6 +118,8 @@ namespace albor::compiler
                 ImportedComponent interface;
                 // the name is what an element writes, so an instance resolves against it (§11.1)
                 interface.name = component.name;
+                // the name span is what a jump from an element points at, because the declaration is imported (§12.2)
+                interface.name_span = component.name_span;
                 // the generated header is named after the component, which is the file the importer includes (§11.1)
                 interface.header = component_header_name(component.name);
                 // the properties are copied, because an assignment resolves against them (§11.1)

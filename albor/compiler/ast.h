@@ -371,6 +371,9 @@ namespace albor::compiler
         // the property being assigned, the signal being invoked or the collection the method runs on (§11.1)
         std::string target;
 
+        // where the target was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan target_span;
+
         // the built-in method name, which is empty for an assignment, a signal invocation and a field write (§11.1)
         std::string method;
 
@@ -393,11 +396,17 @@ namespace albor::compiler
         // the declared name, which the checker resolves and the facade exposes (§11.1)
         std::string name;
 
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
+
         // the parameter types as written, which the manifest and the facade agree on (§11.1)
         std::vector<std::string> parameter_types;
 
         // the parameter names in declaration order, which a handler body reads the raised value by (§11.1)
         std::vector<std::string> parameter_names;
+
+        // where each parameter name was written, which a jump from a handler body points at (§12.2)
+        std::vector<SourceSpan> parameter_name_spans;
 
         // where the declaration was written (§11.1)
         SourceSpan span;
@@ -408,6 +417,9 @@ namespace albor::compiler
     {
         // the name the `.ui` body writes where it binds the command (§18)
         std::string name;
+
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
 
         // the label a menu item or a button shows, which one declaration shares across every consumer (§18)
         std::string label;
@@ -422,6 +434,9 @@ namespace albor::compiler
         // the name the body writes to read the argument (§11.1)
         std::string name;
 
+        // where the name was written, which is what a jump to the parameter points at (§12.2)
+        SourceSpan name_span;
+
         // the type as written, which the checker resolves against the catalog (§11.1)
         std::string type;
 
@@ -434,6 +449,9 @@ namespace albor::compiler
     {
         // the declared name, which a call resolves against (§11.1)
         std::string name;
+
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
 
         // the parameters in written order, which the arguments must match (§11.1)
         std::vector<FunctionParameter> parameters;
@@ -453,6 +471,9 @@ namespace albor::compiler
     {
         // the declared name, which a reference resolves against (§11.1)
         std::string name;
+
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
 
         // the declared type as written, which the checker resolves against the catalog (§11.1)
         std::string type;
@@ -480,6 +501,9 @@ namespace albor::compiler
         // the declared name, which the checker resolves and the facade exposes (§11.1)
         std::string name;
 
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
+
         // the type as written between the angle brackets (§11.1)
         std::string type;
 
@@ -499,6 +523,9 @@ namespace albor::compiler
         // the property name as written, which the checker resolves against the element's type (§11.1)
         std::string name;
 
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
+
         // the assigned expression, which is a literal for a static value (§11.1)
         ExpressionPtr value;
 
@@ -511,6 +538,9 @@ namespace albor::compiler
     {
         // the signal name as written, which the checker resolves against the element's type (§11.1)
         std::string name;
+
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
 
         // the body, which may only assign properties or invoke signals (§11.1)
         std::vector<HandlerStatement> body;
@@ -558,6 +588,9 @@ namespace albor::compiler
         // the element type name as written, which is empty for a repeat (§11.1)
         std::string element_type;
 
+        // where the element type was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan element_type_span;
+
         // the author assigned id, which is the node's identity and is empty when the author wrote none (§11.1, AD-11)
         std::string explicit_id;
 
@@ -582,8 +615,14 @@ namespace albor::compiler
         // the name the repeated item is bound to inside the body (§11.1)
         std::string repeat_item_name;
 
+        // where the item binding was written, which is what a jump to it points at (§12.2)
+        SourceSpan repeat_item_span;
+
         // the name the repeated index is bound to inside the body, which is empty when the author wrote none (§11.1)
         std::string repeat_index_name;
+
+        // where the index binding was written, which is what a jump to it points at (§12.2)
+        SourceSpan repeat_index_span;
 
         // the body of a repeat, which is the element instantiated per item (§11.1)
         std::unique_ptr<TreeNode> repeat_body;
@@ -630,6 +669,9 @@ namespace albor::compiler
         // the struct name as written, which becomes the record type a field read resolves against (§11.1)
         std::string name;
 
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
+
         // the fields in declaration order, which is the shape a field read walks (§11.1)
         std::vector<StructField> fields;
 
@@ -643,6 +685,9 @@ namespace albor::compiler
         // the enum name as written, which becomes the named value set a member resolves against (§11.1)
         std::string name;
 
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
+
         // the member names in declaration order, which is the closed set a value may take (§11.1)
         std::vector<std::string> members;
 
@@ -655,6 +700,9 @@ namespace albor::compiler
     {
         // the component name as written, which becomes the generated facade class name (§11.1, AD-03a)
         std::string name;
+
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
 
         // the base component as written, which is empty when the component derives from none (§11.1)
         std::string base;
