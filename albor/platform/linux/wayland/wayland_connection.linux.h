@@ -14,6 +14,7 @@
 #include "viewporter-client-protocol.h"
 #include "xdg-activation-client-protocol.h"
 #include "xdg-decoration-client-protocol.h"
+#include "xdg-foreign-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
 #ifdef ALBOR_WAYLAND_LIBDECOR
@@ -66,6 +67,9 @@ namespace albor::wayland
 
         // hand out the decoration manager, which is null where the compositor draws none (§5.3)
         [[nodiscard]] zxdg_decoration_manager_v1* decorations() const;
+
+        // hand out the exporter that names a window to the portal, null where the compositor has no xdg-foreign (§5.3)
+        [[nodiscard]] zxdg_exporter_v2* exporter() const;
 
         // hand out the activation protocol, which is null where the compositor cannot raise a window (§5.1)
         [[nodiscard]] xdg_activation_v1* activation() const;
@@ -219,6 +223,12 @@ namespace albor::wayland
 
         // the registry name the decoration manager was advertised under, which a removal clears by
         std::uint32_t m_decorations_name = 0;
+
+        // the exporter that names a window to the portal, which is null where the compositor has no xdg-foreign (§5.3)
+        zxdg_exporter_v2* m_exporter = nullptr;
+
+        // the registry name the exporter was advertised under, which a removal clears by
+        std::uint32_t m_exporter_name = 0;
 
         // the activation protocol, which is null where the compositor cannot raise a window (§5.1)
         xdg_activation_v1* m_activation = nullptr;

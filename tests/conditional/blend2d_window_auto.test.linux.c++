@@ -66,7 +66,7 @@ namespace
         // override: ignore the pointer exit, which the compositor drives and no test here fakes (§8.3)
         void on_platform_pointer_exited() override {}
 
-        // override: ignore the appearance change, which the portal path will raise in #234 (§8.4)
+        // override: ignore the appearance change, which this suite does not drive (§8.4)
         void on_platform_appearance_changed(const SystemAppearance&) override {}
     };
 } // namespace

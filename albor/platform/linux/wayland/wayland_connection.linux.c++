@@ -151,6 +151,11 @@ namespace albor::wayland
             zxdg_decoration_manager_v1_destroy(m_decorations);
             m_decorations = nullptr;
         }
+        // the exporter is released, which the per window exports no longer reference (§5.3)
+        if (m_exporter != nullptr) {
+            zxdg_exporter_v2_destroy(m_exporter);
+            m_exporter = nullptr;
+        }
         if (m_activation != nullptr) {
             xdg_activation_v1_destroy(m_activation);
             m_activation = nullptr;
@@ -243,6 +248,11 @@ namespace albor::wayland
     xdg_activation_v1* WaylandConnection::activation() const {
         // the protocol is null where the compositor cannot raise a window (§5.1)
         return m_activation;
+    }
+
+    zxdg_exporter_v2* WaylandConnection::exporter() const {
+        // the exporter is null where the compositor cannot name a window to the portal (§5.3)
+        return m_exporter;
     }
 
     wp_fractional_scale_manager_v1* WaylandConnection::fractional_scales() const {
@@ -450,6 +460,12 @@ namespace albor::wayland
             m_activation_name = name;
             return;
         }
+        // the exporter is optional, and a compositor without one cannot name a window to the portal (§5.3)
+        if (interface_is(interface, zxdg_exporter_v2_interface.name)) {
+            m_exporter = static_cast<zxdg_exporter_v2*>(wl_registry_bind(registry, name, &zxdg_exporter_v2_interface, 1));
+            m_exporter_name = name;
+            return;
+        }
         // the fractional scale manager is optional, and a compositor without one keeps the integer scale (AD-27)
         if (interface_is(interface, wp_fractional_scale_manager_v1_interface.name)) {
             m_fractional_scales = static_cast<wp_fractional_scale_manager_v1*>(wl_registry_bind(registry, name, &wp_fractional_scale_manager_v1_interface, 1));
@@ -505,6 +521,11 @@ namespace albor::wayland
         if (m_decorations_name == name) {
             m_decorations = nullptr;
             m_decorations_name = 0;
+            return;
+        }
+        if (m_exporter_name == name) {
+            m_exporter = nullptr;
+            m_exporter_name = 0;
             return;
         }
         if (m_activation_name == name) {

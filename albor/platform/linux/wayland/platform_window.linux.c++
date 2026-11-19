@@ -18,6 +18,7 @@
 
 #include "albor/platform/linux/wayland/input_normalization.h"
 #include "albor/platform/linux/wayland/native_surface.linux.h"
+#include "albor/platform/linux/wayland/portal.h"
 #include "albor/platform/linux/wayland/wayland_connection.linux.h"
 #include "albor/window/window_metrics.h"
 #include "albor/window/window_options.h"
@@ -29,6 +30,8 @@ namespace albor
     using wayland::key_from_keysym;
     using wayland::modifiers_from_state;
     using wayland::PendingWheel;
+    using wayland::PortalClient;
+    using wayland::PortalSubscription;
     using wayland::WaylandConnection;
     using wayland::WaylandNativeSurface;
 
@@ -93,6 +96,18 @@ namespace albor
 
         // the shared connection the surface and the shell come from, which the loop keeps alive (§5.3)
         std::shared_ptr<WaylandConnection> connection;
+
+        // the portal client the appearance follows, which a host without a portal leaves unavailable (§8.4)
+        std::shared_ptr<PortalClient> portal;
+
+        // the registration the appearance changes arrive through, which the window releases with its state (§8.4)
+        PortalSubscription appearance;
+
+        // the exported surface reference the portal imports as this window, which is null without xdg-foreign (§5.3)
+        zxdg_exported_v2* exported = nullptr;
+
+        // the handle the compositor assigned the export, which the portal window identifier carries (§5.3)
+        std::string exported_handle;
 
         // the activation protocol the window is raised through, which is null where the compositor cannot raise it (§5.1)
         xdg_activation_v1* activation = nullptr;
@@ -542,6 +557,12 @@ namespace albor
             // a window that was never created has nothing to destroy (§5.2)
             if (!state->created)
                 return;
+            // the export is released before the role, which the portal may still reference the window through (§5.3)
+            if (state->exported != nullptr) {
+                zxdg_exported_v2_destroy(state->exported);
+                state->exported = nullptr;
+                state->exported_handle.clear();
+            }
             // the text input is destroyed, which the input method releases its focus under (§8.3)
             if (state->text_input != nullptr) {
                 zwp_text_input_v3_destroy(state->text_input);
@@ -950,6 +971,17 @@ namespace albor
                 state->decoration_mode = WaylandDecorationMode::ServerSide;
             else
                 state->decoration_mode = client_side_available ? WaylandDecorationMode::ClientSide : WaylandDecorationMode::None;
+        }
+
+        // record the handle the compositor assigned the export, which the portal imports the window by (§5.3)
+        void on_exported_handle(void* data, zxdg_exported_v2*, const char* handle) {
+            // the export was created with the state, which is the only receiver (§5.3)
+            WaylandWindowState* state = static_cast<WaylandWindowState*>(data);
+            // a compositor that named no handle leaves the window unexported (§5.3)
+            if (handle == nullptr)
+                return;
+            // the handle is what the portal window identifier carries (§5.3)
+            state->exported_handle = handle;
         }
 
         // the size the popup configure proposed, which the shell surface configure applies (§5.1)
@@ -1458,6 +1490,9 @@ namespace albor
         // the listener set of the decoration, which carries the mode the compositor chose (§5.3)
         constexpr zxdg_toplevel_decoration_v1_listener DECORATION_LISTENER = {&on_decoration_configure};
 
+        // the listener set of the export, which carries the handle the portal imports the window by (§5.3)
+        constexpr zxdg_exported_v2_listener EXPORTED_LISTENER = {&on_exported_handle};
+
         // the listener set of the pointer, which carries the normalized input of §8.3
         constexpr wl_pointer_listener POINTER_LISTENER = {
             &on_pointer_enter,
@@ -1482,6 +1517,26 @@ namespace albor
 
         // the listener set of the text input, which carries the composition of §8.3
         constexpr zwp_text_input_v3_listener TEXT_INPUT_LISTENER = {&on_text_input_enter, &on_text_input_leave, &on_text_input_preedit, &on_text_input_commit, &on_text_input_delete, &on_text_input_done};
+
+        // export the window to the portal, which needs the toplevel role and the compositor's exporter (§5.3)
+        void export_toplevel(WaylandWindowState* state) {
+            // a popup has no toplevel role to export, which the protocol refuses (§5.3)
+            if (state->popup != nullptr)
+                return;
+            // a compositor without the exporter cannot name the window to the portal (§5.3)
+            if (state->connection == nullptr || state->connection->exporter() == nullptr)
+                return;
+            // a surface that was taken down has nothing to export (§5.3)
+            if (state->surface == nullptr)
+                return;
+            // the exported reference is what the portal imports the window by (§5.3)
+            state->exported = zxdg_exporter_v2_export_toplevel(state->connection->exporter(), state->surface);
+            // an export the compositor refused leaves no parent for a panel (§5.3)
+            if (state->exported == nullptr)
+                return;
+            // the handle event names the window, which arrives on the next dispatch (§5.3)
+            zxdg_exported_v2_add_listener(state->exported, &EXPORTED_LISTENER, state);
+        }
 
         // build the text input the window's input method session rides, which the manager may not exist for (§8.3)
         zwp_text_input_v3* create_text_input(WaylandWindowState* state) {
@@ -1626,6 +1681,18 @@ namespace albor
         state->activation = connection->activation();
         state->requested_size = options.size;
         state->popup_role = options.role == WindowRole::Popup;
+        // the desktop's scheme is what the window mirrors, which a host without a portal leaves at the default (§8.4)
+        state->portal = PortalClient::shared();
+        // the window follows the scheme, which a change reports to its listener on the ui thread (§8.4)
+        state->appearance = state->portal->subscribe_appearance([weak = std::weak_ptr<WaylandWindowState>(state)](ColorScheme scheme) {
+            // a window that was destroyed before the change has nothing to report (§8.4)
+            const std::shared_ptr<WaylandWindowState> alive = weak.lock();
+            // an unattached listener receives nothing, which a closed window leaves (§4.2)
+            if (alive == nullptr || alive->listener == nullptr)
+                return;
+            // the framework receives the appearance the desktop now renders with (§8.4)
+            alive->listener->on_platform_appearance_changed(SystemAppearance{.scheme = scheme});
+        });
         // the xkb context is what the keymaps are built in, which one per window is (§8.3)
         state->xkb = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
         // the surface is created on the compositor, which no buffer may touch before the first configure (§5.3)
@@ -1820,6 +1887,8 @@ namespace albor
         state->text_input = create_text_input(state.get());
         if (state->text_input != nullptr)
             zwp_text_input_v3_add_listener(state->text_input, &TEXT_INPUT_LISTENER, state.get());
+        // the window is exported to the portal, so a panel can name it as its parent (§5.3)
+        export_toplevel(state.get());
         // the window is returned as the hal, so no wayland type escapes the module (§3.5, AD-05)
         return std::unique_ptr<WaylandPlatformWindow>(new WaylandPlatformWindow(state));
     }
@@ -2015,8 +2084,12 @@ namespace albor
     }
 
     SystemAppearance WaylandPlatformWindow::system_appearance() const {
-        // the portable dark scheme stands in until the portal-based appearance is added in #234 (§5.3, §8.4)
-        return SystemAppearance{};
+        // the appearance is a system value, so it is what the portal last reported rather than a cached paint (§5.3, §8.4)
+        SystemAppearance appearance;
+        // a host without a portal keeps the portable dark scheme, which the default names (§5.3)
+        if (m_state->portal != nullptr)
+            appearance.scheme = m_state->portal->color_scheme();
+        return appearance;
     }
 
     void WaylandPlatformWindow::request_frame() {
@@ -2093,4 +2166,23 @@ namespace albor
 
     WaylandPlatformWindow::WaylandPlatformWindow(std::shared_ptr<WaylandWindowState> state) :
         m_state(std::move(state)) {}
+
+    std::string portal_parent_handle(NativeWindowHandle window) {
+        // a handle that names no window gives the portal no parent, which the empty string reports (§5.3)
+        if (!window.valid())
+            return {};
+        // the state is cast back from the opaque handle, which only the adapter reads (§3.5, AD-05)
+        auto* state = static_cast<WaylandWindowState*>(const_cast<void*>(window.object()));
+        // a state without an export names no window the portal can import (§5.3)
+        if (state == nullptr || state->exported == nullptr)
+            return {};
+        // the handle arrives asynchronously, so a panel opened at once waits one roundtrip for it (§5.3)
+        if (state->exported_handle.empty() && state->connection != nullptr)
+            wl_display_roundtrip(state->connection->display());
+        // an export the compositor never named leaves no parent for the panel (§5.3)
+        if (state->exported_handle.empty())
+            return {};
+        // the portal names a wayland parent by its scheme and the exported handle (§5.3)
+        return "wayland:" + state->exported_handle;
+    }
 } // namespace albor

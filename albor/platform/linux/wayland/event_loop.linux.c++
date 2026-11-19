@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "albor/platform/linux/wayland/platform_window.h"
+#include "albor/platform/linux/wayland/portal.h"
 #include "albor/platform/linux/wayland/wayland_connection.linux.h"
 #include "albor/window/platform_window_factory.h"
 
@@ -19,6 +20,9 @@ namespace albor::wayland
     {
         // the shared connection the loop polls and dispatches, which the factory built (§5.3)
         std::shared_ptr<WaylandConnection> connection;
+
+        // the portal client the loop dispatches, which carries the setting changes of §8.4
+        std::shared_ptr<PortalClient> portal;
 
         // the timer the frame ticks arrive on, which the pacing arms (§4.3)
         int pacing_fd = -1;
@@ -31,6 +35,8 @@ namespace albor::wayland
         m_state(std::make_unique<State>()) {
         // the shared connection is what the loop polls, built or adopted under the default name (§5.3)
         m_state->connection = WaylandConnection::connect(std::string_view());
+        // the portal client carries a setting change to the windows, which a host without one leaves unavailable (§8.4)
+        m_state->portal = PortalClient::shared();
         // the pacing timer is created up front, so starting the pacing source cannot fail later (§4.3)
         m_state->pacing_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     }
@@ -67,7 +73,7 @@ namespace albor::wayland
             // the requests the client queued are sent, which the compositor answers (§4.1)
             m_state->connection->flush();
             // the poll set waits on the display first, which is where the compositor events arrive (§4.1)
-            pollfd fds[3] = {};
+            pollfd fds[4] = {};
             std::size_t count = 1;
             fds[0].fd = m_state->connection->fd();
             fds[0].events = POLLIN;
@@ -90,6 +96,15 @@ namespace albor::wayland
                 pacing_index = count;
                 count++;
             }
+            // the portal bus joins the poll set where the desktop answered, which carries a setting change (§8.4)
+            std::size_t portal_index = 0;
+            const int portal_fd = m_state->portal != nullptr ? m_state->portal->fd() : -1;
+            if (portal_fd >= 0 && portal_fd != fds[0].fd) {
+                fds[count].fd = portal_fd;
+                fds[count].events = POLLIN;
+                portal_index = count;
+                count++;
+            }
             // the wait is bounded to one millisecond, so a posted task is answered without a native event (§4.1)
             const int ready = poll(fds, static_cast<nfds_t>(count), 1);
             // a poll failure of the permanent kind means the compositor is gone, which ends the run (§4.1)
@@ -105,6 +120,9 @@ namespace albor::wayland
             if (decoration_index != 0 && (fds[decoration_index].revents & POLLIN) != 0)
                 m_state->connection->dispatch_decorations();
 #endif
+            // a readable portal bus carries a setting change, and a hung up one is dispatched so the client drops it (§8.4)
+            if (portal_index != 0 && (fds[portal_index].revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0)
+                m_state->portal->dispatch();
             // the pacing timer expired when its descriptor is readable, which counts and pumps (§4.3)
             if (pacing_index != 0 && (fds[pacing_index].revents & POLLIN) != 0) {
                 // the expiration count is read once, because a stalled loop coalesces its missed ticks (§4.3)
