@@ -35,13 +35,37 @@ namespace albor::harfbuzz
             return factory;
         }
 
+        // map a written weight to the directwrite scale, which the family matches a face against (§9.1)
+        DWRITE_FONT_WEIGHT dwrite_weight(FontWeight weight) {
+            // the thin member is the lightest stroke a family may carry (§9.1)
+            if (weight == FontWeight::Thin)
+                return DWRITE_FONT_WEIGHT_THIN;
+            // the light member follows thin (§9.1)
+            if (weight == FontWeight::Light)
+                return DWRITE_FONT_WEIGHT_LIGHT;
+            // the regular member is the default the collection asked for before a weight was carried (§9.1)
+            if (weight == FontWeight::Regular)
+                return DWRITE_FONT_WEIGHT_NORMAL;
+            // the medium member follows regular (§9.1)
+            if (weight == FontWeight::Medium)
+                return DWRITE_FONT_WEIGHT_MEDIUM;
+            // the semibold member sits below the bold face (§9.1)
+            if (weight == FontWeight::Semibold)
+                return DWRITE_FONT_WEIGHT_SEMI_BOLD;
+            // the bold member is the emphatic stroke a family usually carries (§9.1)
+            if (weight == FontWeight::Bold)
+                return DWRITE_FONT_WEIGHT_BOLD;
+            // the black member is the heaviest stroke a family may carry (§9.1)
+            return DWRITE_FONT_WEIGHT_BLACK;
+        }
+
         // the resolver over directwrite, which is the platform font source this engine draws from (§9.1, AD-28)
         class DirectWriteTypefaceResolver final : public HarfbuzzTypefaceResolver
         {
         public:
             // resolve the family through the system collection, which owns the face this resolver releases (§9.1)
-            explicit DirectWriteTypefaceResolver(const std::string& family_name) :
-                HarfbuzzTypefaceResolver(family_name) {
+            explicit DirectWriteTypefaceResolver(const std::string& family_name, FontWeight weight) :
+                HarfbuzzTypefaceResolver(family_name, weight) {
                 // the factory the system collection comes from is up before any ask (§9.1)
                 IDWriteFactory* factory = dwrite_factory();
                 // a factory that did not come up leaves no face to resolve (§9.1)
@@ -116,9 +140,9 @@ namespace albor::harfbuzz
                     collection->Release();
                     return;
                 }
-                // the face is the first matching font of the family, at the normal weight (§9.1)
+                // the face is the closest member of the family at the requested weight (§9.1)
                 IDWriteFont* font = nullptr;
-                if (family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, &font) != S_OK || font == nullptr) {
+                if (family->GetFirstMatchingFont(dwrite_weight(weight), DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, &font) != S_OK || font == nullptr) {
                     family->Release();
                     collection->Release();
                     return;
@@ -160,16 +184,16 @@ namespace albor::harfbuzz
         };
     } // namespace
 
-    std::unique_ptr<HarfbuzzTypefaceResolver> HarfbuzzTypefaceResolver::create(const std::string& family_name) {
+    std::unique_ptr<HarfbuzzTypefaceResolver> HarfbuzzTypefaceResolver::create(const std::string& family_name, FontWeight weight) {
         // an empty family name names no font, so the resolver is refused rather than built empty (§9.1)
         if (family_name.empty())
             return nullptr;
         // the platform resolver is returned as the base, so no platform type escapes this module (§3.5)
-        return std::unique_ptr<HarfbuzzTypefaceResolver>(new DirectWriteTypefaceResolver(family_name));
+        return std::unique_ptr<HarfbuzzTypefaceResolver>(new DirectWriteTypefaceResolver(family_name, weight));
     }
 
-    std::unique_ptr<HarfbuzzTypefaceResolver> HarfbuzzTypefaceResolver::create_default() {
+    std::unique_ptr<HarfbuzzTypefaceResolver> HarfbuzzTypefaceResolver::create_default(FontWeight weight) {
         // an empty family asks the system for its ui face, which a run that names none draws with (§9.1)
-        return std::unique_ptr<HarfbuzzTypefaceResolver>(new DirectWriteTypefaceResolver(std::string()));
+        return std::unique_ptr<HarfbuzzTypefaceResolver>(new DirectWriteTypefaceResolver(std::string(), weight));
     }
 } // namespace albor::harfbuzz

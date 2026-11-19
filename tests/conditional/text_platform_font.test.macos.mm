@@ -27,6 +27,11 @@ TEST(MacosPlatformFont, AnUnknownFamilyIsRefusedRatherThanSubstituted) {
     // assert the resolver came up but carries no face, because a fallback is refused under the wrong family (§15)
     ASSERT_NE(resolver, nullptr);
     EXPECT_EQ(resolver->typeface(), nullptr);
+    // act a bold request names the same absent family, which the weighted descriptor path resolves (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> bold = harfbuzz::HarfbuzzTypefaceResolver::create("Albor Missing Family 0xA", FontWeight::Bold);
+    // assert the substituted family is refused at a weight too, because identity does not depend on it (§15)
+    ASSERT_NE(bold, nullptr);
+    EXPECT_EQ(bold->typeface(), nullptr);
 }
 
 TEST(MacosPlatformFont, AFamilyTheSystemShipsResolves) {
@@ -35,6 +40,74 @@ TEST(MacosPlatformFont, AFamilyTheSystemShipsResolves) {
     // assert the face resolved, because the family the system offers is the one the run named (§9.1, AD-28)
     ASSERT_NE(resolver, nullptr);
     EXPECT_NE(resolver->typeface(), nullptr);
+}
+
+TEST(MacosPlatformFont, AWeightSelectsTheBoldFaceOfItsFamily) {
+    // arrange the upright family every macos desktop ships, which carries both faces the test asks for (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> regular = harfbuzz::HarfbuzzTypefaceResolver::create("Helvetica", FontWeight::Regular);
+    // act the bold request names the same family at the heavier weight (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> bold = harfbuzz::HarfbuzzTypefaceResolver::create("Helvetica", FontWeight::Bold);
+    // assert both requests resolved, because the family carries both members (§9.1, AD-28)
+    ASSERT_NE(regular, nullptr);
+    ASSERT_NE(bold, nullptr);
+    EXPECT_NE(regular->typeface(), nullptr);
+    EXPECT_NE(bold->typeface(), nullptr);
+    // act the bytes each face hands over are what the engine shapes with (§15, AD-34)
+    const std::vector<std::uint8_t> regular_bytes = harfbuzz::platform_font_bytes(regular->typeface());
+    const std::vector<std::uint8_t> bold_bytes = harfbuzz::platform_font_bytes(bold->typeface());
+    // assert the two requests selected different faces, because the weight reached core text (§9.1)
+    EXPECT_FALSE(regular_bytes.empty());
+    EXPECT_FALSE(bold_bytes.empty());
+    EXPECT_NE(regular_bytes, bold_bytes);
+    // act a request that names no weight is the regular face, which the default argument preserves (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> named = harfbuzz::HarfbuzzTypefaceResolver::create("Helvetica");
+    ASSERT_NE(named, nullptr);
+    // assert the default request stays on the regular face, because a weight is opt in (§9.1)
+    EXPECT_EQ(harfbuzz::platform_font_bytes(named->typeface()), regular_bytes);
+    // act the default face carries the weight too, which the system ui font answers (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> default_regular = harfbuzz::HarfbuzzTypefaceResolver::create_default();
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> default_bold = harfbuzz::HarfbuzzTypefaceResolver::create_default(FontWeight::Bold);
+    ASSERT_NE(default_regular, nullptr);
+    ASSERT_NE(default_bold, nullptr);
+    // act the ui face is a variable font, whose instances share one set of tables (§9.1)
+    const CTFontRef default_regular_font = static_cast<CTFontRef>(const_cast<void*>(default_regular->typeface()));
+    const CTFontRef default_bold_font = static_cast<CTFontRef>(const_cast<void*>(default_bold->typeface()));
+    // the instance name is what distinguishes the two, which the shared tables cannot (§9.1)
+    CFStringRef regular_name = default_regular_font != nullptr ? CTFontCopyPostScriptName(default_regular_font) : nullptr;
+    CFStringRef bold_name = default_bold_font != nullptr ? CTFontCopyPostScriptName(default_bold_font) : nullptr;
+    // assert the ui instance changes with the weight, because the shared tables cannot prove it (§9.1)
+    EXPECT_NE(regular_name, nullptr);
+    EXPECT_NE(bold_name, nullptr);
+    if (regular_name != nullptr && bold_name != nullptr) {
+        EXPECT_NE(CFStringCompare(regular_name, bold_name, 0), kCFCompareEqualTo);
+    }
+    // assert the selected instance carries the bold trait, which a name change alone would not prove (§9.1)
+    if (default_bold_font != nullptr) {
+        EXPECT_TRUE((CTFontGetSymbolicTraits(default_bold_font) & kCTFontTraitBold) != 0);
+    }
+    // the copied names go back, because they were made above for this assertion (§9.1)
+    if (regular_name != nullptr)
+        CFRelease(regular_name);
+    if (bold_name != nullptr)
+        CFRelease(bold_name);
+    // act the engine built at each weight resolves the face the factory handed over (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine_regular = harfbuzz::HarfbuzzTextEngine::create_platform("Helvetica", FontWeight::Regular);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine_bold = harfbuzz::HarfbuzzTextEngine::create_platform("Helvetica", FontWeight::Bold);
+    // assert the engine keys a different face per weight, so the selection reaches the shaper (§9.1, AD-34)
+    EXPECT_NE(engine_regular, nullptr);
+    EXPECT_NE(engine_bold, nullptr);
+    if (engine_regular != nullptr && engine_bold != nullptr) {
+        EXPECT_NE(engine_regular->font_hash(), engine_bold->font_hash());
+    }
+    // act the same run is measured by each engine, which is what a bold label asks it for (§9.1)
+    const TextLayout regular_layout = engine_regular != nullptr ? engine_regular->measure("Hamburgefonstiv", 0.0f, 20.0f) : TextLayout{};
+    const TextLayout bold_layout = engine_bold != nullptr ? engine_bold->measure("Hamburgefonstiv", 0.0f, 20.0f) : TextLayout{};
+    // assert the bold face shapes a wider run, because the selected face reached the shaper (§9.1, AD-34)
+    EXPECT_FALSE(regular_layout.empty());
+    EXPECT_FALSE(bold_layout.empty());
+    EXPECT_GT(bold_layout.size.width, regular_layout.size.width);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
 }
 
 TEST(MacosPlatformFont, TheSystemFaceResolvesThroughADefaultCreate) {

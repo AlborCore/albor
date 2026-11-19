@@ -56,6 +56,14 @@ TEST(LinuxPlatformFont, AnUnknownFamilyIsRefusedRatherThanSubstituted) {
         // the typeface is what the caller reads, and it is null when the family was substituted (§15)
         EXPECT_EQ(resolver->typeface(), nullptr);
     }
+    // act the same absent family is asked for at a bold weight, which the pattern matches at that weight (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> bold = harfbuzz::HarfbuzzTypefaceResolver::create("Albor Missing Family 0xA", FontWeight::Bold);
+    // assert the substituted family is refused at a weight too, because identity does not depend on it (§15)
+    EXPECT_NE(bold, nullptr);
+    if (bold != nullptr) {
+        // the typeface is null for the bold request as well, because fontconfig substituted a family (§15)
+        EXPECT_EQ(bold->typeface(), nullptr);
+    }
     // exit the replaced configuration goes back, so the rest of the suite sees the host again (§2.2)
     FcConfigSetCurrent(previous);
     // the private configuration is released, because the create above owns the one the set took (§2.2)
@@ -162,6 +170,111 @@ TEST(LinuxPlatformFont, AResolvedFamilyHandsOverTheCarriedFace) {
 #else
     // act assert a build without fontconfig resolves no platform face, so the factory is refused (§9.1, AD-34)
     EXPECT_EQ(harfbuzz::HarfbuzzTypefaceResolver::create("Inter"), nullptr);
+#endif
+}
+
+TEST(LinuxPlatformFont, AWeightSelectsTheBoldFaceOfItsFamily) {
+#if defined(ALBOR_HAVE_FONTCONFIG)
+    // arrange a private directory carrying both Lato weights, because the default face resolves one family alone (§9.1)
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / "albor-fontconfig-weight";
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    // the two carried faces are the only members the configuration can resolve (§9.1)
+    std::filesystem::copy_file(ALBOR_TEST_WEIGHT_FONT_PATH, directory / "Lato-Regular.ttf");
+    std::filesystem::copy_file(ALBOR_TEST_BOLD_FONT_PATH, directory / "Lato-Bold.ttf");
+    // the configuration names that directory as its only source (§9.1)
+    const std::filesystem::path config_path = std::filesystem::temp_directory_path() / "albor-fontconfig-weight.conf";
+    {
+        // the file is written in one pass, because fontconfig reads it whole (§9.1)
+        std::ofstream config_file(config_path);
+        config_file << "<fontconfig><dir>" << directory.string() << "</dir></fontconfig>\n";
+    }
+    // the replaced configuration is restored after the test, so one suite cannot leak into the next (§2.2)
+    FcConfig* previous = FcConfigGetCurrent();
+    // the host configuration is borrowed, so a reference keeps it alive while the test replaces it (§2.2)
+    FcConfigReference(previous);
+    // the private configuration starts empty, because the file above is its only input (§9.1)
+    FcConfig* config = FcConfigCreate();
+    // the configuration is parsed from the file the test wrote, which is the only input it reads (§9.1)
+    FcConfigParseAndLoad(config, reinterpret_cast<const FcChar8*>(config_path.string().c_str()), FcTrue);
+    // the fonts are built once, because the match below needs the family list (§9.1)
+    FcConfigBuildFonts(config);
+    // the private configuration is current for the test's whole scope (§2.2)
+    FcConfigSetCurrent(config);
+    // act the family is resolved at each carried weight, which is the selection the run carries (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> regular = harfbuzz::HarfbuzzTypefaceResolver::create(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Regular);
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> bold = harfbuzz::HarfbuzzTypefaceResolver::create(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Bold);
+    // assert both requests resolved, because the configuration carries both members (§9.1, AD-28)
+    EXPECT_NE(regular, nullptr);
+    EXPECT_NE(bold, nullptr);
+    // arrange the carried file each weight names, which is the face the resolver must hand over (§15)
+    FcPattern* regular_file = FcPatternCreate();
+    FcPatternAddString(regular_file, FC_FILE, reinterpret_cast<const FcChar8*>(ALBOR_TEST_WEIGHT_FONT_PATH));
+    FcPatternAddInteger(regular_file, FC_INDEX, 0);
+    FcPattern* bold_file = FcPatternCreate();
+    FcPatternAddString(bold_file, FC_FILE, reinterpret_cast<const FcChar8*>(ALBOR_TEST_BOLD_FONT_PATH));
+    FcPatternAddInteger(bold_file, FC_INDEX, 0);
+    // act the bytes each resolution hands over are what the run draws, where a refusal carries none (§15, AD-34)
+    const std::vector<std::uint8_t> regular_bytes = regular != nullptr ? harfbuzz::platform_font_bytes(regular->typeface()) : std::vector<std::uint8_t>{};
+    const std::vector<std::uint8_t> bold_bytes = bold != nullptr ? harfbuzz::platform_font_bytes(bold->typeface()) : std::vector<std::uint8_t>{};
+    const std::vector<std::uint8_t> regular_carried = harfbuzz::platform_font_bytes(regular_file);
+    const std::vector<std::uint8_t> bold_carried = harfbuzz::platform_font_bytes(bold_file);
+    // the patterns go back once their bytes are copied (§15)
+    FcPatternDestroy(regular_file);
+    FcPatternDestroy(bold_file);
+    // assert each weight resolved its own carried face, because the weight reached fontconfig (§9.1)
+    EXPECT_EQ(regular_bytes, regular_carried);
+    EXPECT_EQ(bold_bytes, bold_carried);
+    EXPECT_NE(regular_bytes, bold_bytes);
+    // act a request that names no weight is the regular face, which the default argument preserves (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> named = harfbuzz::HarfbuzzTypefaceResolver::create(ALBOR_TEST_WEIGHT_FONT_FAMILY);
+    // assert the default request resolves the regular face, because a weight is opt in (§9.1)
+    EXPECT_NE(named, nullptr);
+    if (named != nullptr) {
+        EXPECT_EQ(harfbuzz::platform_font_bytes(named->typeface()), regular_bytes);
+    }
+    // act the default face carries the weight too, which the configured family answers (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> default_regular = harfbuzz::HarfbuzzTypefaceResolver::create_default();
+    const std::unique_ptr<harfbuzz::HarfbuzzTypefaceResolver> default_bold = harfbuzz::HarfbuzzTypefaceResolver::create_default(FontWeight::Bold);
+    // assert the default face resolves the same carried pair, because the configuration holds one family (§9.1)
+    EXPECT_NE(default_regular, nullptr);
+    EXPECT_NE(default_bold, nullptr);
+    if (default_regular != nullptr) {
+        EXPECT_EQ(harfbuzz::platform_font_bytes(default_regular->typeface()), regular_carried);
+    }
+    if (default_bold != nullptr) {
+        EXPECT_EQ(harfbuzz::platform_font_bytes(default_bold->typeface()), bold_carried);
+    }
+    // act the engine built at each weight resolves the face the factory handed over (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine_regular = harfbuzz::HarfbuzzTextEngine::create_platform(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Regular);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine_bold = harfbuzz::HarfbuzzTextEngine::create_platform(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Bold);
+    // assert the engine keys a different face per weight, so the selection reaches the shaper (§9.1, AD-34)
+    EXPECT_NE(engine_regular, nullptr);
+    EXPECT_NE(engine_bold, nullptr);
+    if (engine_regular != nullptr && engine_bold != nullptr) {
+        EXPECT_NE(engine_regular->font_hash(), engine_bold->font_hash());
+    }
+    // act the same run is measured by each engine, which is what a bold label asks it for (§9.1)
+    const TextLayout regular_layout = engine_regular != nullptr ? engine_regular->measure("Hamburgefonstiv", 0.0f, 20.0f) : TextLayout{};
+    const TextLayout bold_layout = engine_bold != nullptr ? engine_bold->measure("Hamburgefonstiv", 0.0f, 20.0f) : TextLayout{};
+    // assert the bold face shapes a wider run, because the selected face reached the shaper (§9.1, AD-34)
+    EXPECT_FALSE(regular_layout.empty());
+    EXPECT_FALSE(bold_layout.empty());
+    EXPECT_GT(bold_layout.size.width, regular_layout.size.width);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+    // exit the replaced configuration goes back, so the rest of the suite sees the host again (§2.2)
+    FcConfigSetCurrent(previous);
+    // the private configuration is released, because the create above owns the one the set took (§2.2)
+    FcConfigDestroy(config);
+    // the host reference is released, because the global now holds the one the set above took (§2.2)
+    FcConfigDestroy(previous);
+    std::filesystem::remove(config_path);
+    // the private directory goes back, so the test leaves nothing behind (§2.2)
+    std::filesystem::remove_all(directory);
+#else
+    // act assert a build without fontconfig resolves no platform face, so the factory is refused (§9.1, AD-34)
+    EXPECT_EQ(harfbuzz::HarfbuzzTypefaceResolver::create(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Bold), nullptr);
 #endif
 }
 

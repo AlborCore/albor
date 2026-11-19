@@ -1221,7 +1221,7 @@ Text rendering and measurement are foundational to UI layout:
 - `TextEngine` provides font discovery, fallback resolution, HarfBuzz Unicode shaping, and BiDi line breaking.
 - **The shipped engine is `text/text-harfbuzz`.** It shapes through vendored HarfBuzz and breaks
   lines through ICU; the public `albor` target carries it as the only text engine. The renderer
-  bundles no paragraph module. Platform font discovery resolves the family, and embedded font
+  bundles no paragraph module. Platform font discovery resolves the family and weight, and embedded font
   registration supplies the exact face bytes (§9.1, AD-34).
 - Text measurement is computed during the layout measure phase so containers accurately adapt to localized text lengths.
 - Fonts are managed as immutable resources through the `ResourceManager`.
