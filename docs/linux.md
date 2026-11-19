@@ -96,8 +96,11 @@ from 2027-04-17, and a floor package built there would be rejected by the symbol
   Every allocation path is counted, and a steady animated frame raises no device memory allocation. The
   exact composition modes use Vulkan dual-source blending, which the build gives the second fragment output
   `Location 0, Index 1`; glslang's HLSL front end emits `Location 1`, so `build/shaders.sh` rewrites that one
-  decoration when it regenerates the container. The offscreen smoke, parity and allocation suites run on
-  every Linux host with a Vulkan loader; the windowed suite presents through Weston and Xvfb in CI.
+  decoration when it regenerates the container. The backend requires a Vulkan 1.3 device for dynamic
+  rendering, while the committed container targets Vulkan 1.2 / SPIR-V 1.5 and was built with glslang
+  15.1.0, so it runs on the Linux floor; [Tooling](tooling.md#the-shaders) records the toolchain. The
+  offscreen smoke, parity and allocation suites run on every Linux host with a Vulkan loader; the windowed
+  suite presents through Weston and Xvfb in CI.
   A window torn down while its surface still stands hands its native object to the shared surface state, so
   the last holder destroys it and an in-flight present never names a dead window or proxy. The finished
   target is copied or blitted into the swapchain image rather than rendered into it directly, because the
@@ -130,16 +133,20 @@ adapter, because the desktop portals answer on the session bus:
 | `libpango1.0-dev`, `libcairo2-dev` | the libdecor Cairo frame |
 | `libdbus-1-dev` | the desktop portal file chooser and colour scheme |
 | `pkg-config` | resolve the modules above |
+| `autoconf`, `automake`, `libtool`, `autoconf-archive` | autotools vcpkg uses to build the `gperf` host port from source |
 
 `wayland-protocols` is not needed: the XMLs are vendored. `libdecor-0-dev` and its plugin
 package are not needed either, because the frame is built from the adapter's private
-`vendor/libdecor/` copy.
+`vendor/libdecor/` copy. The autotools are build-time only: vcpkg builds `gperf` from source
+with `AUTORECONF`, so a host without `aclocal`, `autoreconf` and `libtoolize` fails during
+dependency installation with a message naming those programs.
 
 On Debian/Ubuntu:
 
 ```sh
 sudo apt-get install -y \
     pkg-config cmake ninja-build ccache \
+    autoconf autoconf-archive automake libtool \
     libwayland-dev libxkbcommon-dev libxcb1-dev \
     libvulkan-dev mesa-vulkan-drivers xvfb \
     libpango1.0-dev libcairo2-dev libdbus-1-dev \
