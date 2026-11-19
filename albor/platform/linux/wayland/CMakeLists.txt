@@ -56,7 +56,10 @@ set(XDG_SHELL_XML "${PROTOCOLS_DIR}/xdg-shell.xml")
 set(XDG_DECORATION_XML "${PROTOCOLS_DIR}/xdg-decoration-unstable-v1.xml")
 set(TEXT_INPUT_XML "${PROTOCOLS_DIR}/text-input-unstable-v3.xml")
 set(XDG_ACTIVATION_XML "${PROTOCOLS_DIR}/xdg-activation-v1.xml")
-if(NOT EXISTS "${XDG_SHELL_XML}" OR NOT EXISTS "${XDG_DECORATION_XML}" OR NOT EXISTS "${TEXT_INPUT_XML}" OR NOT EXISTS "${XDG_ACTIVATION_XML}")
+# the fractional scale and the viewport definitions, which carry the preferred scale and its buffer mapping (AD-27)
+set(FRACTIONAL_SCALE_XML "${PROTOCOLS_DIR}/fractional-scale-v1.xml")
+set(VIEWPORTER_XML "${PROTOCOLS_DIR}/viewporter.xml")
+if(NOT EXISTS "${XDG_SHELL_XML}" OR NOT EXISTS "${XDG_DECORATION_XML}" OR NOT EXISTS "${TEXT_INPUT_XML}" OR NOT EXISTS "${XDG_ACTIVATION_XML}" OR NOT EXISTS "${FRACTIONAL_SCALE_XML}" OR NOT EXISTS "${VIEWPORTER_XML}")
     message(FATAL_ERROR "albor-platform-wayland: the vendored protocol definitions are missing")
 endif()
 
@@ -85,6 +88,16 @@ set(XDG_ACTIVATION_HEADER "${PROTOCOL_OUTPUT_DIR}/xdg-activation-client-protocol
 set(XDG_ACTIVATION_CODE "${PROTOCOL_OUTPUT_DIR}/xdg-activation-protocol.c")
 add_custom_command(OUTPUT "${XDG_ACTIVATION_HEADER}" "${XDG_ACTIVATION_CODE}" COMMAND "${WAYLAND_SCANNER_BIN}" client-header "${XDG_ACTIVATION_XML}" "${XDG_ACTIVATION_HEADER}" COMMAND "${WAYLAND_SCANNER_BIN}" private-code "${XDG_ACTIVATION_XML}" "${XDG_ACTIVATION_CODE}" DEPENDS "${XDG_ACTIVATION_XML}" VERBATIM)
 
+# the fractional scale bindings, which carry the preferred scale of a surface (AD-27)
+set(FRACTIONAL_SCALE_HEADER "${PROTOCOL_OUTPUT_DIR}/fractional-scale-client-protocol.h")
+set(FRACTIONAL_SCALE_CODE "${PROTOCOL_OUTPUT_DIR}/fractional-scale-protocol.c")
+add_custom_command(OUTPUT "${FRACTIONAL_SCALE_HEADER}" "${FRACTIONAL_SCALE_CODE}" COMMAND "${WAYLAND_SCANNER_BIN}" client-header "${FRACTIONAL_SCALE_XML}" "${FRACTIONAL_SCALE_HEADER}" COMMAND "${WAYLAND_SCANNER_BIN}" private-code "${FRACTIONAL_SCALE_XML}" "${FRACTIONAL_SCALE_CODE}" DEPENDS "${FRACTIONAL_SCALE_XML}" VERBATIM)
+
+# the viewporter bindings, which map a physical buffer onto a logical surface extent (AD-27)
+set(VIEWPORTER_HEADER "${PROTOCOL_OUTPUT_DIR}/viewporter-client-protocol.h")
+set(VIEWPORTER_CODE "${PROTOCOL_OUTPUT_DIR}/viewporter-protocol.c")
+add_custom_command(OUTPUT "${VIEWPORTER_HEADER}" "${VIEWPORTER_CODE}" COMMAND "${WAYLAND_SCANNER_BIN}" client-header "${VIEWPORTER_XML}" "${VIEWPORTER_HEADER}" COMMAND "${WAYLAND_SCANNER_BIN}" private-code "${VIEWPORTER_XML}" "${VIEWPORTER_CODE}" DEPENDS "${VIEWPORTER_XML}" VERBATIM)
+
 # the generated protocol code compiles as c, which the language enables for this adapter
 enable_language(C)
 
@@ -95,7 +108,7 @@ file(GLOB_RECURSE LINUX_SOURCES "./*.linux.c++")
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
 # create the static library from the gathered sources, the private libdecor and the generated bindings
-add_library(albor-platform-wayland STATIC ${LINUX_SOURCES} ${CPP_SOURCES} ${LIBDECOR_SOURCES} "${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}")
+add_library(albor-platform-wayland STATIC ${LINUX_SOURCES} ${CPP_SOURCES} ${LIBDECOR_SOURCES} "${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}" "${FRACTIONAL_SCALE_CODE}" "${VIEWPORTER_CODE}")
 
 # the adapter implements the framework's platform interfaces, which stay free of wayland types (§3.5, AD-05)
 target_include_directories(albor-platform-wayland PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<BUILD_INTERFACE:${PROTOCOL_OUTPUT_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
@@ -127,7 +140,7 @@ if(ALBOR_LIBDECOR_AVAILABLE)
 endif()
 
 # the third party sources and the machine generated bindings carry no fixable warnings, which the suppression records (§14.2)
-set_source_files_properties("${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}" PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties("${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}" "${FRACTIONAL_SCALE_CODE}" "${VIEWPORTER_CODE}" PROPERTIES COMPILE_OPTIONS "-w")
 if(ALBOR_LIBDECOR_AVAILABLE)
     set_source_files_properties(${LIBDECOR_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
 endif()

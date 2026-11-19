@@ -9,7 +9,9 @@
 
 #include <wayland-client.h>
 
+#include "fractional-scale-client-protocol.h"
 #include "text-input-client-protocol.h"
+#include "viewporter-client-protocol.h"
 #include "xdg-activation-client-protocol.h"
 #include "xdg-decoration-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
@@ -67,6 +69,12 @@ namespace albor::wayland
 
         // hand out the activation protocol, which is null where the compositor cannot raise a window (§5.1)
         [[nodiscard]] xdg_activation_v1* activation() const;
+
+        // hand out the fractional scale manager, which is null where the compositor prefers no fractional scale (AD-27)
+        [[nodiscard]] wp_fractional_scale_manager_v1* fractional_scales() const;
+
+        // hand out the viewporter, which is null where the compositor cannot map a buffer onto a logical extent (AD-27)
+        [[nodiscard]] wp_viewporter* viewporter() const;
 
 #ifdef ALBOR_WAYLAND_LIBDECOR
         // hand out the libdecor context, which is null where the library could not start (§5.3)
@@ -217,6 +225,18 @@ namespace albor::wayland
 
         // the registry name the activation protocol was advertised under, which a removal clears by
         std::uint32_t m_activation_name = 0;
+
+        // the fractional scale manager, which is null where the compositor prefers no fractional scale (AD-27)
+        wp_fractional_scale_manager_v1* m_fractional_scales = nullptr;
+
+        // the registry name the fractional scale manager was advertised under, which a removal clears by
+        std::uint32_t m_fractional_scales_name = 0;
+
+        // the viewporter, which is null where the compositor cannot map a buffer onto a logical extent (AD-27)
+        wp_viewporter* m_viewporter = nullptr;
+
+        // the registry name the viewporter was advertised under, which a removal clears by
+        std::uint32_t m_viewporter_name = 0;
 
 #ifdef ALBOR_WAYLAND_LIBDECOR
         // the client side decoration context, which is null where libdecor could not start (§5.3)
