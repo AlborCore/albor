@@ -1,0 +1,80 @@
+{
+    "name": "albor-vscode",
+    "displayName": "Albor",
+    "description": "Language support for Albor .ui files through the albor-lsp language server",
+    "version": "0.1.0",
+    "publisher": "AlborCore",
+    "license": "Apache-2.0",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/AlborCore/albor"
+    },
+    "bugs": {
+        "url": "https://github.com/AlborCore/albor/issues"
+    },
+    "homepage": "https://github.com/AlborCore/albor/tree/main/tools/albor-vscode",
+    "engines": {
+        "vscode": "^1.91.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "keywords": [
+        "albor",
+        "ui",
+        "lsp"
+    ],
+    "activationEvents": [
+        "onLanguage:albor"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "albor",
+                "aliases": [
+                    "Albor",
+                    "albor"
+                ],
+                "extensions": [
+                    ".ui"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "configuration": {
+            "title": "Albor",
+            "properties": {
+                "albor.lsp.executable": {
+                    "type": "string",
+                    "default": "albor-lsp",
+                    "description": "Path to the albor-lsp executable. A bare name is resolved through PATH."
+                },
+                "albor.manifests": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "Paths to .ui-manifest files sent to the language server at initialize. The server resolves their native components and records once the manifest catalog lands; relative paths resolve against the first workspace folder."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p .",
+        "watch": "tsc -w -p .",
+        "manifests": "node test/manifests.cjs",
+        "smoke": "node test/smoke.cjs",
+        "test": "npm run compile && npm run manifests && npm run smoke"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^11.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "@types/vscode": "~1.91.0",
+        "typescript": "^5.9.3"
+    }
+}

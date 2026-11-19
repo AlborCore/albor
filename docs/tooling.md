@@ -126,6 +126,17 @@ references, or semantic highlighting yet. The host currently uses the built-in e
 catalog, so manifest-provided native components are not resolved in the editor until that
 catalog is wired into the host.
 
+`tools/albor-vscode` is the VS Code client. It registers `.ui` as the `albor` language and
+launches `albor-lsp` over stdio with the server's full document sync, so diagnostics,
+completion and hover work without a custom client. `albor.lsp.executable` names the binary
+(default `albor-lsp`, resolved through `PATH`) and `albor.manifests` lists `.ui-manifest`
+files, resolved against the first workspace folder. The client sends the manifests in
+`initialize.initializationOptions.manifests`; the server resolves them with the manifest
+front end once [#126](https://github.com/AlborCore/albor/issues/126) lands, and until then
+the built-in catalog answers. The extension is not part of the CMake build: its TypeScript
+compiles with npm, and its smoke test drives the built `albor-lsp` binary in CI. See
+`tools/albor-vscode/README.md` for development and packaging.
+
 ## Preview
 
 `preview/` hosts a `.ui` component in a window and reloads it as the file changes — the

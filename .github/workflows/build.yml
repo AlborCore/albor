@@ -261,6 +261,25 @@ jobs:
         working-directory: .build-${{ matrix.preset }}/tests
         run: ./albor-tests && ./albor-generated-font-checks
 
+      # the vscode client is a node package, so its toolchain is pinned like cmake and vcpkg are (§12.2)
+      - name: node
+        if: matrix.enable && matrix.preset == 'debug'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/albor-vscode/package-lock.json
+
+      # the smoke test launches the server this job just built, so the client and the binary are proven together (§12.2, §16)
+      - name: language client smoke test
+        if: matrix.enable && matrix.preset == 'debug'
+        working-directory: tools/albor-vscode
+        env:
+          ALBOR_LSP: ${{ github.workspace }}/.build-${{ matrix.preset }}/tools/albor-lsp/albor-lsp${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          npm ci
+          npm test
+
       - name: linux wayland tests
         if: matrix.enable && runner.os == 'Linux'
         working-directory: .build-${{ matrix.preset }}/tests
