@@ -1,7 +1,7 @@
 # Components
 
 The `.ui` language ships thirty elements: seventeen containers that arrange children, and
-thirteen leaves that draw or edit. Every element also carries the seven common properties below, and
+thirteen leaves that draw or edit. Every element also carries the eight common properties below, and
 every element may carry an `id`.
 
 ## Catalogue
@@ -41,7 +41,7 @@ every element may carry an `id`.
 
 ## Common properties
 
-Every element exposes these seven, in addition to its own:
+Every element exposes these eight, in addition to its own:
 
 | property | type | effect |
 | --- | --- | --- |
@@ -52,6 +52,11 @@ Every element exposes these seven, in addition to its own:
 | `border_width` | `float` | strokes a border around the node |
 | `border_color` | `color` | the border stroke colour |
 | `drop_shadow` | `Shadow` | a `Shadow { color, offset: Point { x, y }, blur }` cast under the node |
+| `tooltip` | `string` | the hover text the window presents, which a labelled control also announces as its accessible description |
+
+The tooltip appears after a half second of hover, reopens on an adjacent control within 50 ms, and
+is flipped and clamped inside the window. A control with no other name announces the tooltip as its
+accessible name instead ([Tooltips](../ui-language/tooltips.md)).
 
 The alignment axes are screen axes. In a `Row`, `horizontal_align` is the main axis and
 `vertical_align` the cross axis; in a `Column` they swap. On the main axis, `Align.stretch`

@@ -319,6 +319,46 @@ namespace albor
         return true;
     }
 
+    const std::string& UiNode::tooltip() const {
+        // the text is handed out as written, because the controller resolves the presentation (§8.3)
+        return m_tooltip;
+    }
+
+    void UiNode::set_tooltip(std::string tooltip) {
+        // an unchanged text shows the same bubble, so no frame is requested (§8.3)
+        if (m_tooltip == tooltip)
+            return;
+        // the text is stored first, so a rebuild reads the value it was given (§8.3)
+        m_tooltip = std::move(tooltip);
+        // a visible tip is rebuilt on the next frame, which the invalidation requests (§8.3)
+        invalidate();
+    }
+
+    bool UiNode::has_tooltip() const {
+        // either source is enough, because a builder supplies content without a string (§8.3)
+        return !m_tooltip.empty() || m_tooltip_builder != nullptr;
+    }
+
+    void UiNode::set_tooltip_builder(TooltipBuilder builder) {
+        // the builder is stored as written, because a closure cannot be compared (§8.3)
+        m_tooltip_builder = std::move(builder);
+        // the content may change with the builder, so the next frame reads it (§8.3)
+        invalidate();
+    }
+
+    bool UiNode::has_tooltip_builder() const {
+        // an installed builder is the whole of the answer (§8.3)
+        return m_tooltip_builder != nullptr;
+    }
+
+    std::unique_ptr<UiNode> UiNode::build_tooltip() const {
+        // a node with no builder supplies no rich content, so the controller falls back to the text (§8.3)
+        if (!m_tooltip_builder)
+            return nullptr;
+        // the builder owns the subtree it returns, which the controller adopts as an overlay (§8.3)
+        return m_tooltip_builder();
+    }
+
     const Rect& UiNode::bounds() const {
         // the bounds are the ones a parent assigned (§8.2)
         return m_bounds;

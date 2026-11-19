@@ -1023,6 +1023,13 @@ namespace albor::devrt
                      node.set_vertical_align(align);
                      return true;
                  }},
+                // the hover text every element declares, which reaches any element through the wildcard (§8.3)
+                {"*.tooltip",
+                 [](UiNode& node, std::string_view value, const std::filesystem::path& asset_root) {
+                     static_cast<void>(asset_root);
+                     node.set_tooltip(std::string(value));
+                     return true;
+                 }},
             };
             return table;
         }

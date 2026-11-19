@@ -22,6 +22,7 @@
 #include "albor/ui/component.h"
 #include "albor/ui/frame_pipeline.h"
 #include "albor/ui/scene_builder.h"
+#include "albor/ui/semantic_tree_builder.h"
 #include "albor/ui/ui_node.h"
 
 using namespace albor;
@@ -113,6 +114,29 @@ namespace
             // the owner places the content, so the bounds a parent offers are ignored (§8.2)
             m_bounds = next;
         }
+    };
+
+    // a node that publishes a fixed semantic node, which is what a container or a custom element does (§10.1)
+    class NamedNode final : public UiNode, public SemanticProvider
+    {
+    public:
+        // the role and name the node announces, which a test sets before the walk (§10.1)
+        SemanticRole role = SemanticRole::Button;
+
+        // the name the node announces, which a test sets before the walk (§10.1)
+        std::string name = "Save";
+
+        SemanticNode semantic_node() const override {
+            // the published node is a leaf carrying the role and name the test wrote (§10.1)
+            SemanticNode node{role};
+            // the name travels, because that is what a reader speaks and the tooltip must not duplicate (§10.1)
+            node.set_name(name);
+            return node;
+        }
+
+        std::size_t semantic_child_count() const override { return 0; }
+
+        std::unique_ptr<SemanticProvider> semantic_child(std::size_t) const override { return nullptr; }
     };
 
     // the commands of one kind of a scene, which is what a retained draw assertion reads off the one list (§6.1)
@@ -3218,4 +3242,96 @@ TEST(NodeOpacity, AComponentDimsItsChildrenExactlyOnce) {
     ASSERT_EQ(scene->command_count(), 2u);
     EXPECT_FLOAT_EQ(scene->commands()[0].paint().fill.alpha, 0.5f);
     EXPECT_FLOAT_EQ(scene->commands()[1].paint().fill.alpha, 0.5f);
+}
+
+TEST(NodeTooltip, ANodeCarriesTheHoverTextItWasGiven) {
+    // arrange a plain node, because every element owns the hover text and not only a widget (§8.3)
+    UiNode node;
+    // assert a fresh node carries none, which is the quiet default (§8.3)
+    EXPECT_FALSE(node.has_tooltip());
+    // act
+    node.set_tooltip("Transient file");
+    // assert the text is stored as written and the node reports it (§8.3)
+    EXPECT_TRUE(node.has_tooltip());
+    EXPECT_EQ(node.tooltip(), "Transient file");
+}
+
+TEST(NodeTooltip, AClearedTooltipLeavesNoHoverText) {
+    // arrange a node that carries a tooltip, which a binding may clear later (§8.3)
+    UiNode node;
+    node.set_tooltip("Transient file");
+    // act
+    node.set_tooltip("");
+    // assert the node no longer arms a tooltip, because the text is the whole of the content (§8.3)
+    EXPECT_FALSE(node.has_tooltip());
+    EXPECT_TRUE(node.tooltip().empty());
+}
+
+TEST(NodeTooltip, ABuilderSuppliesRichTooltipContent) {
+    // arrange a node whose tooltip is a subtree rather than a string (§8.3)
+    UiNode node;
+    // act
+    node.set_tooltip_builder([] { return std::make_unique<UiNode>(); });
+    // assert the builder counts as content and hands back the subtree it built (§8.3)
+    EXPECT_TRUE(node.has_tooltip());
+    EXPECT_TRUE(node.has_tooltip_builder());
+    EXPECT_NE(node.build_tooltip(), nullptr);
+}
+
+TEST(NodeTooltip, ANodeWithoutABuilderBuildsNothing) {
+    // arrange a node whose only content is text, which the controller presents itself (§8.3)
+    UiNode node;
+    node.set_tooltip("Transient file");
+    // act, assert the rich path is empty, so the controller falls back to the text (§8.3)
+    EXPECT_FALSE(node.has_tooltip_builder());
+    EXPECT_EQ(node.build_tooltip(), nullptr);
+}
+
+TEST(NodeTooltip, ATooltipBecomesTheAccessibleDescription) {
+    // arrange a root whose child is a named control carrying a tooltip (§8.3, §10.1)
+    UiNode root;
+    auto owned = std::make_unique<NamedNode>();
+    NamedNode* button = owned.get();
+    root.add_child(std::move(owned));
+    button->set_tooltip("Saves the current document");
+    // act
+    const SemanticTree tree = build_semantic_tree(root);
+    // assert the name stays the label and the tooltip becomes the description (§10.1)
+    ASSERT_EQ(tree.size(), 2u);
+    ASSERT_NE(tree.at(1), nullptr);
+    EXPECT_EQ(tree.at(1)->name(), "Save");
+    EXPECT_EQ(tree.at(1)->description(), "Saves the current document");
+}
+
+TEST(NodeTooltip, AnUnnamedNodeTakesTheTooltipAsItsName) {
+    // arrange a root whose child is a plain group with no name of its own (§8.3, §10.1)
+    UiNode root;
+    auto owned = std::make_unique<UiNode>();
+    UiNode* group = owned.get();
+    root.add_child(std::move(owned));
+    group->set_tooltip("Transient file");
+    // act
+    const SemanticTree tree = build_semantic_tree(root);
+    // assert the tooltip is the name, because an unnamed control has nothing else to announce (§10.1)
+    ASSERT_EQ(tree.size(), 2u);
+    ASSERT_NE(tree.at(1), nullptr);
+    EXPECT_EQ(tree.at(1)->name(), "Transient file");
+    EXPECT_TRUE(tree.at(1)->description().empty());
+}
+
+TEST(NodeTooltip, ATooltipThatMatchesTheNameAddsNoDescription) {
+    // arrange a control whose name fallback already came from the tooltip, which is an icon-only button (§10.1)
+    UiNode root;
+    auto owned = std::make_unique<NamedNode>();
+    NamedNode* button = owned.get();
+    root.add_child(std::move(owned));
+    button->name = "Open file";
+    button->set_tooltip("Open file");
+    // act
+    const SemanticTree tree = build_semantic_tree(root);
+    // assert a reader does not hear the same text twice, because the name already carries it (§10.1)
+    ASSERT_EQ(tree.size(), 2u);
+    ASSERT_NE(tree.at(1), nullptr);
+    EXPECT_EQ(tree.at(1)->name(), "Open file");
+    EXPECT_TRUE(tree.at(1)->description().empty());
 }

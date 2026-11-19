@@ -1,6 +1,7 @@
 #include "albor/ui/semantic_tree_builder.h"
 
 #include <memory>
+#include <utility>
 
 namespace albor
 {
@@ -16,17 +17,20 @@ namespace albor
 
             [[nodiscard]] SemanticNode semantic_node() const override {
                 // a node that publishes its own semantics is asked, because that is the one true description (§10.1)
-                if (const auto* provider = dynamic_cast<const SemanticProvider*>(&*m_node))
-                    return provider->semantic_node();
+                const auto* provider = dynamic_cast<const SemanticProvider*>(&*m_node);
+                // the published node is the base a tooltip describes, so it is held by value (§10.1)
+                SemanticNode node = provider != nullptr ? provider->semantic_node() : SemanticNode{SemanticRole::Group};
                 // a node that publishes none is announced as a group, which is what a container is (§10.1, §8)
-                SemanticNode node{SemanticRole::Group};
-                // the author id travels, because automation selects by it and by nothing else (AD-11, §18.1)
-                node.set_explicit_id(m_node->identity().explicit_id);
-                // the bounds travel, because an adapter places the announcement where it was drawn (§10.1)
-                node.set_bounds(m_node->bounds());
-                // an unnamed group announces no name, which is the quiet default (§10.1)
-                node.set_name("");
-                return node;
+                if (provider == nullptr) {
+                    // the author id travels, because automation selects by it and by nothing else (AD-11, §18.1)
+                    node.set_explicit_id(m_node->identity().explicit_id);
+                    // the bounds travel, because an adapter places the announcement where it was drawn (§10.1)
+                    node.set_bounds(m_node->bounds());
+                    // an unnamed group announces no name, which is the quiet default (§10.1)
+                    node.set_name("");
+                }
+                // the hover text a node carries is a name when it has none and a description otherwise (§8.3, §10.1)
+                return with_tooltip(std::move(node), *m_node);
             }
 
             [[nodiscard]] std::size_t semantic_child_count() const override {
@@ -76,6 +80,20 @@ namespace albor
             const UiNode* m_node;
         };
     } // namespace
+
+    SemanticNode with_tooltip(SemanticNode node, const UiNode& source) {
+        // a node with no hover text keeps the node it published, which is the quiet default (§8.3)
+        if (source.tooltip().empty())
+            return node;
+        // an unnamed control takes the tooltip as its name, which is what an icon-only action needs (§10.1)
+        if (node.name().empty())
+            node.set_name(source.tooltip());
+        // a named control carries the tooltip as its description, which a reader speaks beside it (§10.1)
+        else if (node.name() != source.tooltip())
+            node.set_description(source.tooltip());
+        // the node is handed back whole, which is what the walk reads (§10.1)
+        return node;
+    }
 
     SemanticTree build_semantic_tree(const UiNode& root) {
         // the tree is empty first, because the walk fills it from the root (§10.1)

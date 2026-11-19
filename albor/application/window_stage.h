@@ -22,6 +22,7 @@ namespace albor
     class RendererBackend;
     class RenderSurface;
     class RenderExecutor;
+    class TooltipController;
     class UiNode;
     class Window;
 
@@ -91,6 +92,9 @@ namespace albor
         // hand out the animation engine the frame tick advances, which a widget drives its animations on (§7.3, AD-04d)
         [[nodiscard]] AnimationEngine& animations();
 
+        // hand out the tooltip controller the frame advances, which a test drives and a theme styles (§8.3, §8.4)
+        [[nodiscard]] TooltipController* tooltips() const;
+
         // hand out the focus ring of the window's tree, which a dialog convention and automation move (§8.3)
         [[nodiscard]] FocusManager& focus();
 
@@ -151,5 +155,8 @@ namespace albor
         std::unique_ptr<RenderExecutor> m_executor;
         std::unique_ptr<InputController> m_input;
         std::unique_ptr<FramePipeline> m_pipeline;
+
+        // the hover tooltip lives over the pipeline's root, so it is destroyed before the tree it presents on (§8.3)
+        std::unique_ptr<TooltipController> m_tooltips;
     };
 } // namespace albor

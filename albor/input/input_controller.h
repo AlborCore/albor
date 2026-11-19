@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "albor/core/geometry.h"
@@ -60,6 +61,9 @@ namespace albor
         // replay the exits for a subtree that is leaving the tree, which the tree reports before it goes (§8.3)
         void release_subtree(UiNode* node);
 
+        // install the callback told a subtree is leaving the tree, which a window level presentation follows (§8.3)
+        void set_subtree_released_handler(std::function<void(UiNode*)> handler);
+
         // point the controller at the accelerators of an application, which is null while it declares none (§18.5)
         void set_command_registry(CommandRegistry* registry);
 
@@ -114,6 +118,9 @@ namespace albor
 
         // the nodes the pointer is currently over, deepest first, which the transitions are diffed against (§8.3)
         std::vector<UiNode*> m_hover_chain;
+
+        // the callback told a subtree is leaving, which a window level presentation follows (§8.3)
+        std::function<void(UiNode*)> m_subtree_released;
 
         // the accelerators this window routes keys through, which is null while the application declares none (§18.5)
         CommandRegistry* m_commands = nullptr;

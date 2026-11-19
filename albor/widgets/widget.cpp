@@ -18,6 +18,23 @@ namespace albor
             apply_theme(*overlay, theme);
     }
 
+    TooltipStyle tooltip_style(const Theme& theme) {
+        // the palette carries the floating card face, which a tooltip reads as a panel (§6.1, §8.4)
+        TooltipStyle style;
+        // the plate follows the panel token, which every floating surface shares (§6.1)
+        style.background = theme.palette().panel_background[state_index(ControlState::Normal)];
+        // the hairline is the same panel border, which separates the bubble from the surface (§6.1)
+        style.border = theme.palette().panel_border[state_index(ControlState::Normal)];
+        // the run reads through the label role, which is what text on a face uses (§8.4)
+        style.text = theme.palette().label_foreground[state_index(ControlState::Normal)];
+        // the bubble rounds at the panel radius, which keeps it a small card rather than a pill (§6.2)
+        style.corner_radius = theme.metrics().panel_radius;
+        // the run is set at the caption size, which is the smallest hierarchy entry (§8.4)
+        style.font_size = theme.typography().caption;
+        // the style is handed back whole, because the window copies it at creation (§8.3)
+        return style;
+    }
+
     SemanticNode SemanticNodeProvider::semantic_node() const {
         // the announced node is handed back by value, because a consumer owns what it reads (§10.1)
         return m_node;
@@ -39,7 +56,12 @@ namespace albor
         if (m_provider == nullptr)
             return SemanticNode{SemanticRole::None};
         // the watched provider answers for itself, because a view carries no state of its own (§10.1)
-        return m_provider->semantic_node();
+        SemanticNode node = m_provider->semantic_node();
+        // a view built over a ui node applies the hover text, which the provider alone cannot see (§8.3, §10.1)
+        if (m_node == nullptr)
+            return node;
+        // the tooltip rule is the same one the tree builder applies, so both walk paths agree (§8.3, §10.1)
+        return with_tooltip(std::move(node), *m_node);
     }
 
     std::size_t SemanticProviderView::semantic_child_count() const {
@@ -172,7 +194,7 @@ namespace albor
             }
             // a child that exposes semantics is watched, so the tree stays its only owner (§10.1)
             if (const auto* provider = dynamic_cast<const SemanticProvider*>(child))
-                return std::make_unique<SemanticProviderView>(provider);
+                return std::make_unique<SemanticProviderView>(provider, child);
             // a child with no semantics is walked as a subtree (§10.1)
             return make_node_semantic_provider(*child);
         }
