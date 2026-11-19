@@ -45,6 +45,12 @@ namespace albor::compiler
         // the keyword that introduces a conditional element, whose body exists only while the condition holds (§11.1)
         constexpr std::string_view IF_KEYWORD = "if";
 
+        // the keyword that returns a value from a function body (§11.1)
+        constexpr std::string_view RETURN_KEYWORD = "return";
+
+        // the keyword that introduces the canvas draw block (§6.4)
+        constexpr std::string_view DRAW_KEYWORD = "draw";
+
         // the keyword that binds an item inside a repeat body (§11.1)
         constexpr std::string_view IN_KEYWORD = "in";
 
@@ -78,6 +84,11 @@ namespace albor::compiler
             return is_conversion_name(name) || is_colour_operation(name);
         }
     } // namespace
+
+    bool is_language_keyword(std::string_view text) {
+        // the grammar's reserved spellings decide, because the lexer emits every one as an identifier (§11.1)
+        return text == IMPORT_KEYWORD || text == COMPONENT_KEYWORD || text == STRUCT_KEYWORD || text == ENUM_KEYWORD || text == FN_KEYWORD || text == GLOBAL_KEYWORD || text == PROPERTY_KEYWORD || text == COMMAND_KEYWORD || text == SIGNAL_KEYWORD || text == INOUT_KEYWORD || text == REPEAT_KEYWORD || text == IF_KEYWORD || text == IN_KEYWORD || text == RETURN_KEYWORD || text == DRAW_KEYWORD || text == ID_KEYWORD;
+    }
 
     Parser::Parser(const std::vector<Token>& tokens, DiagnosticList& diagnostics) :
         m_tokens(tokens), m_diagnostics(diagnostics) {
@@ -319,6 +330,8 @@ namespace albor::compiler
         declaration.span.start = peek().span.start;
         // the keyword is consumed, because the caller has already matched it (§11.1)
         advance();
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        declaration.name_span = peek().span;
         // the name is required, because it becomes the record type a field read resolves against (§11.1)
         declaration.name = expect_identifier();
         // the body is delimited, so the fields are read until it closes (§11.1)
@@ -379,6 +392,8 @@ namespace albor::compiler
         declaration.span.start = peek().span.start;
         // the keyword is consumed, because the caller has already matched it (§11.1)
         advance();
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        declaration.name_span = peek().span;
         // the name is required, because it becomes the set a member resolves against (§11.1)
         declaration.name = expect_identifier();
         // the body is delimited, so the members are read until it closes (§11.1)
@@ -405,6 +420,8 @@ namespace albor::compiler
         declaration.span.start = peek().span.start;
         // the keyword is consumed, because the caller has already matched it (§11.1)
         advance();
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        declaration.name_span = peek().span;
         // the name is required, because a call resolves against it (§11.1)
         declaration.name = expect_identifier();
         // the parameters are delimited, so they are read until the list closes (§11.1)
@@ -415,6 +432,8 @@ namespace albor::compiler
             FunctionParameter parameter;
             // the span starts at the parameter name, so a diagnostic points at it (§11.1)
             parameter.span.start = peek().span.start;
+            // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+            parameter.name_span = peek().span;
             // the name is required, because the body reads the argument through it (§11.1)
             parameter.name = expect_identifier();
             // a colon separates the name from its type, which keeps the two readable (§11.1)
@@ -437,7 +456,7 @@ namespace albor::compiler
         // the body is delimited, so the return is read from inside it (§11.1)
         expect_punctuation("{");
         // the body is a single return statement, which is the whole of the computation in this form (§11.1)
-        if (at_keyword("return")) {
+        if (at_keyword(RETURN_KEYWORD)) {
             // the keyword is consumed, because the expression follows it (§11.1)
             advance();
             // the returned expression is parsed with the full expression grammar, which a call reaches (§11.1)
@@ -463,6 +482,8 @@ namespace albor::compiler
         declaration.span.start = peek().span.start;
         // the keyword is consumed, because the caller has already matched it (§11.1)
         advance();
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        declaration.name_span = peek().span;
         // the name is required, because a reference resolves against it (§11.1)
         declaration.name = expect_identifier();
         // a colon separates the name from its type, which is how a declared name binds (§11.1)
@@ -488,6 +509,8 @@ namespace albor::compiler
         component->span.start = peek().span.start;
         // the keyword is consumed, because the caller has already matched it (§11.1)
         advance();
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        component->name_span = peek().span;
         // the name is required, because it becomes the generated class name (§11.1, AD-03a)
         component->name = expect_identifier();
         // a colon names the base component, which is what a derived component writes after its name (§11.1)
@@ -564,6 +587,8 @@ namespace albor::compiler
         expect_keyword(PROPERTY_KEYWORD);
         // the type is read between its angles, which is where the declaration states it (§11.1)
         declaration.type = expect_type_name(true);
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        declaration.name_span = peek().span;
         // the name is required, because a binding refers to it (§11.1)
         declaration.name = expect_identifier();
         // a declared default is optional, because a property may have none (§11.1)
@@ -586,6 +611,8 @@ namespace albor::compiler
         declaration.span.start = peek().span.start;
         // the keyword is consumed, because the caller has already matched it (§11.1)
         advance();
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        declaration.name_span = peek().span;
         // the name is required, because a handler invokes it (§11.1)
         declaration.name = expect_identifier();
         // the parameter list is delimited, so the types are read until it closes (§11.1)
@@ -605,6 +632,8 @@ namespace albor::compiler
                 break;
             // the type is kept, because the facade and the handler agree on it (§11.1)
             declaration.parameter_types.push_back(type);
+            // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+            const SourceSpan parameter_span = peek().span;
             // a parameter name is required after its type, because a handler argument needs one (§11.2)
             const std::string parameter = expect_identifier();
             // a parameter with no name is reported, because the facade cannot emit a signature without it (§11.2)
@@ -612,6 +641,8 @@ namespace albor::compiler
                 report_unexpected("a parameter name");
             // the name is kept beside the type, because a handler body reads the raised value by it (§11.1)
             declaration.parameter_names.push_back(parameter);
+            // the span is kept beside the name, because a handler body jumps to the parameter (§12.2)
+            declaration.parameter_name_spans.push_back(parameter_span);
             // a further parameter is preceded by a comma, which is consumed here (§11.1)
             if (!accept_punctuation(","))
                 break;
@@ -633,6 +664,8 @@ namespace albor::compiler
         declaration.span.start = peek().span.start;
         // the keyword is consumed, because the caller has already matched it (§18)
         advance();
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        declaration.name_span = peek().span;
         // the name is required, because a child binds the command by it (§18)
         declaration.name = expect_identifier();
         // a quoted label follows, which is what every consumer shows (§18)
@@ -663,6 +696,8 @@ namespace albor::compiler
         node->kind = TreeNodeKind::Element;
         // the span starts at the type name, so a diagnostic points at the whole node (§11.1)
         node->span.start = peek().span.start;
+        // the type span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        node->element_type_span = peek().span;
         // the element type is required, because the manifest or widget catalog resolves it (§11.1)
         node->element_type = expect_identifier();
         // the body is delimited, so the members are read until it closes (§11.1)
@@ -683,6 +718,8 @@ namespace albor::compiler
         advance();
         // the item list is delimited, because the bindings are declared inside it (§11.1)
         expect_punctuation("(");
+        // the item span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        node->repeat_item_span = peek().span;
         // the item name is required, because the body refers to it (§11.1)
         node->repeat_item_name = expect_identifier();
         // the binding keyword is required, because the item comes from the source (§11.1)
@@ -691,6 +728,8 @@ namespace albor::compiler
         node->repeat_source = parse_expression();
         // an index name is optional, so a body that does not need it writes none (§11.1)
         if (accept_punctuation(",")) {
+            // the index span is taken before the unit is consumed, because a later jump points at it (§12.2)
+            node->repeat_index_span = peek().span;
             // the index name is required once the comma is written, because it is the second binding (§11.1)
             node->repeat_index_name = expect_identifier();
         }
@@ -759,7 +798,7 @@ namespace albor::compiler
             // a body opens with a brace, so a member whose value is a brace is a handler or a draw block (§11.1)
             if (at_punctuation("{", 2)) {
                 // the draw keyword selects the drawing block, which is how a canvas declares its content (§6.4)
-                if (m_tokens[m_index].text == "draw")
+                if (m_tokens[m_index].text == DRAW_KEYWORD)
                     parse_draw_block(node);
                 else
                     parse_handler(node);
@@ -808,6 +847,8 @@ namespace albor::compiler
         PropertyAssignment assignment;
         // the span starts at the name, so a diagnostic points at the whole assignment (§11.1)
         assignment.span.start = peek().span.start;
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        assignment.name_span = peek().span;
         // the name is required, because it names the property being assigned (§11.1)
         assignment.name = expect_identifier();
         // the colon is required, because an assignment is written with one (§11.1)
@@ -883,6 +924,8 @@ namespace albor::compiler
         HandlerAttachment attachment;
         // the span starts at the name, so a diagnostic points at the whole handler (§11.1)
         attachment.span.start = peek().span.start;
+        // the name span is taken before the unit is consumed, because a later jump points at it (§12.2)
+        attachment.name_span = peek().span;
         // the written name is required, because a handler is written as on_signal (§11.1)
         std::string written = expect_identifier();
         // the prefix marks the member as a handler rather than a value, and it is not part of the signal name (§11.1)
@@ -917,12 +960,16 @@ namespace albor::compiler
             const std::size_t before = m_index;
             // the statement starts at the target name, which decides which form it is (§11.1)
             const SourceLocation start = peek().span.start;
+            // the target span is taken before the unit is consumed, because a later jump points at it (§12.2)
+            const SourceSpan target_span = peek().span;
             // the target name is required, because a statement always names something (§11.1)
             std::string target = expect_identifier();
             // the statement is assembled locally, because the punctuation decides its form (§11.1)
             HandlerStatement statement;
             // the span starts at the target, so a diagnostic points at the whole statement (§11.1)
             statement.span.start = start;
+            // the target span is kept, because a jump to a declaration points at the name (§12.2)
+            statement.target_span = target_span;
             // the target is moved into the statement, because the parser owns the stream (§11.1)
             statement.target = std::move(target);
             // a dot after the target reaches a field or a built-in method on a collection property (§11.1)

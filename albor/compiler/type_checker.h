@@ -25,6 +25,9 @@ namespace albor::compiler
         // the declared name, which a binding and a handler resolve against (§11.1)
         std::string name;
 
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
+
         // the type the author wrote, which an assigned value must match (§11.1)
         ValueType type;
 
@@ -50,11 +53,17 @@ namespace albor::compiler
         // the declared name, which a handler resolves against (§11.1)
         std::string name;
 
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
+
         // the parameter types in declaration order, which an invocation must match (§11.1)
         std::vector<ValueType> parameter_types;
 
         // the parameter names in declaration order, which a handler body reads the raised value by (§11.1)
         std::vector<std::string> parameter_names;
+
+        // where each parameter name was written, which a jump from a handler body points at (§12.2)
+        std::vector<SourceSpan> parameter_name_spans;
 
         // where the declaration was written (§11.1)
         SourceSpan span;
@@ -65,6 +74,9 @@ namespace albor::compiler
     {
         // the declared name, which a call resolves against (§11.1)
         std::string name;
+
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
 
         // the parameter names and their resolved types, which the arguments must match (§11.1)
         std::vector<std::pair<std::string, ValueType>> parameters;
@@ -84,6 +96,9 @@ namespace albor::compiler
     {
         // the declared name, which a reference resolves against (§11.1)
         std::string name;
+
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
 
         // the resolved declared type, which every read carries as its own (§11.1)
         ValueType type;
@@ -238,6 +253,9 @@ namespace albor::compiler
         // the name a `.ui` child writes on its `command:` property (§18)
         std::string name;
 
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
+
         // the one label every consumer shows, which is empty when the author wrote none (§18)
         std::string label;
 
@@ -249,6 +267,9 @@ namespace albor::compiler
     {
         // the component name, which becomes the generated class name (§11.1, AD-03a)
         std::string name;
+
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
 
         // the modules the component imported (§11.1, AD-17)
         std::vector<ImportDeclaration> imports;
@@ -274,6 +295,9 @@ namespace albor::compiler
     {
         // the component name, which becomes the generated class name (§11.1, AD-03a)
         std::string name;
+
+        // where the name was written, which is what a jump to the declaration points at (§12.2)
+        SourceSpan name_span;
 
         // the generated header the declaration lives in, which is the file the importer includes (§11.1)
         std::string header;

@@ -32,6 +32,9 @@ namespace albor::compiler
         std::vector<ComponentDeclaration> components;
     };
 
+    // report whether a name is one of the language keywords, which an editor paints as a keyword (§12.2)
+    [[nodiscard]] bool is_language_keyword(std::string_view text);
+
     // the parser that turns a token stream into a source file, which reports rather than throws (§11.1)
     class Parser
     {
