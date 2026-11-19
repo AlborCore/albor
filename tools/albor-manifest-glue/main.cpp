@@ -1,7 +1,7 @@
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -9,6 +9,7 @@
 #include "albor/compiler/codegen/codegen.h"
 #include "albor/compiler/diagnostic.h"
 #include "albor/compiler/lexer.h"
+#include "albor/core/file_bytes.h"
 #include "albor/manifest/glue.h"
 #include "albor/manifest/manifest.h"
 
@@ -87,12 +88,14 @@ int main(int argc, char** argv) {
         return 2;
     }
     // the manifest is read whole, because the scanner takes the complete unit (§11.1)
-    std::ifstream stream(input, std::ios::binary);
-    if (!stream) {
+    const std::optional<std::vector<std::uint8_t>> bytes = albor::core::read_regular_file(input);
+    // a manifest that cannot be read is reported, because there is nothing to parse (§11.2)
+    if (!bytes) {
         std::fprintf(stderr, "albor-manifest-glue: cannot open '%s'\n", utf8_path(input).c_str());
         return 1;
     }
-    std::string source((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    // the bytes become the source text, because the scanner takes characters rather than a file (§11.1)
+    const std::string source(bytes->begin(), bytes->end());
     // the module is the name of the manifest file, which a ui import resolves against (§11.1, §11.2, AD-17)
     const std::string module = input.stem().string();
     // the problems are collected in one list through the whole pipeline (§11.1)

@@ -3642,6 +3642,31 @@ TEST(Codegen, AnEmptyAssetFileBlocksTheOutput) {
     EXPECT_TRUE(has_code(diagnostics, "E0506"));
 }
 
+TEST(Codegen, ADirectoryAssetBlocksTheOutputAndIsReportedOnce) {
+    // arrange a directory beside the source, which an asset path may name by mistake (§6.4, #246)
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / "albor-codegen-asset-directory";
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    std::filesystem::create_directories(directory);
+    // the source names the source directory twice, which resolves to a directory the read cannot take (§6.4)
+    const std::string_view source = R"(
+component C {
+    in property<image> first: @image(".");
+    in property<image> second: @image(".");
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, directory / "panel.ui");
+    // assert the output is blocked and the shared path is reported once (§6.4, §11.3)
+    EXPECT_TRUE(generation.files.empty());
+    EXPECT_TRUE(generation.paths.empty());
+    EXPECT_EQ(diagnostics.count(), 1U);
+    EXPECT_TRUE(has_code(diagnostics, "E0506"));
+    std::filesystem::remove_all(directory, ignored);
+}
+
 TEST(Codegen, AShortAssetFileIsNotAPng) {
     // arrange a file shorter than the eight byte signature, which cannot be a png (§6.4)
     const std::string_view source = "component C { in property<image> icon: @image(\"short.png\"); Column {} }";

@@ -239,6 +239,26 @@ TEST(LspServerChecks, AnImportedComponentResolvesFromTheDocumentDirectory) {
     std::filesystem::remove_all(root, ignored);
 }
 
+TEST(LspServerChecks, ADirectoryImportIsReportedRatherThanAborting) {
+    // arrange a directory where an import names a component file, which no source read can accept (§11.1, #246)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-import-directory";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root / "panel.ui");
+    // the window imports what reads as a file but is a directory, which the reader must refuse (§11.1)
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    // the document uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    // act
+    LspServer server;
+    const Exchange exchange = did_open(server, window_text, window_uri);
+    // assert the import is reported against the window and the server answers instead of aborting (§16)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_GT(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
 TEST(LspServerChecks, ADiagnosticInAnImportedFileIsPublishedAgainstThatFile) {
     // arrange an imported file that names an unknown widget, which belongs to that file and not the window (§16)
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-import-broken";

@@ -67,6 +67,21 @@ TEST(EmbeddedImageChecks, RefusesEmptyInvalidAndUnreadableBytes) {
     EXPECT_EQ(albor::resources::ImageRegistry::count(), 0u);
 }
 
+TEST(EmbeddedImageChecks, ADirectoryIsRefusedRatherThanRead) {
+    // arrange a directory where an image path was expected, which a wrong path produces (§6.4, #246)
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / "albor-embedded-image-directory";
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    std::filesystem::create_directories(directory);
+    albor::resources::ImageRegistry::clear();
+    // act
+    const std::shared_ptr<const albor::ImageResource> loaded = albor::resources::ImageRegistry::load_file(directory);
+    // assert the directory carries no image and the cache keeps nothing (§6.4)
+    EXPECT_EQ(loaded, nullptr);
+    EXPECT_EQ(albor::resources::ImageRegistry::count(), 0u);
+    std::filesystem::remove_all(directory, ignored);
+}
+
 TEST(EmbeddedImageChecks, LoadsTheSameBytesFromAFileAsEmbedded) {
     // arrange
     constexpr std::uint8_t RGBA_PNG[] = {

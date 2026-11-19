@@ -282,6 +282,23 @@ TEST(FontEmbedChecks, LoadReportsAFileThatCannotBeRead) {
     EXPECT_EQ(diagnostics.diagnostics().front().code, "E0708");
 }
 
+TEST(FontEmbedChecks, ADirectoryThatNamesNoFontIsReported) {
+    // arrange a declared face whose path is a directory, which no font read can accept (§11.3, #246)
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / "albor-font-embed-directory";
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    std::filesystem::create_directories(directory);
+    const std::vector<FontAssetSpec> specs{{.family = "Directory", .weight = FontWeight::Regular, .path = directory}};
+    // act the face is read into the set (§11.3)
+    compiler::DiagnosticList diagnostics;
+    const FontAssetSet set = load_font_assets("Directory", specs, diagnostics);
+    // assert the unreadable file is reported and the set carries no face for it (§11.3)
+    ASSERT_EQ(set.faces.size(), 0u);
+    ASSERT_GE(diagnostics.count(), 1u);
+    EXPECT_EQ(diagnostics.diagnostics().front().code, "E0708");
+    std::filesystem::remove_all(directory, ignored);
+}
+
 TEST(FontEmbedChecks, EmitWritesTheHeaderAndSource) {
     // arrange a family at two weights, which the generated unit registers (§11.3, AD-34)
     FontAssetSet set;

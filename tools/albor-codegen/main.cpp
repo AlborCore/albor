@@ -1,9 +1,8 @@
 #include <charconv>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -20,6 +19,7 @@
 #include "albor/compiler/type_checker.h"
 #include "albor/compiler/ui_loader.h"
 #include "albor/compiler/value_type.h"
+#include "albor/core/file_bytes.h"
 #include "albor/manifest/font_embed.h"
 #include "albor/manifest/manifest.h"
 #include "tools/albor-codegen/depfile.h"
@@ -50,12 +50,6 @@ namespace
         }
         // every file landed, which is what the driver reports as success (§14.2)
         return true;
-    }
-
-    // read a stream whole, because the scanner takes the whole unit and both inputs are text (§11.1)
-    std::string stream_text(std::istream& stream) {
-        // the content accumulates, because a scanner needs every character before it produces a token (§11.1)
-        return std::string((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
     }
 
     // print every problem with its file, which is what a console compilation shows (§11.1)
@@ -172,17 +166,19 @@ int main(int argc, char** argv) {
     std::vector<albor::manifest::ManifestFile> parsed_manifests;
     // each manifest is read, because its records and native components are what the catalog resolves (§11.2, AD-17)
     for (const std::filesystem::path& manifest : manifests) {
-        // the manifest text is read, because its declarations must be known before the ui file is checked (§11.2, AD-17)
-        std::ifstream manifest_stream(manifest, std::ios::binary);
+        // the manifest text is read whole, because its declarations are known before the ui file is checked (§11.2, AD-17)
+        const std::optional<std::vector<std::uint8_t>> manifest_bytes = albor::core::read_regular_file(manifest);
         // a manifest that cannot be read is reported, because its declarations cannot resolve (§11.2)
-        if (!manifest_stream) {
+        if (!manifest_bytes) {
             std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", albor::codegen::utf8_path(manifest).c_str());
             return 1;
         }
         // the module name is the file stem, which is what the glue generator names the directory after (§11.2)
         const std::string module = std::filesystem::path(manifest).stem().string();
+        // the bytes become the source text, because the scanner takes characters rather than a file (§11.1)
+        const std::string manifest_text(manifest_bytes->begin(), manifest_bytes->end());
         // the problems of the manifest join the run, because a bad declaration is the author's problem too (§11.2)
-        const std::vector<albor::compiler::Token> manifest_tokens = albor::compiler::Lexer(stream_text(manifest_stream), diagnostics).tokenize();
+        const std::vector<albor::compiler::Token> manifest_tokens = albor::compiler::Lexer(manifest_text, diagnostics).tokenize();
         // the manifest is parsed into declarations, which is where the records and the components live (§11.2, AD-17)
         parsed_manifests.push_back(albor::manifest::ManifestParser(manifest_tokens, diagnostics).parse(module));
     }
@@ -195,13 +191,13 @@ int main(int argc, char** argv) {
 
     // the loader reads the root and every ui file it imports, which is what brings their components into scope (§11.1)
     const albor::compiler::UiFileReader reader = [](const std::filesystem::path& path) -> std::optional<std::string> {
-        // the file is opened as a binary stream, because the scanner takes every byte it carries (§11.1)
-        std::ifstream stream(path, std::ios::binary);
-        // a file the reader cannot open has no text, which the loader reports against the import (§11.1)
-        if (!stream)
+        // the bytes are read whole, because the scanner consumes every byte the file carries (§11.1)
+        const std::optional<std::vector<std::uint8_t>> bytes = albor::core::read_regular_file(path);
+        // a path the reader cannot read has no text, which the loader reports against the import (§11.1)
+        if (!bytes)
             return std::nullopt;
         // the whole text is handed over, because the scanner consumes it whole (§11.1)
-        return stream_text(stream);
+        return std::string(bytes->begin(), bytes->end());
     };
     // the loader owns the parse trees, so it outlives every stage that reads the checked expressions (§11.1)
     albor::compiler::UiImportLoader loader(catalog, diagnostics, reader);
