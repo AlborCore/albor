@@ -2374,3 +2374,12 @@ TEST(TypeChecker, ReportsATooltipThatIsNotAString) {
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
+
+TEST(TypeChecker, ADeclaredTooltipShadowsTheCommonProperty) {
+    // arrange a component that declares its own tooltip, which shadows the common one (§11.1)
+    DiagnosticList diagnostics;
+    // act a host instantiates it with the same property name, which must resolve to the declaration (§11.1)
+    check("component C { in property<string> tooltip; Column {} } component Host { Column { C { tooltip: \"x\"; } } }", diagnostics);
+    // assert the declared property wins without a duplicate or an unresolved name (§11.1)
+    EXPECT_EQ(diagnostics.count(), 0U);
+}

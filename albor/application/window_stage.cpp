@@ -193,14 +193,17 @@ namespace albor
         // an unwired stage has no input to deliver, which the window betrayed at creation time (§8.3)
         if (!m_input)
             return;
-        // a press, a wheel, a key or a lost capture ends the bubble before the tree reads the new state (§8.3)
-        if (m_tooltips && (event.kind == EventKind::PointerDown || event.kind == EventKind::Wheel || event.kind == EventKind::KeyDown || event.kind == EventKind::PointerCancel || event.kind == EventKind::ContextMenu))
-            m_tooltips->dismiss();
         // the event routes first, which is what the caret the anchor follows answers (§8.3)
         m_input->deliver(event);
-        // a moved pointer arms the nearest tooltip target, which a container may supply (§8.3)
-        if (m_tooltips && (event.kind == EventKind::PointerMove || event.kind == EventKind::PointerDown || event.kind == EventKind::PointerUp))
-            m_tooltips->set_target(m_input->hovered());
+        // a hover tooltip follows the pointer and ends on the gestures that dismiss it (§8.3)
+        if (m_tooltips) {
+            // a captured drag owns the pointer, so no control under it may arm a tooltip (§8.3)
+            if (!m_input->capturing() && (event.kind == EventKind::PointerMove || event.kind == EventKind::PointerDown || event.kind == EventKind::PointerUp))
+                m_tooltips->set_target(m_input->hovered());
+            // a press, a wheel, a key or a lost capture ends the bubble and suppresses the node it named (§8.3)
+            if (event.kind == EventKind::PointerDown || event.kind == EventKind::Wheel || event.kind == EventKind::KeyDown || event.kind == EventKind::PointerCancel || event.kind == EventKind::ContextMenu)
+                m_tooltips->dismiss();
+        }
         // a dialog applies its keyboard conventions to a key no control claimed (§8.3)
         apply_dialog_key(event);
         // the focused node is where the caret lives, which the anchor is read against (§8.3)

@@ -19,6 +19,7 @@
 #include "albor/ui/semantic_tree_builder.h"
 #include "albor/ui/tooltip_view.h"
 #include "albor/widgets/button.h"
+#include "albor/widgets/label.h"
 #include "albor/widgets/text_field.h"
 #include "albor/widgets/tool_bar.h"
 #include "albor/window/platform_window_factory.h"
@@ -2902,6 +2903,100 @@ TEST(MainWindow, AContextMenuDismissesTheTooltip) {
     // assert the bubble left, because the menu is the surface the user asked for (§8.3)
     EXPECT_TRUE(stage->root().overlays().empty());
     EXPECT_EQ(tips->phase(), albor::TooltipPhase::Hidden);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(MainWindow, APressDoesNotArmTheTooltipWhileHeld) {
+    // arrange a window whose label carries hover text, which a label claims no drag for (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::Label* hovered = nullptr;
+    albor::RootBuilder form = [&hovered](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns the label, which is the only node under the pointer (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the label carries the hover text a held press must not present (§8.3)
+        auto label = std::make_unique<albor::Label>(&engine, &text, "Hover");
+        // the tooltip is the text the held press would otherwise arm (§8.3)
+        label->set_tooltip("Shows the hover text");
+        // the pointer is kept, because the assertion reads the node the press named (§8.3)
+        hovered = label.get();
+        // the label joins the column, which is the window tree (§8.1)
+        column->add_child(std::move(label));
+        return column;
+    };
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, form);
+    ASSERT_TRUE(handle.valid());
+    application.pump();
+    albor::WindowStage* stage = application.stage(handle);
+    ASSERT_NE(stage, nullptr);
+    albor::TooltipController* tips = stage->tooltips();
+    ASSERT_NE(tips, nullptr);
+    // act press and hold the label, which claims no capture, so the controller must suppress it itself (§8.3)
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    tips->advance(albor::TooltipController::ARM_DELAY);
+    // assert nothing arms while the button is held, because a press is not a hover (§8.3)
+    EXPECT_TRUE(stage->root().overlays().empty());
+    EXPECT_EQ(tips->phase(), albor::TooltipPhase::Hidden);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(MainWindow, ADragDoesNotArmTooltipsUnderThePointer) {
+    // arrange two tooltipped buttons, where the first captures a press and the pointer drags onto the second (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::Button* first = nullptr;
+    albor::Button* second = nullptr;
+    albor::RootBuilder form = [&first, &second](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column stacks the two controls, which is the toolbar shape a drag crosses (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the first control captures the press, which makes it the drag owner (§8.3)
+        auto drag = std::make_unique<albor::Button>(&engine, &text, "Drag");
+        // the drag carries its own hover text, which must not appear with the button held (§8.3)
+        drag->set_tooltip("Drags the row");
+        // the pointer is kept, because the press lands on it (§8.3)
+        first = drag.get();
+        // the second control is the target the pointer crosses, which must stay quiet during the drag (§8.3)
+        auto copy = std::make_unique<albor::Button>(&engine, &text, "Copy");
+        // the second control carries hover text, which the release may arm (§8.3)
+        copy->set_tooltip("Copies the row");
+        // the pointer is kept, because the move reads its bounds (§8.3)
+        second = copy.get();
+        // the controls join the column, which is the window tree (§8.1)
+        column->add_child(std::move(drag));
+        column->add_child(std::move(copy));
+        return column;
+    };
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, form);
+    ASSERT_TRUE(handle.valid());
+    application.pump();
+    albor::WindowStage* stage = application.stage(handle);
+    ASSERT_NE(stage, nullptr);
+    albor::TooltipController* tips = stage->tooltips();
+    ASSERT_NE(tips, nullptr);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    // act press the first, then drag onto the second, which keeps the capture on the first (§8.3)
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    // the move lands inside the second control, which the capture routes to the first (§8.3)
+    const albor::Point over_second{.x = second->bounds().x + 2.0f, .y = second->bounds().y + 2.0f};
+    albor::Event move{.kind = albor::EventKind::PointerMove, .position = over_second};
+    stage->deliver(move);
+    tips->advance(albor::TooltipController::ARM_DELAY);
+    // assert the drag owns the pointer, so the control under it does not arm a bubble (§8.3)
+    EXPECT_TRUE(stage->root().overlays().empty());
+    // act release over the second, which ends the capture and makes the hover current again (§8.3)
+    albor::Event release{.kind = albor::EventKind::PointerUp, .position = over_second};
+    stage->deliver(release);
+    tips->advance(albor::TooltipController::ARM_DELAY);
+    // assert the released control arms normally, because the drag is over (§8.3)
+    ASSERT_EQ(stage->root().overlays().size(), 1U);
+    const auto* view = dynamic_cast<const albor::TooltipView*>(stage->root().overlays().front().get());
+    ASSERT_NE(view, nullptr);
+    EXPECT_EQ(view->text(), "Copies the row");
     // cleanup
     EXPECT_TRUE(application.destroy_window(handle));
 }

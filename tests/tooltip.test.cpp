@@ -10,6 +10,8 @@
 #include "albor/application/tooltip_controller.h"
 #include "albor/core/constraints.h"
 #include "albor/input/input_controller.h"
+#include "albor/layout/column_layout.h"
+#include "albor/layout/sized_box_layout.h"
 #include "albor/style/theme.h"
 #include "albor/style/theme_builder.h"
 #include "albor/text/text_engine.h"
@@ -291,6 +293,53 @@ TEST(TooltipLifecycle, ABlurDoesNotSuppressTheTarget) {
     EXPECT_EQ(tips.phase(), TooltipPhase::Visible);
 }
 
+TEST(TooltipLifecycle, ADynamicTextUpdateWhileArmingShowsTheLatestText) {
+    // arrange an armed target whose text changes before the delay elapses (§8.3)
+    UiNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 300.0f}));
+    StubTextEngine text;
+    TooltipController tips(root, text);
+    UiNode target;
+    target.set_tooltip("Cut");
+    target.arrange(Rect::from_origin_size(Point{20.0f, 20.0f}, Size{80.0f, 24.0f}));
+    tips.set_target(&target);
+    tips.advance(TooltipController::ARM_DELAY * 0.4f);
+    ASSERT_EQ(tips.phase(), TooltipPhase::Arming);
+    // act change the text before the delay elapses, which a binding may do (§8.3)
+    target.set_tooltip("Copy");
+    tips.advance(TooltipController::ARM_DELAY);
+    // assert the bubble presents the text the target carries when it opens (§8.3)
+    ASSERT_EQ(root.overlays().size(), 1U);
+    const auto* view = dynamic_cast<const TooltipView*>(root.overlays().front().get());
+    ASSERT_NE(view, nullptr);
+    EXPECT_EQ(view->text(), "Copy");
+}
+
+TEST(TooltipLifecycle, AShrinkingViewReplacesTheVisibleBubble) {
+    // arrange a shown bubble near the bottom right of a wide view (§8.3)
+    UiNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 300.0f}));
+    StubTextEngine text;
+    TooltipController tips(root, text);
+    UiNode target;
+    target.set_tooltip("Cut");
+    target.arrange(Rect::from_origin_size(Point{350.0f, 260.0f}, Size{40.0f, 20.0f}));
+    tips.set_target(&target);
+    tips.advance(TooltipController::ARM_DELAY);
+    ASSERT_EQ(root.overlays().size(), 1U);
+    const Rect before = root.overlays().front()->bounds();
+    // act shrink the view, which a resize reports (§5.3, §8.3)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 120.0f}));
+    tips.advance(0.016f);
+    // assert the bubble was placed again inside the new edges rather than left outside them (§8.3)
+    const Rect after = root.overlays().front()->bounds();
+    EXPECT_NE(after, before);
+    EXPECT_GE(after.x, 4.0f);
+    EXPECT_GE(after.y, 4.0f);
+    EXPECT_LE(after.x + after.width, 196.0f + 0.01f);
+    EXPECT_LE(after.y + after.height, 116.0f + 0.01f);
+}
+
 TEST(TooltipLifecycle, AChangedTextRebuildsTheVisibleBubble) {
     // arrange a shown bubble whose target text changes under the pointer (§8.3)
     UiNode root;
@@ -333,6 +382,26 @@ TEST(TooltipTarget, AContainerTooltipCoversItsDescendant) {
     // act point the controller at the leaf, which carries no tooltip itself (§8.3)
     tips.set_target(leaf);
     // assert the nearest tooltipped ancestor is the target, so the row covers its content (§8.3)
+    EXPECT_EQ(tips.target(), row);
+}
+
+TEST(TooltipTarget, AnEmptyTooltipLeavesTheAncestorInCharge) {
+    // arrange a row with hover text and a leaf that clears its own (§8.3)
+    UiNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 300.0f}));
+    StubTextEngine text;
+    TooltipController tips(root, text);
+    auto row_owned = std::make_unique<UiNode>();
+    UiNode* row = row_owned.get();
+    root.add_child(std::move(row_owned));
+    row->set_tooltip("Transient files");
+    auto leaf_owned = std::make_unique<UiNode>();
+    UiNode* leaf = leaf_owned.get();
+    row->add_child(std::move(leaf_owned));
+    // act the leaf writes the empty string, which means it has no tooltip of its own (§8.3)
+    leaf->set_tooltip("");
+    tips.set_target(leaf);
+    // assert the ancestor still applies, because an empty text is not an own tooltip (§8.3)
     EXPECT_EQ(tips.target(), row);
 }
 
@@ -381,6 +450,49 @@ TEST(TooltipTarget, ARichBuilderSuppliesThePresentation) {
     // assert the controller measured and placed the rich subtree where the bubble belongs (§8.2, §8.3)
     const Rect expected = place_tooltip(target.bounds(), Size{.width = 98.0f, .height = 30.0f}, root.bounds(), 6.0f, 4.0f);
     EXPECT_EQ(root.overlays().front()->bounds(), expected);
+}
+
+TEST(TooltipTarget, ARichBuilderWithANestedLayoutIsArranged) {
+    // arrange a target whose rich tooltip is a column of two fixed boxes (§8.2, §8.3)
+    UiNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 300.0f}));
+    StubTextEngine text;
+    TooltipController tips(root, text);
+    UiNode target;
+    target.arrange(Rect::from_origin_size(Point{20.0f, 20.0f}, Size{80.0f, 24.0f}));
+    target.set_tooltip_builder([] {
+        // the column is the author's rich content, which the controller measures and arranges (§8.2)
+        auto column = std::make_unique<ColumnLayout>();
+        // the first row is a fixed box, so its arranged extent is what the test reads (§8.2)
+        auto top = std::make_unique<SizedBoxLayout>();
+        top->set_width(40.0f);
+        top->set_height(10.0f);
+        column->add_child(std::move(top));
+        // the second row is taller, which makes the column arrange two different extents (§8.2)
+        auto bottom = std::make_unique<SizedBoxLayout>();
+        bottom->set_width(60.0f);
+        bottom->set_height(12.0f);
+        column->add_child(std::move(bottom));
+        return column;
+    });
+    // act
+    tips.set_target(&target);
+    tips.advance(TooltipController::ARM_DELAY);
+    // assert the controller arranged the rich subtree and its children inside the bubble (§8.2, §8.3)
+    ASSERT_EQ(root.overlays().size(), 1U);
+    const UiNode* content = root.overlays().front().get();
+    ASSERT_EQ(content->child_count(), 2U);
+    const UiNode* top = content->child_at(0);
+    const UiNode* bottom = content->child_at(1);
+    ASSERT_NE(top, nullptr);
+    ASSERT_NE(bottom, nullptr);
+    EXPECT_FLOAT_EQ(top->bounds().height, 10.0f);
+    EXPECT_FLOAT_EQ(bottom->bounds().height, 12.0f);
+    EXPECT_GE(bottom->bounds().y, top->bounds().y + top->bounds().height);
+    EXPECT_GE(top->bounds().x, content->bounds().x);
+    EXPECT_GE(bottom->bounds().x, content->bounds().x);
+    EXPECT_LE(bottom->bounds().x + bottom->bounds().width, content->bounds().x + content->bounds().width);
+    EXPECT_LE(bottom->bounds().y + bottom->bounds().height, content->bounds().y + content->bounds().height);
 }
 
 TEST(TooltipViewChecks, ATooltipOverlayTakesNoPointerInput) {
@@ -466,6 +578,23 @@ TEST(TooltipPlacement, TheBubbleClampsInsideTheViewport) {
     // assert both edges clamp to the inset rather than clipping the text (§8.3)
     EXPECT_FLOAT_EQ(leading.x, 4.0f);
     EXPECT_FLOAT_EQ(trailing.x, 276.0f);
+}
+
+TEST(TooltipPlacement, AZeroSizedAnchorStillPlacesTheBubble) {
+    // arrange an anchor with no extent, which an unarranged target may supply (§8.2)
+    const Rect viewport = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 300.0f});
+    // act
+    const Rect bubble = place_tooltip(Rect{}, Size{.width = 120.0f, .height = 40.0f}, viewport, 6.0f, 4.0f);
+    const Rect empty = place_tooltip(Rect{}, Size{}, viewport, 6.0f, 4.0f);
+    // assert both land on the leading inset with their own extent, which never turns into a NaN (§8.3)
+    EXPECT_FLOAT_EQ(bubble.x, 4.0f);
+    EXPECT_FLOAT_EQ(bubble.y, 6.0f);
+    EXPECT_FLOAT_EQ(bubble.width, 120.0f);
+    EXPECT_FLOAT_EQ(bubble.height, 40.0f);
+    EXPECT_FLOAT_EQ(empty.x, 4.0f);
+    EXPECT_FLOAT_EQ(empty.y, 6.0f);
+    EXPECT_FLOAT_EQ(empty.width, 0.0f);
+    EXPECT_FLOAT_EQ(empty.height, 0.0f);
 }
 
 TEST(TooltipLifecycle, ARemovedTargetDismissesTheVisibleTooltip) {

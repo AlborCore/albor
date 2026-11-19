@@ -36,11 +36,26 @@ A control with no other name (an icon-only button) announces the tooltip as its 
 A named control carries the tooltip as its accessible description, which the macOS and Windows
 bridges expose as help text.
 
+A rich subtree paints the bubble, but it is not text: set `tooltip` as well, because that string is
+what assistive technology announces when the bubble is not a run.
+
+## Theme changes
+
+`MainWindowConfig::tooltip_style` installs the bubble when the window is created. An application
+that swaps themes at runtime calls `stage->tooltips()->set_style(tooltip_style(theme))` after
+`apply_theme`, which re-styles a visible bubble and every later one.
+
+## Notes
+
+- An empty `tooltip` means no tooltip of its own: the nearest ancestor that carries one applies.
+- A disabled widget does not hit-test as itself, so its own tooltip does not appear. Put the
+  tooltip on the containing row when a disabled action needs an explanation.
+
 ## C++
 
-`UiNode::set_tooltip` carries the string form. A rich subtree is supplied through
-`set_tooltip_builder`, which returns the node the window presents instead of the text bubble; when
-both are installed the builder wins.
+`UiNode::set_tooltip` carries the string form, which is also the accessible fallback. A rich subtree
+is supplied through `set_tooltip_builder`, which returns the node the window presents instead of the
+text bubble; when both are installed the builder wins.
 
 ```cpp
 auto row = std::make_unique<SidebarRow>(&engine, "transient.sch");
