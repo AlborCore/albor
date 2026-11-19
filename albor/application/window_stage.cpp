@@ -2,6 +2,7 @@
 
 #include <chrono>
 
+#include "albor/application/tooltip_controller.h"
 #include "albor/core/dev_hook.h"
 #include "albor/input/input_controller.h"
 #include "albor/render/frame_profile.h"
@@ -47,6 +48,13 @@ namespace albor
         // the controller routes the normalized events into the tree (§8.3)
         m_input = std::make_unique<InputController>();
         m_input->attach(m_pipeline->root());
+        // a window with a tree owns one hover tooltip, which it presents over that tree (§8.3)
+        if (m_has_tree && window.options().role != WindowRole::Popup) {
+            // the bubble floats over the root, which the pipeline owns for the run (§8.1, §8.3)
+            m_tooltips = std::make_unique<TooltipController>(m_pipeline->root(), text, config.tooltip_style);
+            // a subtree that leaves the tree is forgotten before it dies, so no timer names a destroyed node (§8.3)
+            m_input->set_subtree_released_handler([this](UiNode* node) { m_tooltips->forget(node); });
+        }
         // a popup belongs to its control rather than the automation root, so it keeps the main binding (§10.3, §5.1)
         if (window.options().role != WindowRole::Popup) {
             // every main window offers its root, because automation observes a hand drawn scene too (§10.3)
@@ -56,6 +64,9 @@ namespace albor
     }
 
     WindowStage::~WindowStage() {
+        // the release hook names the tooltip controller, which the member teardown releases before the tree (§8.3)
+        if (m_input)
+            m_input->set_subtree_released_handler({});
         // the dev extension is told the tree went away, because it must never patch a destroyed window (§12.1, §5.2)
         if (m_surface && m_pipeline && m_window != nullptr && m_window->options().role != WindowRole::Popup)
             dev::unbind_root(&m_pipeline->root());
@@ -95,6 +106,13 @@ namespace albor
         }
         // the instant is read first, because the delta is measured against the frame before this one (§7.3)
         const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        // the delta is shared by every timer, because one frame is one clock for the tree (§7.3, §8.3)
+        const float delta_seconds = std::chrono::duration<float>(now - m_last_frame).count();
+        // the frame is dated before the work, because the next delta is measured from it (§7.3)
+        m_last_frame = now;
+        // a hover tooltip counts its delay on the same clock, so it needs no timer of its own (§8.3)
+        if (m_tooltips)
+            m_tooltips->advance(delta_seconds);
         // an idle tree skips the advance, which is what keeps a window with no animations cheap (§7.3)
         if (m_animations.active_count() == 0) {
             // the engine is told the gap happened, so an animation scheduled during it starts at the next frame (§7.3)
@@ -102,10 +120,8 @@ namespace albor
         }
         else {
             // the animations run before the scene is recorded, so the frame carries the values they wrote (§7.3, AD-04d)
-            m_pipeline->advance_animations(std::chrono::duration<float>(now - m_last_frame).count());
+            m_pipeline->advance_animations(delta_seconds);
         }
-        // the frame is dated, because the next delta is measured from it (§7.3)
-        m_last_frame = now;
         // stage one settles the graph and records the scene, stage two executes it (§6.1, AD-18)
         const FrameProfileScope build_scope;
         const std::shared_ptr<const FrameScene> scene = m_always_render ? m_pipeline->build(window.metrics()) : m_pipeline->build_if_dirty(window.metrics());
@@ -152,6 +168,9 @@ namespace albor
             return;
         // the controller replays the exits, because the pointer left the surface its tree sits on (§8.3)
         m_input->clear_hover();
+        // a bubble the pointer left leaves too, and the warm grace covers the next control (§8.3)
+        if (m_tooltips)
+            m_tooltips->pointer_left();
     }
 
     void WindowStage::set_window_active(bool active) {
@@ -160,6 +179,9 @@ namespace albor
             return;
         // the manager hides the cue and keeps the owner while the window is inactive (§8.3)
         m_input->focus().set_window_active(active);
+        // a window that loses key status dismisses its bubble, because it is no longer the surface in front (§8.3)
+        if (!active && m_tooltips)
+            m_tooltips->dismiss_transient();
     }
 
     void WindowStage::set_close_request(std::function<void()> handler) {
@@ -171,8 +193,14 @@ namespace albor
         // an unwired stage has no input to deliver, which the window betrayed at creation time (§8.3)
         if (!m_input)
             return;
+        // a press, a wheel, a key or a lost capture ends the bubble before the tree reads the new state (§8.3)
+        if (m_tooltips && (event.kind == EventKind::PointerDown || event.kind == EventKind::Wheel || event.kind == EventKind::KeyDown || event.kind == EventKind::PointerCancel || event.kind == EventKind::ContextMenu))
+            m_tooltips->dismiss();
         // the event routes first, which is what the caret the anchor follows answers (§8.3)
         m_input->deliver(event);
+        // a moved pointer arms the nearest tooltip target, which a container may supply (§8.3)
+        if (m_tooltips && (event.kind == EventKind::PointerMove || event.kind == EventKind::PointerDown || event.kind == EventKind::PointerUp))
+            m_tooltips->set_target(m_input->hovered());
         // a dialog applies its keyboard conventions to a key no control claimed (§8.3)
         apply_dialog_key(event);
         // the focused node is where the caret lives, which the anchor is read against (§8.3)
@@ -235,6 +263,11 @@ namespace albor
     AnimationEngine& WindowStage::animations() {
         // the engine is a member, so a widget holding this reference never sees it replaced (§7.3)
         return m_animations;
+    }
+
+    TooltipController* WindowStage::tooltips() const {
+        // a stage without a tree presents no bubble, because a hand drawn window has nothing to hover (§8.3)
+        return m_tooltips.get();
     }
 
     FocusManager& WindowStage::focus() {

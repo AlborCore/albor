@@ -764,6 +764,9 @@ namespace albor::accessibility::platform
                 case UIA_NamePropertyId:
                     set_variant_bstr(result, bstr_from_utf8(published->name()));
                     return S_OK;
+                case UIA_HelpTextPropertyId:
+                    set_variant_bstr(result, bstr_from_utf8(published->description()));
+                    return S_OK;
                 case UIA_AutomationIdPropertyId:
                     set_variant_bstr(result, bstr_from_utf8(published->explicit_id()));
                     return S_OK;

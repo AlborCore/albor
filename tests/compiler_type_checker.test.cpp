@@ -2364,3 +2364,13 @@ TEST(TypeChecker, ASlotStripsFromTheTreeWhenABaseIsUsedDirectly) {
     EXPECT_EQ(user.root->element_type, "Base");
     EXPECT_EQ(user.root->children.size(), 0U);
 }
+
+TEST(TypeChecker, ReportsATooltipThatIsNotAString) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act every element accepts the common tooltip, which is written as text (§8.3)
+    check("component C { Label { tooltip: 1; } }", diagnostics);
+    // assert the mismatch is reported rather than reaching codegen (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}

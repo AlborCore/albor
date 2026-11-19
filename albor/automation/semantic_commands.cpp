@@ -154,6 +154,9 @@ namespace albor::automation
                 const std::string id = node->identified() ? node->explicit_id() : std::string("-");
                 // the line carries role, id and name, which is what identifies a control to a reader (§10.1)
                 out << role_name(node->role()) << ' ' << id << ' ' << escape_for_line(node->name());
+                // a description appends the hover text a reader announces beside the name (§8.3, §10.1)
+                if (!node->description().empty())
+                    out << " description=" << escape_for_line(node->description());
                 // an editable node appends the text it carries, which is what a client reads back (§10.1)
                 if (!node->value().empty())
                     out << " value=" << escape_for_line(node->value());

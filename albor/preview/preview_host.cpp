@@ -454,11 +454,10 @@ namespace albor::preview
                     else if (auto* button = dynamic_cast<Button*>(built.get()))
                         button->set_label(text_of(*assignment.value));
                 }
-                // a button tooltip, which names an icon-only control and is the hover text (§10.1)
+                // the hover text every element accepts, which the preview shows like any other common property (§8.3)
                 else if (assignment.name == "tooltip") {
-                    // a button carries the tooltip beside its caption (§10.1)
-                    if (auto* button = dynamic_cast<Button*>(built.get()))
-                        button->set_tooltip(text_of(*assignment.value));
+                    // the built node is a ui node, so the common tooltip lands on it whoever it is (§8.3)
+                    built->set_tooltip(text_of(*assignment.value));
                 }
                 // a button icon and its square, which the preview resolves beside the source (§6.4)
                 else if (assignment.name == "icon" && dynamic_cast<Button*>(built.get()) != nullptr) {

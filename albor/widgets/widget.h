@@ -9,6 +9,7 @@
 #include "albor/style/theme.h"
 #include "albor/ui/component.h"
 #include "albor/ui/focus_target.h"
+#include "albor/ui/tooltip.h"
 
 namespace albor
 {
@@ -46,9 +47,9 @@ namespace albor
     class SemanticProviderView final : public SemanticProvider
     {
     public:
-        // build a view over a provider the caller keeps alive (§10.1)
-        explicit SemanticProviderView(const SemanticProvider* provider) :
-            m_provider(provider) {}
+        // build a view over a provider the caller keeps alive, and the node it announces when there is one (§10.1)
+        explicit SemanticProviderView(const SemanticProvider* provider, const UiNode* node = nullptr) :
+            m_provider(provider), m_node(node) {}
 
         // override: forward to the provider the view watches (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;
@@ -62,10 +63,16 @@ namespace albor
     private:
         // the provider the view forwards to, which the ui tree owns (§10.1, AD-09)
         const SemanticProvider* m_provider;
+
+        // the node the provider announces, which carries the hover text the view applies (§8.3, §10.1)
+        const UiNode* m_node;
     };
 
     // hand one theme to every widget in a subtree, so an application need not walk the tree itself (§6.1)
     void apply_theme(UiNode& root, const Theme& theme);
+
+    // resolve the tooltip bubble a window presents from a theme, which the main window config carries (§8.3, §8.4)
+    [[nodiscard]] TooltipStyle tooltip_style(const Theme& theme);
 
     // the base every standard widget derives from, a component for layout and a provider for semantics (§8, §10.1)
     class Widget : public Component, public SemanticProvider, public FocusTarget

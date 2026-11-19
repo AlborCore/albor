@@ -9074,6 +9074,18 @@ TEST(ButtonIconChecks, SetTooltipRedrawsAndAnUnchangedOneDoesNot) {
     EXPECT_TRUE(button.render_dirty());
 }
 
+TEST(ButtonIconChecks, AButtonTooltipIsTheNodeTooltip) {
+    // arrange a button, which carries the hover text the base node owns (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Open");
+    // act
+    button.set_tooltip("Open the file");
+    // assert the button reports the common node state, so a window presents it like any other element (§8.3)
+    EXPECT_TRUE(button.has_tooltip());
+    EXPECT_EQ(button.tooltip(), "Open the file");
+}
+
 TEST(ButtonIconChecks, AnIconOnlyButtonPaintsNoTextAndClearsBackToTheLabelPath) {
     // arrange an icon-only button with a ten point icon (§6.4)
     BindingEngine engine;
@@ -9426,6 +9438,25 @@ TEST(SemanticWalkChecks, AContainerWithoutAProviderWalksItsSubtree) {
     ASSERT_NE(found, nullptr);
     EXPECT_EQ(found->role(), SemanticRole::Button);
     EXPECT_EQ(found->name(), "Deep");
+}
+
+TEST(SemanticWalkChecks, ANestedWidgetKeepsItsTooltipAsTheDescription) {
+    // arrange a panel with a button child, which is the widget to widget walk every composed page takes (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Panel panel(&engine);
+    auto button = std::make_unique<Button>(&engine, &text_engine, "Save");
+    button->set_tooltip("Saves the document");
+    panel.add_child(std::move(button));
+    // act
+    const SemanticTree tree = build_semantic_tree(panel);
+    // assert the button's tooltip reached the tree through the provider view (§8.3, §10.1)
+    const SemanticNode* found = nullptr;
+    for (std::size_t index = 0; index < tree.size(); index++)
+        if (tree.at(index)->name() == "Save")
+            found = tree.at(index);
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->description(), "Saves the document");
 }
 
 TEST(ScrollViewChecks, TheVisualBoundsStayInsideTheViewport) {

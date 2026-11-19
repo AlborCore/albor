@@ -10,4 +10,7 @@ namespace albor
 
     // wrap any node in a provider that walks its subtree, which a container without its own provider needs (§10.1, AD-09)
     [[nodiscard]] std::unique_ptr<SemanticProvider> make_node_semantic_provider(const UiNode& node);
+
+    // apply the hover text a node carries as its accessible name or description (§8.3, §10.1)
+    [[nodiscard]] SemanticNode with_tooltip(SemanticNode node, const UiNode& source);
 } // namespace albor

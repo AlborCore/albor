@@ -141,6 +141,17 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     return published == nullptr ? nil : [NSString stringWithUTF8String:published->node.name().c_str()];
 }
 
+// override: the help text is the accessible description, which a tooltip supplies (§8.3, §10.1)
+- (NSString*)accessibilityHelp {
+    // the publication this element names is the one the bridge assigned (§10.2)
+    const Published* published = static_cast<const Published*>(self.publication);
+    // a node with no description has no help text, which assistive technology reads as absent (§10.2)
+    if (published == nullptr || published->node.description().empty())
+        return nil;
+    // the description is author supplied text, which crosses as it was written (§10.1)
+    return [NSString stringWithUTF8String:published->node.description().c_str()];
+}
+
 // override: the enabled flag is the disabled state read backwards, because the two disagree (§10.1)
 - (BOOL)isAccessibilityEnabled {
     // the publication this element names is the one the bridge assigned (§10.2)

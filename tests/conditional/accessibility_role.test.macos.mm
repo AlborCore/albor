@@ -29,6 +29,8 @@ namespace
             SemanticNode node{m_role};
             // the name is what a reader speaks, so it belongs on the node (§10.1)
             node.set_name(m_name);
+            // the description is the hover text a reader announces beside the name (§8.3, §10.1)
+            node.set_description(m_description);
             // the selected state is what a tab item announces, which the radio button value reads (§10.1)
             node.set_selected(m_selected);
             // the check state is what a radio button announces beside its value (§10.1)
@@ -62,6 +64,9 @@ namespace
 
         // the name this provider publishes, which a reader speaks (§10.1)
         std::string m_name = "Log";
+
+        // the description this provider publishes, which a reader announces beside the name (§10.1)
+        std::string m_description;
 
         // whether this provider reports itself selected, which a tab item test sets (§10.1)
         bool m_selected = false;
@@ -123,6 +128,22 @@ TEST(AccessibilityRole, TheAnnouncedRootCarriesTheSemanticRole) {
     ASSERT_EQ(children.count, 1U);
     // assert a viewport announces as the scroll area assistive technology scrolls (§10.2, AD-08)
     EXPECT_EQ([(NSView*)children.firstObject accessibilityRole], NSAccessibilityScrollAreaRole);
+}
+
+TEST(AccessibilityRole, TheAnnouncedRootCarriesItsDescriptionAsHelp) {
+    // arrange a root whose description is the hover text a tooltip supplies (§8.3, §10.1)
+    WindowFixture fixture;
+    ViewportProvider provider;
+    provider.m_name = "Save";
+    provider.m_description = "Saves the current document";
+    SemanticTree tree;
+    tree.build_from(provider);
+    // act
+    fixture.adapter->publish(tree);
+    // assert the root announces the description as its help text, which a reader speaks beside the name (§10.1, §10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    EXPECT_STREQ([(NSView*)children.firstObject accessibilityHelp].UTF8String, "Saves the current document");
 }
 
 TEST(AccessibilityRole, TheAnnouncedTreeCarriesEveryChild) {

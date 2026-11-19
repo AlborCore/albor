@@ -579,6 +579,22 @@ TEST(DevElementChecks, AButtonTooltipLandsOnTheButton) {
     EXPECT_EQ(static_cast<Button*>(button.get())->tooltip(), "Open file");
 }
 
+TEST(DevElementChecks, ACommonTooltipLandsOnAnyElement) {
+    // arrange a label and a container, which carry the common tooltip through the wildcard (§8.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> label = create_node("Label", engine, text);
+    std::unique_ptr<UiNode> column = create_node("Column", engine, text);
+    ASSERT_NE(label, nullptr);
+    ASSERT_NE(column, nullptr);
+    // act the wildcard applies the property, because no per element entry declares it (§8.3)
+    EXPECT_TRUE(apply_property(*label, "Label", "tooltip", "File name"));
+    EXPECT_TRUE(apply_property(*column, "Column", "tooltip", "Transient files"));
+    // assert both nodes carry the hover text the definition wrote (§8.3)
+    EXPECT_EQ(label->tooltip(), "File name");
+    EXPECT_EQ(column->tooltip(), "Transient files");
+}
+
 TEST(DevElementChecks, ALiveNodeIsNamedByItsDynamicType) {
     // arrange one node per element, because naming is what finds a changed element (§12.1)
     BindingEngine engine;

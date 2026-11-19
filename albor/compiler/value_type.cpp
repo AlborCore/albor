@@ -260,6 +260,8 @@ namespace albor::compiler
             ElementProperty{.name = "border_color", .type = scalar(TypeKind::Color), .assignable = true},
             // a drop shadow lifts any node off its surface, which the renderer already paints (§6.2)
             ElementProperty{.name = "drop_shadow", .type = shadow, .assignable = true},
+            // a tooltip names any node on hover, which the window presents over the tree (§8.3, §10.1)
+            ElementProperty{.name = "tooltip", .type = scalar(TypeKind::String), .assignable = true},
         };
     }
 
