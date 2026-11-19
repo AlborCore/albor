@@ -93,6 +93,7 @@ jobs:
       contents: read
       pull-requests: read
       code-quality: write
+      id-token: write
     timeout-minutes: 120
     defaults:
       run:
@@ -129,9 +130,10 @@ jobs:
               sudo xcode-select --switch /Applications/Xcode_16.4.app
           - name: macos-coverage
             os: macos-15
-            # the coverage report belongs to a review, which is the only event that carries the PR context (AD-16)
-            enable: ${{ github.event_name == 'pull_request' }}
+            # the coverage report runs on pull requests and on main to maintain the baseline (AD-16)
+            enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
             preset: coverage
+            coverage-flag: macos
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
@@ -334,25 +336,29 @@ jobs:
           ALBOR_BUILD_DIR: .build-${{ matrix.preset }}
         run: bash build/check-font-selection.sh
 
-      - name: cobertura report
+      - name: lcov coverage report
         if: matrix.enable && matrix.preset == 'coverage'
         run: |
           xcrun llvm-profdata merge -sparse coverage-*.profraw -o coverage.profdata
-          xcrun llvm-cov export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' ./.build-coverage/tests/albor-tests > coverage.lcov
+          objects=(./.build-coverage/tests/albor-tests)
+          for binary in ./.build-coverage/tests/albor-generated-font-checks ./.build-coverage/tests/albor-render-blend2d-auto-checks ./.build-coverage/tests/albor-render-albor-auto-checks ./.build-coverage/tests/albor-automation-host-tests; do
+            if [ -f "$binary" ]; then
+              objects+=("-object" "$binary")
+            fi
+          done
+          xcrun llvm-cov export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' "${objects[@]}" > coverage.lcov
           # the export carries absolute source paths, and the coverage api matches on repository relative ones
-          sed -i '' "s|^SF:$PWD/|SF:|" coverage.lcov
-          # the runner's python3 is homebrew managed (pep 668), so the converter lives in a venv
-          python3 -m venv .venv-lcov
-          .venv-lcov/bin/pip install lcov_cobertura
-          .venv-lcov/bin/lcov_cobertura coverage.lcov --output cobertura.xml
+          sed -i.bak "s|^SF:$PWD/|SF:|" coverage.lcov && rm -f coverage.lcov.bak
 
-      - name: upload - code coverage
+      - name: upload coverage to codecov
         if: matrix.enable && matrix.preset == 'coverage'
-        uses: actions/upload-code-coverage@v1
+        uses: codecov/codecov-action@v5
         with:
-          file: cobertura.xml
-          language: C++
-          label: code-coverage/c++
+          files: coverage.lcov
+          flags: ${{ matrix.coverage-flag || 'macos' }}
+          name: ${{ matrix.name }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       - name: save - vcpkg cache
         if: matrix.enable && !cancelled() && steps.configure.outcome == 'success'
