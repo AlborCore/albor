@@ -8,10 +8,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <vector>
+
+#include "albor/core/file_bytes.h"
 
 namespace albor::harfbuzz
 {
@@ -30,13 +30,8 @@ namespace albor::harfbuzz
 
         // read a font file into memory, because the face is rebuilt from its tables and not a path (§15, AD-34)
         std::vector<std::uint8_t> read_file_bytes(const std::string& path) {
-            // the file is opened in binary, because a font read as text would be corrupted (§9.1)
-            std::ifstream file(path, std::ios::binary);
-            // a file that is not there carries no font, so the read is refused (§9.1)
-            if (!file)
-                return {};
-            // the bytes are read whole, because the face is rebuilt from a complete file (§9.1)
-            return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            // a path that names no readable file carries no font, so no table is rebuilt from it (§9.1)
+            return core::read_regular_file(path).value_or(std::vector<std::uint8_t>());
         }
     } // namespace
 

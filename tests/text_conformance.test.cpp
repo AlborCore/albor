@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -92,6 +93,19 @@ TEST(DualEngineConformanceChecks, AnAbsentFontIsRefusedRatherThanHalfBuilt) {
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create("/no/such/font.ttf", FONT_FAMILY);
     // assert an engine with no face is refused, because a half built one would shape nothing silently (§9.1)
     EXPECT_EQ(engine, nullptr);
+}
+
+TEST(DualEngineConformanceChecks, ADirectoryFontPathIsRefusedRatherThanAborting) {
+    // arrange a directory where a font file was expected, which a wrong path produces (§9.1, #246)
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / "albor-font-directory";
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    std::filesystem::create_directories(directory);
+    // act an engine is asked for the directory, which no face can be built from (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(directory.string(), FONT_FAMILY);
+    // assert the engine is refused rather than half built over no bytes (§9.1)
+    EXPECT_EQ(engine, nullptr);
+    std::filesystem::remove_all(directory, ignored);
 }
 
 TEST(DualEngineConformanceChecks, AnEmptyStringMeasuresNothing) {

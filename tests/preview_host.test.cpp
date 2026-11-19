@@ -164,6 +164,23 @@ TEST(PreviewHostChecks, AnImportedComponentIsExpandedAndItsPropertyIsAssigned) {
     std::filesystem::remove_all(root, ignored);
 }
 
+TEST(PreviewHostChecks, ADirectoryImportIsReportedRatherThanAborting) {
+    // arrange a directory where an import names a component file, which no source read can accept (§11.1, #246)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-preview-import-directory";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root / "panel.ui");
+    // the window imports what reads as a file but is a directory, which the reader must refuse (§11.1)
+    const std::string window = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(window, engine, root / "window.ui");
+    // assert the import is reported and no tree is built, because a directory is not a source (§12.2)
+    EXPECT_GT(result.diagnostics, 0U);
+    EXPECT_EQ(result.root, nullptr);
+    std::filesystem::remove_all(root, ignored);
+}
+
 TEST(PreviewHostChecks, AComboBoxCarriesItsStaticOptions) {
     // arrange a combo box with two options and a selected index (§8)
     const char* source = R"UI(component Panel {

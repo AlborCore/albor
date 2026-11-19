@@ -3,9 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <fstream>
 #include <functional>
-#include <iterator>
 #include <map>
 #include <memory>
 #include <string>
@@ -19,6 +17,7 @@
 #include <unicode/ubrk.h>
 #include <unicode/utext.h>
 
+#include "albor/core/file_bytes.h"
 #include "albor/render/font_handle.h"
 #include "albor/render/shaped_run.h"
 #include "albor/resources/embedded_font.h"
@@ -141,13 +140,8 @@ namespace albor::harfbuzz
 
         // read a font file into memory, because the engine identifies a font by its bytes and not by a path (§15, AD-34)
         std::vector<std::uint8_t> read_font_bytes(const std::string& path) {
-            // the file is opened in binary, because a font read as text would be corrupted (§9.1)
-            std::ifstream file(path, std::ios::binary);
-            // a file that is not there carries no font, so the read is refused (§9.1)
-            if (!file)
-                return {};
-            // the bytes are read whole, because a face is built from a complete font (§9.1)
-            return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            // a path that names no readable file carries no font, so the engine is refused (§9.1, #246)
+            return core::read_regular_file(path).value_or(std::vector<std::uint8_t>());
         }
         // how many shaped runs the cache holds before it drops them (§9.1)
         constexpr std::size_t MAXIMUM_CACHED_RUNS = 512;

@@ -20,6 +20,7 @@
 #include "albor/compiler/ast.h"
 #include "albor/compiler/naming.h"
 #include "albor/compiler/value_type.h"
+#include "albor/core/file_bytes.h"
 
 namespace albor::compiler
 {
@@ -417,11 +418,7 @@ namespace albor::compiler
                 if (m_failed.contains("file:" + key))
                     return "nullptr";
                 // the bytes are read whole, because the generated unit carries the encoded png (§6.4)
-                std::vector<std::uint8_t> bytes;
-                // the file is opened in binary mode, because a png is not text (§6.4)
-                if (std::ifstream input(resolved, std::ios::binary); input.is_open())
-                    // the stream iterator copies the exact bytes, which the array then carries (§6.4)
-                    bytes.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+                std::vector<std::uint8_t> bytes = core::read_regular_file(resolved).value_or(std::vector<std::uint8_t>());
                 // a missing or empty file has no image to embed, so it blocks the output (§6.4)
                 if (bytes.empty()) {
                     // the path is marked failed, so a second reference does not repeat the complaint (§6.4)

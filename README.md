@@ -1,5 +1,17 @@
 # Albor
 
+[![Documentation](https://img.shields.io/badge/docs-github%20pages-blue)](https://alborcore.github.io/albor/)
+[![Release](https://img.shields.io/github/v/release/alborCore/albor)](https://github.com/AlborCore/albor/releases/latest)
+[![License](https://img.shields.io/github/license/AlborCore/albor)](LICENSE)
+
+[![Build Status](https://github.com/alborCore/albor/workflows/build/badge.svg)](https://github.com/alborCore/albor/actions)
+[![Coverage](https://codecov.io/gh/AlborCore/albor/branch/main/graph/badge.svg)](https://codecov.io/gh/AlborCore/albor)
+
+[![Language](https://img.shields.io/github/languages/top/AlborCore/albor)](https://github.com/AlborCore/albor)
+[![Last commit](https://img.shields.io/github/last-commit/AlborCore/albor/main)](https://github.com/AlborCore/albor/commits/main)
+[![Issues](https://img.shields.io/github/issues/AlborCore/albor)](https://github.com/AlborCore/albor/issues)
+[![Pull requests](https://img.shields.io/github/issues-pr/AlborCore/albor)](https://github.com/AlborCore/albor/pulls)
+
 **A cross-platform declarative UI framework for C++.**
 
 Albor compiles a compact `.ui` declarative language directly to native C++ — no

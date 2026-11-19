@@ -1,7 +1,6 @@
 #include "albor/resources/embedded_image.h"
 
-#include <fstream>
-#include <iterator>
+#include <filesystem>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -9,6 +8,7 @@
 #include <utility>
 
 #include "albor/core/content_hash.h"
+#include "albor/core/file_bytes.h"
 #include "albor/render/image_resource.h"
 #include "albor/render/resource_factory.h"
 #include "albor/resources/png_decoder.h"
@@ -93,15 +93,13 @@ namespace albor::resources
     }
 
     std::shared_ptr<const ImageResource> ImageRegistry::load_file(const std::filesystem::path& path) {
-        // a file that cannot be opened has no bytes to decode, so it is refused before reading (§6.4)
-        std::ifstream file(path, std::ios::binary);
-        // the failed open is the ordinary missing file case, which a development tool reports as null (§6.4)
-        if (!file)
-            return nullptr;
         // the bytes are read whole, because the registry hashes the encoded png before it decodes it (§6.4)
-        std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        std::optional<std::vector<std::uint8_t>> bytes = core::read_regular_file(path);
+        // a path that names no readable file is the ordinary missing case, which a development tool reports as null (§6.4)
+        if (!bytes)
+            return nullptr;
         // the file is handed to the same registration path, so a file and an embedded asset share one cache entry (§6.4)
-        return register_image(EmbeddedImage{.bytes = std::move(bytes)});
+        return register_image(EmbeddedImage{.bytes = std::move(*bytes)});
     }
 
     std::size_t ImageRegistry::count() {

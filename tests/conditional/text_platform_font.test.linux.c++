@@ -457,6 +457,27 @@ TEST(LinuxPlatformFont, AMissingFileCarriesNoBytes) {
 #endif
 }
 
+TEST(LinuxPlatformFont, ADirectoryInPlaceOfAFontFileCarriesNoBytes) {
+#if defined(ALBOR_HAVE_FONTCONFIG)
+    // arrange a directory where the pattern names a file, which a broken configuration can produce (§15, #246)
+    const std::filesystem::path directory = std::filesystem::temp_directory_path() / "albor-font-file-is-a-directory";
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    std::filesystem::create_directories(directory);
+    FcPattern* pattern = FcPatternCreate();
+    FcPatternAddString(pattern, FC_FILE, reinterpret_cast<const FcChar8*>(directory.string().c_str()));
+    FcPatternAddInteger(pattern, FC_INDEX, 0);
+    // act assert a directory in place of a font file carries nothing, which is a refusal (§15, #246)
+    EXPECT_TRUE(harfbuzz::platform_font_bytes(pattern).empty());
+    // exit the pattern goes back, because the test owns it for exactly its own life (§15)
+    FcPatternDestroy(pattern);
+    std::filesystem::remove_all(directory, ignored);
+#else
+    // act assert a build without fontconfig hands over nothing, because no platform face exists (§9.1, AD-34)
+    EXPECT_TRUE(harfbuzz::platform_font_bytes(nullptr).empty());
+#endif
+}
+
 TEST(LinuxPlatformFont, ACollectionFaceCarriesItsOwnMember) {
 #if defined(ALBOR_HAVE_FONTCONFIG)
     // arrange the system collection the host carries, because a collection member is what the index selects (§15)

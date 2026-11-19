@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
+#include <filesystem>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
 #include <utility>
+
+#include "albor/core/file_bytes.h"
 
 namespace albor::manifest
 {
@@ -168,17 +170,15 @@ namespace albor::manifest
         set.default_family = std::move(default_family);
         // every declared face is read, because the generated unit carries all of them (§11.3)
         for (const FontAssetSpec& spec : specs) {
-            // the file is opened in binary mode, because a font is not text (§11.3)
-            std::ifstream file(spec.path, std::ios::binary);
+            // the bytes are read whole, because a face is built from a complete font (§9.1)
+            std::optional<std::vector<std::uint8_t>> bytes = core::read_regular_file(spec.path);
             // a file that cannot be read is reported and skipped, because a partial asset is worse than none (§11.3)
-            if (!file) {
+            if (!bytes) {
                 report(diagnostics, compiler::Diagnostic::Severity::Error, "E0708", "the font file '" + spec.path.string() + "' cannot be read");
                 continue;
             }
-            // the bytes are read whole, because a face is built from a complete font (§9.1)
-            std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
             // the face joins the set even when its bytes are empty, because validation names the problem once (§11.3)
-            set.faces.push_back(FontAsset{.family = spec.family, .weight = spec.weight, .bytes = std::move(bytes)});
+            set.faces.push_back(FontAsset{.family = spec.family, .weight = spec.weight, .bytes = std::move(*bytes)});
         }
         // the loaded set is validated before the caller emits anything (§11.3)
         validate_font_assets(set, diagnostics);

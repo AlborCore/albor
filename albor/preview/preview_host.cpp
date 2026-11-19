@@ -1,10 +1,9 @@
 #include "albor/preview/preview_host.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,6 +18,7 @@
 #include "albor/compiler/type_checker.h"
 #include "albor/compiler/ui_loader.h"
 #include "albor/compiler/value_type.h"
+#include "albor/core/file_bytes.h"
 #include "albor/i18n/catalog.h"
 #include "albor/layout/column_layout.h"
 #include "albor/layout/grid_layout.h"
@@ -696,12 +696,12 @@ namespace albor::preview
             if (path.lexically_normal() == normalized_root)
                 return source;
             // an imported file is read from disk, because it is a saved source beside the importing file (§11.1)
-            std::ifstream file(path, std::ios::binary);
+            const std::optional<std::vector<std::uint8_t>> bytes = core::read_regular_file(path);
             // a missing file is reported by the loader against the import that named it (§11.1)
-            if (!file)
+            if (!bytes)
                 return std::nullopt;
             // the bytes are the source the parser takes (§11.1)
-            return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            return std::string(bytes->begin(), bytes->end());
         });
         // the loader checks the root and every import, and an unsaved buffer has no stem to compare (§12.2)
         const std::optional<compiler::CheckedFile> checked = loader.check(root_path, source_path.empty() ? compiler::RootNameCheck::Skipped : compiler::RootNameCheck::Required);
