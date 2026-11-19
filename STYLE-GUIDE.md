@@ -183,6 +183,51 @@ Rect Rect::from_origin_size(Point origin, Size size) {
   def properties(self, name: str) -> None:
   ```
 
+## TypeScript and JavaScript Formatting
+
+These rules cover the `.ts` sources and the `.cjs` tests of a tool.
+
+### Indentation
+
+- 4 spaces per indent
+- No tabs
+
+### Line Length
+
+- No hard limit; never wrap — statements and comments always stay on one physical line, however long they get
+
+### Braces
+
+- Type, interface and class definitions: opening brace on its own line
+- Function definitions and control structures (`if`, `for`, `while`): opening brace on the same line
+
+### Naming
+
+- Type and interface names: `PascalCase`
+- Functions and variables: `snake_case`
+- Constants: `UPPER_SNAKE_CASE`
+- Private class members: `_` prefix with snake_case
+
+### Imports
+
+- Three sections separated by a blank line:
+  1. Node built-in modules (alphabetical)
+  2. Third-party packages (alphabetical)
+  3. Project files (relative paths, alphabetical)
+
+### Comments
+
+- Comments are placed **above** the code they describe, not inline
+- Format: `// comment text` — a single short line that starts with a lowercase word and has no period
+- Action oriented: the comment states what the next line does
+- One short line per comment; never a paragraph of consecutive comment lines
+- Never wrap a comment: it stays on one physical line, however long it gets
+
+### Type Annotations
+
+- `strict` is enabled, so every exported function declares its parameter and return types
+- An inferred local type is left inferred when the initializer makes it obvious
+
 ## Testing
 
 ### C++
@@ -252,3 +297,18 @@ Rect Rect::from_origin_size(Point origin, Size size) {
 - `# arrange / act` is also acceptable when setup and execution are a single step
 - Do not separate each section with blank lines
 - All test methods should be self-contained whenever possible, avoid utility functions
+
+### TypeScript and JavaScript
+
+#### Framework
+
+- Tool smoke tests use `node:assert/strict`; they drive a built executable and need no external test framework
+
+#### File Naming
+
+- Test files live beside the tool they exercise, under `test/`
+- Named `<purpose>.cjs`
+
+#### Structure
+
+- A smoke test follows the request order the client uses, and each assertion states the behavior it protects
