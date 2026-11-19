@@ -10,7 +10,7 @@ the architecture specification `albor-design-v4.md`.
 | --- | --- | --- | --- |
 | macOS (AppKit, Metal), Intel and Apple silicon | macOS 13.3 | `macos-15`, Xcode 16.4 | implemented — the primary platform |
 | Windows (Win32, Direct3D) | Windows 10 1809 (build 17763, LTSC 2019); VC++ 2015-2022 redistributable | `windows-2022`, VS 2022 17.14 / MSVC 14.44, Windows SDK 10.0.22621.0 | implemented and built in CI |
-| Linux Wayland (Blend2D CPU) | RHEL/Alma 9+ (glibc 2.34, GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21) | `ubuntu-24.04` current; `almalinux:9` baseline | implemented — CI temporarily disabled until a Linux host is available; X11 is planned, Vulkan is #110 |
+| Linux Wayland (Vulkan GPU, Blend2D CPU) and X11 | RHEL/Alma 9+ (glibc 2.34, GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21) | `ubuntu-24.04` current; `almalinux:9` baseline | implemented — Wayland is Tier 1 and X11 is Tier 2; the Linux CI jobs are enabled with lavapipe |
 | headless | — | — | implemented — the test and CI surface |
 
 The framework and its compiler are **C++20**. The Windows build declares the Windows 10
@@ -40,7 +40,7 @@ are the framework's choice. The target map and advanced composition are on
 | System appearance | Full | XDG portal `org.freedesktop.appearance` colour scheme over the session bus; a change reaches the window listener, and the accent stays the portable default |
 | Native file dialogs | Partial | XDG portal `FileChooser` over the session bus: open, save, title, filters, initial folder, proposed name and the exported parent window; a single selection, and a host without a portal refuses the panel |
 | Platform font resolution | Full | fontconfig resolves a family and weight and hands over its sfnt; embedded text never reaches it and a host without fontconfig degrades to embedded-only |
-| Renderer | Partial | Blend2D CPU presenting through `wl_shm`; the Vulkan backend is #110 |
+| Renderer | Full | `render-albor` on Vulkan through Wayland and XCB WSI, with host-visible readback; Blend2D CPU through `wl_shm` remains the portable fallback |
 | Accessibility | Not yet | AT-SPI is #42 |
 
 The adapter builds only where the Wayland, xkbcommon and Pango/Cairo/D-Bus development
@@ -82,7 +82,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Render surface, metrics, scale | Full | D3D and Blend2D windowed surfaces |
 | Two-stage frame pipeline | Full | scene build and render execution separated |
 | Custom rendering and retained resources | Full | `CustomRenderNode`, `RenderContext`, batch buffers, glyph cache |
-| `render-albor` GPU backend | Full | Direct3D 11; 93 tests, 48 parity tests, D3D/Metal parity, damage culled stage one and damage-bounded partial frames |
+| `render-albor` GPU backend | Full | Direct3D 11 on Windows, Metal on macOS and Vulkan on Linux; the Linux suite carries the offscreen smoke, the parity corpus, the allocation invariant and the Wayland/XCB windowed present, with damage culled stage one and damage-bounded partial frames. The Vulkan backend keeps two frames in flight per surface with no queue drain on a steady frame |
 | Blend2D windowed surface | Full | 3 windowed tests |
 | Software and headless renderer | Full | screenshot reference for GPU/software parity |
 

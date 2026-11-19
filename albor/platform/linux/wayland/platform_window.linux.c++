@@ -16,7 +16,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "albor/platform/linux/wayland/input_normalization.h"
+#include "albor/platform/linux/common/input_normalization.h"
 #include "albor/platform/linux/wayland/native_surface.linux.h"
 #include "albor/platform/linux/wayland/portal.h"
 #include "albor/platform/linux/wayland/wayland_connection.linux.h"
@@ -26,10 +26,11 @@
 namespace albor
 {
     // the wayland names the window adapter shares, which the calls below name unqualified (§5.3)
-    using wayland::button_from_evdev;
-    using wayland::key_from_keysym;
-    using wayland::modifiers_from_state;
-    using wayland::PendingWheel;
+    using linux_platform::button_from_evdev;
+    using linux_platform::key_from_keysym;
+    using linux_platform::modifiers_from_state;
+    using linux_platform::PendingWheel;
+    using linux_platform::text_from_key;
     using wayland::PortalClient;
     using wayland::PortalSubscription;
     using wayland::WaylandConnection;
@@ -297,6 +298,12 @@ namespace albor
 
     namespace
     {
+        // report whether a renderer presents through the surface, which then owns every buffer it commits (§6.3)
+        bool renderer_presenting(const WaylandWindowState* state) {
+            // a window without shared state has no renderer presenting into it (§10.5)
+            return state->native.state != nullptr && state->native.state->renderer_presenting;
+        }
+
         // the axis the vertical scroll rides, which a vertical wheel reports (§8.3)
         constexpr std::uint32_t AXIS_VERTICAL = 1;
 
@@ -414,6 +421,9 @@ namespace albor
                 state->listener->on_platform_resize(metrics);
             // a listener may have destroyed the window, which leaves no surface to rebuild (§4.2)
             if (surface_state == nullptr || state->surface == nullptr || !state->visible)
+                return;
+            // a renderer owned surface presents the new scale with its own next buffer, which owns the commit (§6.3)
+            if (renderer_presenting(state))
                 return;
             // the surface is locked, so the rebuild commits atomically against a render thread present (§10.5)
             const std::lock_guard<std::mutex> surface_lock(surface_state->mutex);
@@ -644,12 +654,14 @@ namespace albor
                 state->native.state->surface = nullptr;
                 state->native.state->shm = nullptr;
                 state->native.state->mapped = false;
+                // the last holder destroys the surface, so an in flight present never names a dead proxy (§10.5)
+                state->native.state->pending_surface = state->surface;
             }
-            // the surface is destroyed, which the compositor unmaps under (§5.3)
+            // the surface is destroyed by the last holder, which drops the adapter's own reference to it (§10.5)
+            state->native.state = nullptr;
             if (state->surface != nullptr) {
                 // the per surface scale objects are destroyed first, because they extend the surface (AD-27)
                 destroy_scale_objects(state);
-                wl_surface_destroy(state->surface);
                 state->surface = nullptr;
             }
             // the native bundle clears, which a later handle read reports as invalid (§3.5)
@@ -682,17 +694,6 @@ namespace albor
                 return;
             // the close is finished, which reports the Closed notification (§5.2)
             finish_close(state);
-        }
-
-        // stop the render thread from presenting, which a teardown and a role rebuild both need (§10.5)
-        void stop_presenting(WaylandWindowState* state) {
-            // a window without a shared state never handed a surface out (§10.5)
-            if (state->native.state == nullptr)
-                return;
-            // the surface pointer is cleared under the lock, which the render thread reads (§10.5)
-            const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
-            state->native.state->surface = nullptr;
-            state->native.state->mapped = false;
         }
 
         // take the surface off screen and stop the render thread, which a hide and a dismissal share (§5.3)
@@ -740,7 +741,7 @@ namespace albor
         }
 #endif
 
-        // destroy the popup role a dismissal spent, which a reopen rebuilds on a fresh surface (§5.1)
+        // release the popup role a dismissal spent, which a reopen rebuilds on a fresh surface (§5.1)
         void destroy_popup_role(WaylandWindowState* state) {
             // the popup object is spent after its done event, which the protocol asks the client to destroy (§5.1)
             if (state->popup != nullptr) {
@@ -754,18 +755,30 @@ namespace albor
             }
             // the activation request names the surface, so it is released first (§5.1)
             release_pending_activation(state);
-            // the render thread is stopped before the surface it presents through dies (§10.5)
-            stop_presenting(state);
             // the shell surface carries the spent role, which a reopen replaces (§5.1)
             if (state->shell_surface != nullptr) {
                 xdg_surface_destroy(state->shell_surface);
                 state->shell_surface = nullptr;
             }
-            // the surface is destroyed last, because the role objects reference it (§5.1)
+            // the surface is released with the role, because a new xdg role needs a fresh surface (§5.1)
             if (state->surface != nullptr) {
-                // the per surface scale objects are destroyed first, because they extend the surface (AD-27)
+                // the per surface scale objects extend the surface, so they go first (AD-27)
                 destroy_scale_objects(state);
-                wl_surface_destroy(state->surface);
+                // the surface is released under the state lock, which a last present cannot cross (§10.5)
+                if (state->native.state != nullptr) {
+                    const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
+                    // a renderer releases the surface itself, because its wsi surface still names it (§6.3)
+                    if (state->native.state->renderer_presenting)
+                        state->native.state->retired.push_back(state->surface);
+                    else
+                        wl_surface_destroy(state->surface);
+                    // the shared state names no surface while the role is spent (§10.5)
+                    state->native.state->surface = nullptr;
+                }
+                else {
+                    // a window without shared state presents through nothing, which destroys the surface here (§10.5)
+                    wl_surface_destroy(state->surface);
+                }
                 state->surface = nullptr;
             }
         }
@@ -859,7 +872,7 @@ namespace albor
             wl_surface_set_buffer_scale(state->surface, buffer_scale_of(state));
             // the buffer is attached, which the commit below maps (§5.3)
             wl_surface_attach(state->surface, buffer, 0, 0);
-            // the whole surface is marked damaged, which is what a first frame presents (§6.2)
+            // the whole surface is damaged, which is what a first frame presents (§6.2)
             wl_surface_damage(state->surface, 0, 0, INT32_MAX, INT32_MAX);
             return true;
         }
@@ -868,6 +881,15 @@ namespace albor
         bool attach_and_map(WaylandWindowState* state) {
             // the surface is locked, so the map commits atomically against a render thread present (§10.5)
             const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
+            // a renderer owned surface maps on its own next buffer, because a placeholder breaks explicit sync (§6.3)
+            if (renderer_presenting(state)) {
+                // the viewport and the buffer scale are surface state the renderer's next commit carries (AD-27)
+                apply_viewport_destination(state, state->metrics.valid() ? state->metrics.logical_size : state->requested_size);
+                wl_surface_set_buffer_scale(state->surface, buffer_scale_of(state));
+                // the render thread may present now, which is the whole of showing that surface (§10.5)
+                state->native.state->mapped = true;
+                return true;
+            }
             // a buffer that could not be built leaves the window unmapped (§6.2)
             if (!attach_initial_buffer(state))
                 return false;
@@ -1216,6 +1238,24 @@ namespace albor
             state->wheel[AXIS_VERTICAL].note_discrete(-steps);
         }
 
+#ifdef ALBOR_WAYLAND_POINTER_WARP
+        // the warp the compositor named, which moves the pointer inside the surface without a device (§8.3)
+        void on_pointer_warp(void* data, wl_pointer*, wl_fixed_t x, wl_fixed_t y) {
+            // the state is kept alive across the listener, because the event may reach the tree (§4.2)
+            const std::shared_ptr<WaylandWindowState> state = static_cast<WaylandWindowState*>(data)->shared_from_this();
+            // a warp that arrived on another surface is not this window's (§8.3)
+            if (!state->pointer_on_surface)
+                return;
+            // the position is remembered, which a later button and wheel carry (§8.3)
+            state->pointer_position = point_of(wl_fixed_to_double(x), wl_fixed_to_double(y));
+            // the move is normalized, which the tree routes (§8.3)
+            Event message;
+            message.kind = EventKind::PointerMove;
+            message.position = state->pointer_position;
+            raise_event(state.get(), message);
+        }
+#endif
+
 #ifdef ALBOR_WAYLAND_AXIS_VALUE120
         // the high resolution count a wheel reported, which the batch carries until the frame (§8.3)
         void on_pointer_axis_value120(void* data, wl_pointer*, std::uint32_t axis, std::int32_t value120) {
@@ -1348,12 +1388,12 @@ namespace albor
             // the press or the release is normalized, which the tree routes (§8.3)
             Event message;
             message.kind = keyboard_state == KEY_STATE_PRESSED ? EventKind::KeyDown : EventKind::KeyUp;
+            // the keycode is offset by eight, which is where the evdev range starts (§8.3)
+            const xkb_keycode_t keycode = static_cast<xkb_keycode_t>(key) + 8;
             // a keyboard without a keymap names no key, which is what an unreadable state reports (§8.3)
             message.key = Key::None;
             // the keysyms the keycode translates to are read from the keymap state (§8.3)
             if (state->keymap_state != nullptr) {
-                // the keycode is offset by eight, which is where the evdev range starts (§8.3)
-                const xkb_keycode_t keycode = static_cast<xkb_keycode_t>(key) + 8;
                 const xkb_keysym_t* syms = nullptr;
                 const int count = xkb_state_key_get_syms(state->keymap_state, keycode, &syms);
                 // the first symbol is the key the user named, which the portable table maps (§8.3)
@@ -1363,6 +1403,21 @@ namespace albor
             // the modifiers are read from the state, which the modifiers event last applied (§8.3)
             message.modifiers = modifiers_of(state.get());
             raise_event(state.get(), message);
+            // a printable press commits its character as text, which is what a text field inserts (§8.3)
+            if (message.kind != EventKind::KeyDown || state->keymap_state == nullptr || state->composing)
+                return;
+            // the utf8 the key produces under the held modifiers is what the user typed (§8.3)
+            char typed[32] = {};
+            const int typed_length = xkb_state_key_get_utf8(state->keymap_state, keycode, typed, sizeof(typed));
+            // the text the press commits is empty when it names no printable character (§8.3)
+            const std::string text = text_from_key(message.modifiers, typed, typed_length);
+            // a key that types no text leaves the named key as the whole event (§8.3)
+            if (text.empty())
+                return;
+            Event committed;
+            committed.kind = EventKind::TextInput;
+            committed.text = text;
+            raise_event(state.get(), committed);
         }
 
         // the modifiers the keyboard applied, which the keymap state tracks (§8.3)
@@ -1510,6 +1565,9 @@ namespace albor
 #ifdef ALBOR_WAYLAND_SURFACE_V6
             &on_pointer_axis_relative_direction,
 #endif
+#ifdef ALBOR_WAYLAND_POINTER_WARP
+            &on_pointer_warp,
+#endif
         };
 
         // the listener set of the keyboard, which carries the normalized input of §8.3
@@ -1612,12 +1670,12 @@ namespace albor
             return true;
         }
 
-        // build a fresh surface and popup role for a dismissed popup, which a reopen requires (§5.1)
-        bool rebuild_popup_surface(WaylandWindowState* state) {
+        // rebuild the popup role a dismissal released, which reuses the surface the renderer presents through (§5.1)
+        bool rebuild_popup_role(WaylandWindowState* state) {
             // the parent must still be alive, which the framework's teardown order guarantees (§5.1)
             if (state->parent == nullptr || role_shell_surface(state->parent) == nullptr || state->connection->compositor() == nullptr || state->connection->shell() == nullptr)
                 return false;
-            // the surface is created on the compositor, which no buffer may touch before the first configure (§5.3)
+            // the surface is created on the compositor, because a surface that carried a role cannot carry another (§5.1)
             state->surface = wl_compositor_create_surface(state->connection->compositor());
             // a surface the compositor refused leaves the popup dismissed (§5.1)
             if (state->surface == nullptr)
@@ -1626,32 +1684,23 @@ namespace albor
             wl_surface_add_listener(state->surface, &SURFACE_LISTENER, state);
             // the fractional scale and the viewport extend the fresh surface, which the reopen needs (AD-27)
             create_scale_objects(state);
-            // the shell surface carries the fresh xdg role, created before any buffer exists (§5.1)
-            state->shell_surface = xdg_wm_base_get_xdg_surface(state->connection->shell(), state->surface);
-            // a shell surface the compositor refused leaves the surface destroyed (§5.1)
-            if (state->shell_surface == nullptr) {
-                // the per surface scale objects follow the surface they extend (AD-27)
-                destroy_scale_objects(state);
-                wl_surface_destroy(state->surface);
-                state->surface = nullptr;
-                return false;
-            }
-            // the shell surface listener carries the configure, installed with the state (§5.1)
-            xdg_surface_add_listener(state->shell_surface, &SHELL_SURFACE_LISTENER, state);
-            // the popup role is rebuilt for the fresh surface, which the positioner places again (§5.1)
-            if (!create_popup_role(state)) {
-                xdg_surface_destroy(state->shell_surface);
-                state->shell_surface = nullptr;
-                // the per surface scale objects follow the surface they extend (AD-27)
-                destroy_scale_objects(state);
-                wl_surface_destroy(state->surface);
-                state->surface = nullptr;
-                return false;
-            }
             // the shared state is repointed, which the renderer presents through (§10.5)
             if (state->native.state != nullptr) {
                 const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
                 state->native.state->surface = state->surface;
+            }
+            // the shell surface carries a fresh xdg role, created before any buffer exists (§5.3)
+            state->shell_surface = xdg_wm_base_get_xdg_surface(state->connection->shell(), state->surface);
+            // a shell surface the compositor refused leaves the popup dismissed (§5.1)
+            if (state->shell_surface == nullptr)
+                return false;
+            // the shell surface listener carries the configure, installed with the state (§5.1)
+            xdg_surface_add_listener(state->shell_surface, &SHELL_SURFACE_LISTENER, state);
+            // the popup role is rebuilt for the surface, which the positioner places again (§5.1)
+            if (!create_popup_role(state)) {
+                xdg_surface_destroy(state->shell_surface);
+                state->shell_surface = nullptr;
+                return false;
             }
             // the initial commit is bufferless, which the protocol requires before the first configure (§5.3)
             wl_surface_commit(state->surface);
@@ -1709,7 +1758,8 @@ namespace albor
         // the fractional scale and the viewport extend the surface, which the preferred scale arrives through (AD-27)
         create_scale_objects(state.get());
         // the shared state is built with the surface, because the first roundtrip already reports the scale (§10.5, AD-27)
-        state->native.state = std::make_shared<wayland::WaylandSurfaceState>();
+        state->native.kind = linux_wsi::Kind::Wayland;
+        state->native.state = std::shared_ptr<wayland::WaylandSurfaceState>(new wayland::WaylandSurfaceState(), wayland::destroy_surface_state);
         state->native.state->owner = connection;
         state->native.state->display = connection->display();
         state->native.state->surface = state->surface;
@@ -1919,9 +1969,9 @@ namespace albor
     }
 
     void WaylandPlatformWindow::show() {
-        // a dismissed popup gets a fresh surface, which the spent role cannot be shown through again (§5.1)
-        if (m_state->popup_role && m_state->surface == nullptr) {
-            if (!rebuild_popup_surface(m_state.get()))
+        // a dismissed popup gets a fresh role, which the spent one cannot be shown through again (§5.1)
+        if (m_state->popup_role && m_state->shell_surface == nullptr) {
+            if (!rebuild_popup_role(m_state.get()))
                 return;
         }
         // a window with no surface cannot be shown (§5.3)
@@ -1952,9 +2002,9 @@ namespace albor
         // the events the commit produced are dispatched, so the metrics are current when show returns (§5.3)
         wl_display_roundtrip(m_state->connection->display());
         // a dismissal that arrived during the roundtrip spent the popup role, which the reopen rebuilds once (§5.1)
-        if (m_state->popup_role && m_state->surface == nullptr) {
+        if (m_state->popup_role && m_state->shell_surface == nullptr) {
             // the role is rebuilt and presented once, which keeps show from claiming a visible popup it cannot show (§5.1)
-            if (!rebuild_popup_surface(m_state.get()) || !attach_and_map(m_state.get()))
+            if (!rebuild_popup_role(m_state.get()) || !attach_and_map(m_state.get()))
                 return;
             m_state->visible = true;
             // the rebuilt configure is dispatched, which the metrics follow (§5.1)
@@ -1996,6 +2046,9 @@ namespace albor
             return;
         // the surface is unmapped and the render thread stopped, which the hide and a dismissal share (§5.3)
         hide_native(m_state.get());
+        // a popup leaves the screen by releasing its role, because the compositor spends an unmapped popup (§5.1)
+        if (m_state->popup_role)
+            destroy_popup_role(m_state.get());
     }
 
     void WaylandPlatformWindow::set_title(std::string_view title) {
@@ -2045,6 +2098,12 @@ namespace albor
             libdecor_state_free(decoration_state);
         }
 #endif
+        // a renderer owned surface resizes through its own next buffer, which owns the commit and its sync (§6.3)
+        if (renderer_presenting(m_state.get())) {
+            // the requested size is the metrics the renderer builds its next buffer for, which it presents (§5.3)
+            apply_configure(m_state.get(), 0, 0);
+            return;
+        }
         // a mapped window asks for the new size through a buffer, the only request the protocol offers (§5.3)
         bool attached = false;
         {

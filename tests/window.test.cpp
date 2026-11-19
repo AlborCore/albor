@@ -1050,6 +1050,32 @@ TEST(Window, AHideReachesTheHiddenHandlerBeforeTheNativeWindow) {
     EXPECT_FALSE(window.visible());
 }
 
+TEST(Window, AShowReachesTheShownHandlerOncePerAppearance) {
+    // arrange a window that repaints the surface it returned to screen (§6.1)
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    std::size_t called = 0;
+    window.set_shown_handler([&called] { called++; });
+    // act the window is shown twice, which the second call changes nothing about (§5.1)
+    window.show();
+    window.show();
+    // assert one appearance raised one repaint, because an already visible surface kept its content (§6.1)
+    EXPECT_EQ(called, 1u);
+    EXPECT_TRUE(window.visible());
+}
+
+TEST(Window, AShowAfterAHideReachesTheShownHandlerAgain) {
+    // arrange a window that left the screen, which dropped the content it had (§5.1)
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    std::size_t called = 0;
+    window.set_shown_handler([&called] { called++; });
+    window.show();
+    window.hide();
+    // act the window returns to screen
+    window.show();
+    // assert the second appearance raised its own repaint, because nothing retained the previous frame (§6.1)
+    EXPECT_EQ(called, 2u);
+}
+
 TEST(Window, ACloseRequestWithoutAHandlerIsGranted) {
     // arrange, act
     Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());

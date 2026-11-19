@@ -105,6 +105,9 @@ namespace albor
         // install the callback a hide reaches, which cancels the drag before the surface leaves (§5.1, §8.3)
         void set_hidden_handler(std::function<void()> handler);
 
+        // install the callback a successful show reaches, which repaints the surface it returned to (§5.1, §6.1)
+        void set_shown_handler(std::function<void()> handler);
+
         // close the window outright, which is what a granted close request and application shutdown do (§5.2)
         void close();
 
@@ -177,6 +180,9 @@ namespace albor
 
         // the callback a hide reaches, which cancels the drag before the surface leaves (§8.3)
         std::function<void()> m_hidden_handler;
+
+        // the callback a successful show reaches, which repaints a surface that retained nothing (§6.1)
+        std::function<void()> m_shown_handler;
 
         // the callback an appearance change reaches, which is null when nobody listens (§8.4)
         std::function<void(const SystemAppearance&)> m_appearance_handler;

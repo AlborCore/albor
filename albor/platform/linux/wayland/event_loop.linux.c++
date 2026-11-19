@@ -72,6 +72,8 @@ namespace albor::wayland
             m_state->connection->dispatch_pending();
             // the requests the client queued are sent, which the compositor answers (§4.1)
             m_state->connection->flush();
+            // the read is prepared before the wait, so a queue another thread owns never swallows this poll (§4.1, §6.3)
+            const bool prepared = m_state->connection->prepare_read();
             // the poll set waits on the display first, which is where the compositor events arrive (§4.1)
             pollfd fds[4] = {};
             std::size_t count = 1;
@@ -109,12 +111,23 @@ namespace albor::wayland
             const int ready = poll(fds, static_cast<nfds_t>(count), 1);
             // a poll failure of the permanent kind means the compositor is gone, which ends the run (§4.1)
             if (ready < 0 && errno != EINTR) {
+                // a prepared read is released before the run ends, so no thread is left holding the display (§4.1)
+                if (prepared)
+                    m_state->connection->cancel_read();
                 // the run ends on the failure, which running reports (§4.1)
                 break;
             }
-            // the display is readable exactly when events arrived, which are read and dispatched now (§4.1)
-            if ((fds[0].revents & POLLIN) != 0)
-                m_state->connection->dispatch();
+            // the display is readable exactly when events arrived, which the prepared read owns now (§4.1)
+            const bool display_ready = (fds[0].revents & POLLIN) != 0;
+            if (prepared) {
+                // a readable display is read here, and an idle one releases the read for the next thread (§4.1)
+                if (display_ready)
+                    m_state->connection->read_display();
+                else
+                    m_state->connection->cancel_read();
+            }
+            // every event another thread read is dispatched here, which keeps the window's queue serviced (§4.1)
+            m_state->connection->dispatch_pending();
 #ifdef ALBOR_WAYLAND_LIBDECOR
             // the decoration queue is dispatched when its own descriptor is readable (§5.3)
             if (decoration_index != 0 && (fds[decoration_index].revents & POLLIN) != 0)

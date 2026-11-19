@@ -57,11 +57,12 @@ jobs:
               choco install ccache --no-progress -y
           - name: linux-release
             os: ubuntu-24.04
-            enable: false
+            enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             # wayland-protocols and libdecor are vendored, so the cache job installs the frame's system libraries instead (AD-16)
-            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev weston pkg-config libgl1-mesa-dri libegl1
+            # the vulkan loader and lavapipe carry the gpu backend, which the cache job builds
+            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers weston pkg-config libgl1-mesa-dri libegl1
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3

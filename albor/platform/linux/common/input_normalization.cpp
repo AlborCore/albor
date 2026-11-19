@@ -1,7 +1,21 @@
-#include "albor/platform/linux/wayland/input_normalization.h"
+#include "albor/platform/linux/common/input_normalization.h"
 
-namespace albor::wayland
+namespace albor::linux_platform
 {
+    std::string text_from_key(const Modifiers& modifiers, const char* typed, int length) {
+        // an accelerator chord names a command rather than text, so it commits no character (§8.3)
+        if (modifiers.control || modifiers.option || modifiers.command)
+            return std::string();
+        // a key that produced no character, like a dead key before its composition, types nothing (§8.3)
+        if (typed == nullptr || length <= 0)
+            return std::string();
+        // a control character is a named key the tree already routes, so it commits no text (§8.3)
+        const auto first = static_cast<unsigned char>(typed[0]);
+        if (first < 0x20 || first == 0x7f)
+            return std::string();
+        return std::string(typed, static_cast<std::size_t>(length));
+    }
+
     void PendingWheel::note_axis(float value) {
         // the batch now carries an axis, which is what makes a frame emit a wheel event
         m_axis_seen = true;
@@ -148,4 +162,4 @@ namespace albor::wayland
             return PointerButton::Other;
         }
     }
-} // namespace albor::wayland
+} // namespace albor::linux_platform

@@ -4,7 +4,8 @@
 # this script is the only place the toolchain runs: it writes the artifact, or checks the one that is committed
 # usage: bash build/shaders.sh [--write]                  compile and verify the metal artifact
 #        bash build/shaders.sh --d3d [--write]           compile and verify the direct3d artifact
-#        bash build/shaders.sh --all [--write]           compile and verify both artifacts
+#        bash build/shaders.sh --vulkan [--write]        compile and verify the vulkan artifact
+#        bash build/shaders.sh --all [--write]           compile and verify every artifact
 
 # any failing step aborts, because a check that measures nothing must not report a pass
 set -euo pipefail
@@ -23,15 +24,17 @@ trap 'rm -rf "$OUT"' EXIT
 WRITE=no
 D3D=no
 METAL=no
+VULKAN=no
 for argument in ${1+"$@"}; do
     case "$argument" in
     --write) WRITE=yes ;;
     --d3d) D3D=yes ;;
-    --all) D3D=yes; METAL=yes ;;
-    *) echo "error: unknown option $argument (supported: --write --d3d --all)" >&2; exit 1 ;;
+    --vulkan) VULKAN=yes ;;
+    --all) D3D=yes; METAL=yes; VULKAN=yes ;;
+    *) echo "error: unknown option $argument (supported: --write --d3d --vulkan --all)" >&2; exit 1 ;;
     esac
 done
-if [ "$D3D" = no ] && [ "$METAL" = no ]; then
+if [ "$D3D" = no ] && [ "$METAL" = no ] && [ "$VULKAN" = no ]; then
     METAL=yes
 fi
 
@@ -220,9 +223,143 @@ check_d3d() {
     echo "shaders: $ARTIFACT matches $SOURCE across the six entry points"
 }
 
+check_vulkan() {
+    local SOURCE=albor/render/render-albor/albor_shaders.hlsl ARTIFACT=albor/render/render-albor/albor_shaders.spv STAMP=albor/render/render-albor/albor_shaders.spv.sha256
+
+    # the container header the backend refuses an artifact without, because the format moved
+    local MAGIC=ALBVKSPV
+
+    # the entry points and the stage each compiles as, which the backend loads in this exact order (§6.3)
+    local ENTRY_PAIRS="albor_vertex:vert albor_fragment:frag albor_fragment_exact:frag shadow_vertex:vert shadow_shape:frag shadow_blur:frag"
+
+    # the descriptor bindings the backend's set layout names, which the shuffles move the hlsl registers onto (§6.3)
+    local SHIFTS="--shift-cbuffer-binding 0 --shift-texture-binding 10 --shift-sampler-binding 20 --shift-ssbo-binding 30"
+
+    # the shader toolchain is a developer tool, which a consumer build never needs because the artifact is committed (§6.3, AD-16)
+    local GLSLANG="${GLSLANG_VALIDATOR:-}"
+    if [ -z "$GLSLANG" ]; then
+        GLSLANG="$(command -v glslangValidator || true)"
+    fi
+    if [ -z "$GLSLANG" ]; then
+        echo "error: glslangValidator is missing, install a shader toolchain or set GLSLANG_VALIDATOR" >&2
+        exit 1
+    fi
+
+    # glslang classifies a stage by the file suffix, so the one source is copied once per stage it compiles into
+    cp "$SOURCE" "$OUT/albor_shaders.vert.hlsl"
+    cp "$SOURCE" "$OUT/albor_shaders.frag.hlsl"
+
+    # every stage is compiled fresh, because a source that lost an entry point would refuse to compile
+    local SECTIONS=$OUT/vulkan
+    mkdir -p "$SECTIONS"
+    local pair ENTRY STAGE STAGE_FILE MAGIC_BYTES
+    for pair in $ENTRY_PAIRS; do
+        ENTRY=${pair%%:*}
+        STAGE=${pair##*:}
+        STAGE_FILE="$OUT/albor_shaders.$STAGE.hlsl"
+        # the vulkan target emits the spirv the loader carries, which the shifts place on the backend's bindings
+        MSYS2_ARG_CONV_EXCL='*' "$GLSLANG" -V --target-env vulkan1.2 -e "$ENTRY" $SHIFTS -o "$SECTIONS/$ENTRY.spv" "$STAGE_FILE"
+        # glslang lowers hlsl SV_Target1 to a second attachment, while vulkan dual source blending needs location 0 index 1 (§6.2)
+        if [ "$ENTRY" = albor_fragment_exact ]; then
+            python3 build/spirv_dual_source.py "$SECTIONS/$ENTRY.spv"
+        fi
+        # a blob without the spirv magic is not a module the device can load
+        if [ ! -s "$SECTIONS/$ENTRY.spv" ]; then
+            echo "error: $GLSLANG produced no module for $ENTRY" >&2
+            exit 1
+        fi
+        MAGIC_BYTES="$(head -c 4 "$SECTIONS/$ENTRY.spv" | od -An -tx1 | tr -d ' \n')"
+        if [ "$MAGIC_BYTES" != "03022307" ]; then
+            echo "error: $ENTRY did not compile into a spirv module" >&2
+            exit 1
+        fi
+    done
+
+    # the container is the header, then one length prefixed module per entry point in the declared order
+    local BLOB=$OUT/albor_shaders.spv
+    printf '%s' "$MAGIC" > "$BLOB"
+    local SIZE
+    for pair in $ENTRY_PAIRS; do
+        ENTRY=${pair%%:*}
+        SIZE="$(wc -c < "$SECTIONS/$ENTRY.spv" | tr -d '[:space:]')"
+        printf "$(printf '\\x%02x\\x%02x\\x%02x\\x%02x' $((SIZE & 255)) $((SIZE >> 8 & 255)) $((SIZE >> 16 & 255)) $((SIZE >> 24 & 255)))" >> "$BLOB"
+        cat "$SECTIONS/$ENTRY.spv" >> "$BLOB"
+    done
+
+    # the committed artifact is replaced only after the fresh build passed every check
+    if [ "$WRITE" = yes ]; then
+        cp "$BLOB" "$ARTIFACT"
+    fi
+
+    # the committed artifact is what ships, so its container shape is checked on every run
+    if [ ! -e "$ARTIFACT" ] || [ "$(head -c 8 "$ARTIFACT")" != "$MAGIC" ]; then
+        echo "error: $ARTIFACT is not the container $SOURCE compiles into, regenerate it with: bash build/shaders.sh --vulkan --write" >&2
+        exit 1
+    fi
+
+    # the committed artifact must equal what this build produces, which the stamp alone cannot prove (§6.3)
+    if ! cmp -s "$BLOB" "$ARTIFACT"; then
+        echo "error: $ARTIFACT is not the container $SOURCE compiles into, regenerate it with: bash build/shaders.sh --vulkan --write" >&2
+        exit 1
+    fi
+
+    # every section is walked, so a truncated module fails here rather than at device bring up
+    local TOTAL OFFSET LENGTH
+    TOTAL="$(wc -c < "$ARTIFACT" | tr -d '[:space:]')"
+    OFFSET=8
+    for pair in $ENTRY_PAIRS; do
+        ENTRY=${pair%%:*}
+        if [ $((OFFSET + 4)) -gt "$TOTAL" ]; then
+            echo "error: $ARTIFACT is truncated before $ENTRY" >&2
+            exit 1
+        fi
+        LENGTH="$(dd if="$ARTIFACT" bs=1 skip="$OFFSET" count=4 2> /dev/null | od -An -tu4 | tr -d '[:space:]')"
+        OFFSET=$((OFFSET + 4))
+        if [ "$LENGTH" -le 0 ] || [ $((OFFSET + LENGTH)) -gt "$TOTAL" ]; then
+            echo "error: $ARTIFACT carries no usable $ENTRY module" >&2
+            exit 1
+        fi
+        MAGIC_BYTES="$(dd if="$ARTIFACT" bs=1 skip="$OFFSET" count=4 2> /dev/null | od -An -tx1 | tr -d ' \n')"
+        if [ "$MAGIC_BYTES" != "03022307" ]; then
+            echo "error: the $ENTRY module in $ARTIFACT is not spirv" >&2
+            exit 1
+        fi
+        OFFSET=$((OFFSET + LENGTH))
+    done
+    if [ "$OFFSET" -ne "$TOTAL" ]; then
+        echo "error: $ARTIFACT carries trailing bytes after its sixth module" >&2
+        exit 1
+    fi
+
+    # the stamp names the source and the artifact, so a partial restore of either is caught rather than shipped
+    local SOURCE_HASH ARTIFACT_HASH EXPECTED_SOURCE EXPECTED_ARTIFACT
+    SOURCE_HASH="$(sha256_of "$SOURCE")"
+    ARTIFACT_HASH="$(sha256_of "$ARTIFACT")"
+
+    # a rewrite records both digests, because the pair is what the build compares against
+    if [ "$WRITE" = yes ]; then
+        printf '%s\n%s\n' "$SOURCE_HASH" "$ARTIFACT_HASH" > "$STAMP"
+    fi
+
+    # the stamp is read as two lines, because the first names the source and the second the artifact
+    EXPECTED_SOURCE="$(sed -n 1p "$STAMP" | tr -d '[:space:]')"
+    EXPECTED_ARTIFACT="$(sed -n 2p "$STAMP" | tr -d '[:space:]')"
+
+    if [ "$EXPECTED_SOURCE" != "$SOURCE_HASH" ] || [ "$EXPECTED_ARTIFACT" != "$ARTIFACT_HASH" ]; then
+        echo "error: $ARTIFACT is stale against $SOURCE, regenerate it with: bash build/shaders.sh --vulkan --write" >&2
+        exit 1
+    fi
+
+    # the result is named on a pass too, so a silent pass is distinguishable from a check that never ran
+    echo "shaders: $ARTIFACT matches $SOURCE across the six entry points"
+}
+
 if [ "$METAL" = yes ]; then
     check_metal
 fi
 if [ "$D3D" = yes ]; then
     check_d3d
+fi
+if [ "$VULKAN" = yes ]; then
+    check_vulkan
 fi

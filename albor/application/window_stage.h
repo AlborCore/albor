@@ -49,6 +49,9 @@ namespace albor
         // build the scene for the window's metrics and hand it to the render thread, one two stage frame (§6.1, AD-18)
         void run_frame(const Window& window);
 
+        // request a whole frame even when the tree is clean, which a surface that returns to screen needs (§6.1)
+        void request_full_frame();
+
         // drain the render thread, resize the surface and remeasure the tree, which is what a resize answers (§5.3, D9.1)
         void resized(RendererBackend& renderer, const Window& window);
 

@@ -782,6 +782,12 @@ namespace albor
             // a hidden window cannot be under the pointer, so the hover it kept ends with it (§8.3)
             clear_stage_hover(handle);
         });
+        // a window that returns to screen repaints whole, because its surface retained nothing while hidden (§6.1)
+        window.set_shown_handler([this, handle] {
+            // the stage builds the scene again, which is what maps a surface that owns its own commits (§6.1)
+            if (WindowStage* owner_stage = stage(handle); owner_stage != nullptr)
+                owner_stage->request_full_frame();
+        });
         // a pointer that leaves the window ends its hover, because no move can arrive from outside it (§5.3, §8.3)
         window.set_pointer_exited_handler([this, handle] {
             // the hover ends even while a modal constrains the window, because a stale hover is a paint (§5.1)

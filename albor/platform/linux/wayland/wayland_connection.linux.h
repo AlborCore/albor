@@ -106,6 +106,15 @@ namespace albor::wayland
         // dispatch every event that already arrived, which a caller drives between its own work (§4.1)
         void dispatch_pending();
 
+        // prepare the display read before the poll, which keeps another thread's queue from owning it (§4.1)
+        [[nodiscard]] bool prepare_read();
+
+        // read the display a prepared read owns, which the poll found readable (§4.1)
+        void read_display();
+
+        // cancel a prepared read the poll found nothing for, so another thread may read (§4.1)
+        void cancel_read();
+
         // read the display for the events the poll reported and dispatch them, which is the loop's read half (§4.1)
         void dispatch();
 

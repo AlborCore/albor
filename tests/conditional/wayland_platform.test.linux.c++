@@ -8,8 +8,9 @@
 #include <gtest/gtest.h>
 
 #include "albor/core/clipboard.h"
+#include "albor/platform/linux/common/input_normalization.h"
 #include "albor/platform/linux/wayland/event_loop.h"
-#include "albor/platform/linux/wayland/input_normalization.h"
+#include "albor/platform/linux/wayland/native_surface.linux.h"
 #include "albor/platform/linux/wayland/platform_window.h"
 #include "albor/ui/ui_event.h"
 #include "albor/window/platform_window.h"
@@ -130,6 +131,36 @@ TEST(WaylandPlatform, CreatesShowsResizesAndClosesAWindow) {
     EXPECT_FALSE(window->frame_requested());
     // assert the platform reported the resize it applied (§5.3)
     EXPECT_GT(listener.resizes, 0u);
+}
+
+TEST(WaylandPlatform, ShowsARendererOwnedSurfaceWithoutAPlaceholderBuffer) {
+    // arrange a window whose surface a renderer presents through, which owns every commit it makes (§6.3)
+    WindowOptions options;
+    options.title = "albor-wayland-renderer-owned";
+    options.size = Size{240.0f, 160.0f};
+    const std::unique_ptr<PlatformWindow> window = PlatformWindow::create(options);
+    ASSERT_NE(window, nullptr);
+    TestWindowListener listener;
+    window->set_listener(&listener);
+    auto* native = static_cast<albor::wayland::WaylandNativeSurface*>(const_cast<void*>(window->native_handle().object()));
+    ASSERT_NE(native, nullptr);
+    ASSERT_NE(native->state, nullptr);
+    // the renderer claims the surface, which is what the vulkan wsi does when it creates a swapchain (§6.3)
+    native->state->renderer_presenting = true;
+    // act the window is shown, which maps the surface for the renderer's own next buffer (§5.1)
+    window->show();
+    // assert the window is on screen and mapped without a platform buffer, which explicit sync refuses (§6.3)
+    EXPECT_TRUE(window->visible());
+    EXPECT_TRUE(native->state->mapped);
+    EXPECT_GT(window->metrics().logical_size.width, 0.0f);
+    // act the window is hidden and shown again, which a reopened popup does (§5.1)
+    window->hide();
+    EXPECT_FALSE(window->visible());
+    window->show();
+    // assert the second show maps it again, because the renderer presents the frame that follows (§6.1)
+    EXPECT_TRUE(window->visible());
+    EXPECT_TRUE(native->state->mapped);
+    window->close();
 }
 
 TEST(WaylandPlatform, CreatesAPopupAgainstItsParent) {
@@ -348,21 +379,37 @@ TEST(WaylandPlatform, CreatesAPopupUnderAClientSideDecoratedWindow) {
 
 TEST(WaylandPlatform, MapsXkbKeysAndModifiers) {
     // act, assert the named keys and the modifier set map onto the portable names (§8.3)
-    EXPECT_EQ(wayland::key_from_keysym(wayland::KEYSYM_SPACE), Key::Space);
-    EXPECT_EQ(wayland::key_from_keysym(wayland::KEYSYM_RETURN), Key::Return);
-    EXPECT_EQ(wayland::key_from_keysym(wayland::KEYSYM_KEYPAD_ENTER), Key::Return);
-    EXPECT_EQ(wayland::key_from_keysym(wayland::KEYSYM_ESCAPE), Key::Escape);
-    EXPECT_EQ(wayland::key_from_keysym(wayland::KEYSYM_LEFT), Key::ArrowLeft);
-    EXPECT_EQ(wayland::key_from_keysym(wayland::KEYSYM_F1), Key::F1);
-    EXPECT_EQ(wayland::key_from_keysym(wayland::KEYSYM_A_LOWER), Key::A);
-    EXPECT_EQ(wayland::key_from_keysym(wayland::KEYSYM_Z_UPPER), Key::Z);
-    EXPECT_EQ(wayland::key_from_keysym(wayland::KEYSYM_ZERO), Key::Zero);
+    EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_SPACE), Key::Space);
+    EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_RETURN), Key::Return);
+    EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_KEYPAD_ENTER), Key::Return);
+    EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_ESCAPE), Key::Escape);
+    EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_LEFT), Key::ArrowLeft);
+    EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_F1), Key::F1);
+    EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_A_LOWER), Key::A);
+    EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_Z_UPPER), Key::Z);
+    EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_ZERO), Key::Zero);
     // act, assert the modifier set maps onto the portable flags (§8.3)
-    const Modifiers modifiers = wayland::modifiers_from_state(true, false, true, false);
+    const Modifiers modifiers = linux_platform::modifiers_from_state(true, false, true, false);
     EXPECT_TRUE(modifiers.shift);
     EXPECT_FALSE(modifiers.control);
     EXPECT_TRUE(modifiers.option);
     EXPECT_FALSE(modifiers.command);
+}
+
+TEST(WaylandPlatform, AKeyCommitsTheTextItTypes) {
+    // arrange the modifier sets a plain press and an accelerator chord carry (§8.3)
+    const Modifiers plain = linux_platform::modifiers_from_state(false, false, false, false);
+    const Modifiers chorded = linux_platform::modifiers_from_state(false, true, false, false);
+    // act, assert a printable character commits the utf8 the keymap produced (§8.3)
+    EXPECT_EQ(linux_platform::text_from_key(plain, "A", 1), "A");
+    EXPECT_EQ(linux_platform::text_from_key(plain, " ", 1), " ");
+    EXPECT_EQ(linux_platform::text_from_key(plain, "\xc3\xa9", 2), "\xc3\xa9");
+    // act, assert a named key and an accelerator chord commit no text (§8.3)
+    EXPECT_TRUE(linux_platform::text_from_key(plain, "\r", 1).empty());
+    EXPECT_TRUE(linux_platform::text_from_key(plain, "\t", 1).empty());
+    EXPECT_TRUE(linux_platform::text_from_key(plain, "\x7f", 1).empty());
+    EXPECT_TRUE(linux_platform::text_from_key(chorded, "c", 1).empty());
+    EXPECT_TRUE(linux_platform::text_from_key(plain, nullptr, 0).empty());
 }
 
 TEST(WaylandPlatform, TheEventLoopPacesFrames) {

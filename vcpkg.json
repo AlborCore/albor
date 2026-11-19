@@ -52,6 +52,20 @@
       "default-features": false
     },
     {
+      "name": "vulkan-headers",
+      "platform": "linux",
+      "default-features": false
+    },
+    {
+      "name": "vulkan-loader",
+      "platform": "linux",
+      "default-features": false,
+      "features": [
+        "wayland",
+        "xcb"
+      ]
+    },
+    {
       "name": "bzip2",
       "default-features": false
     },
