@@ -35,6 +35,9 @@ namespace albor
     // report whether a surface can honour a fractional scale, which needs both protocols (AD-27)
     [[nodiscard]] bool fractional_scale_available(bool manager_available, bool viewporter_available);
 
+    // hand out the portal window identifier a window exports, which is empty where no exporter or role exists (§5.3)
+    [[nodiscard]] std::string portal_parent_handle(NativeWindowHandle window);
+
     // report the surface local destination a fractional buffer maps onto, rounded halfway away from zero (AD-27)
     [[nodiscard]] Size viewport_destination(Size logical_size);
 
@@ -90,7 +93,7 @@ namespace albor
         // report whether the window carries the libdecor client-side frame, which the decoration test asserts (§5.3)
         [[nodiscard]] bool uses_client_side_frame() const;
 
-        // override: report the portable dark scheme, which the portal-based appearance is tracked in #234 (§5.3, §8.4)
+        // override: read the colour scheme the portal reports, which the portable dark scheme stands in for (§5.3, §8.4)
         [[nodiscard]] SystemAppearance system_appearance() const override;
 
         // override: ask the surface for another frame (§4.3, AD-16)

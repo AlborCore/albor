@@ -18,17 +18,23 @@ endif()
 
 pkg_check_modules(WAYLAND_CLIENT_PC IMPORTED_TARGET wayland-client)
 pkg_check_modules(XKBCOMMON_PC IMPORTED_TARGET xkbcommon)
+pkg_check_modules(DBUS_PC IMPORTED_TARGET dbus-1)
 if(NOT WAYLAND_CLIENT_PC_FOUND OR NOT XKBCOMMON_PC_FOUND)
     message(STATUS "albor-platform-wayland: skipped, the wayland or xkbcommon development libraries are not present")
     return()
 endif()
 
+# the desktop portals the file dialog and the appearance ride are reached over the session bus (§5.3, §8.4)
+if(NOT DBUS_PC_FOUND)
+    message(STATUS "albor-platform-wayland: skipped, the dbus development library is not present")
+    return()
+endif()
+
 # the private libdecor 0.2.2 and its cairo frame draw the client side chrome where the compositor draws none (§5.3, AD-16)
-# the frame needs pango/cairo, wayland-cursor and dbus, which a desktop host already has at runtime; a host without them keeps the xdg-decoration fallback
+# the frame needs pango/cairo and wayland-cursor, which a desktop host already has at runtime; a host without them keeps the xdg-decoration fallback
 pkg_check_modules(PANGOCAIRO_PC IMPORTED_TARGET pangocairo)
 pkg_check_modules(WAYLAND_CURSOR_PC IMPORTED_TARGET wayland-cursor)
-pkg_check_modules(DBUS_PC IMPORTED_TARGET dbus-1)
-if(PANGOCAIRO_PC_FOUND AND WAYLAND_CURSOR_PC_FOUND AND DBUS_PC_FOUND)
+if(PANGOCAIRO_PC_FOUND AND WAYLAND_CURSOR_PC_FOUND)
     set(ALBOR_LIBDECOR_AVAILABLE ON)
     set(LIBDECOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/libdecor")
     set(LIBDECOR_SOURCES
@@ -59,7 +65,9 @@ set(XDG_ACTIVATION_XML "${PROTOCOLS_DIR}/xdg-activation-v1.xml")
 # the fractional scale and the viewport definitions, which carry the preferred scale and its buffer mapping (AD-27)
 set(FRACTIONAL_SCALE_XML "${PROTOCOLS_DIR}/fractional-scale-v1.xml")
 set(VIEWPORTER_XML "${PROTOCOLS_DIR}/viewporter.xml")
-if(NOT EXISTS "${XDG_SHELL_XML}" OR NOT EXISTS "${XDG_DECORATION_XML}" OR NOT EXISTS "${TEXT_INPUT_XML}" OR NOT EXISTS "${XDG_ACTIVATION_XML}" OR NOT EXISTS "${FRACTIONAL_SCALE_XML}" OR NOT EXISTS "${VIEWPORTER_XML}")
+# the export definitions, which name a window to the portal the file dialog rides (§5.3)
+set(XDG_FOREIGN_XML "${PROTOCOLS_DIR}/xdg-foreign-unstable-v2.xml")
+if(NOT EXISTS "${XDG_SHELL_XML}" OR NOT EXISTS "${XDG_DECORATION_XML}" OR NOT EXISTS "${TEXT_INPUT_XML}" OR NOT EXISTS "${XDG_ACTIVATION_XML}" OR NOT EXISTS "${FRACTIONAL_SCALE_XML}" OR NOT EXISTS "${VIEWPORTER_XML}" OR NOT EXISTS "${XDG_FOREIGN_XML}")
     message(FATAL_ERROR "albor-platform-wayland: the vendored protocol definitions are missing")
 endif()
 
@@ -98,6 +106,11 @@ set(VIEWPORTER_HEADER "${PROTOCOL_OUTPUT_DIR}/viewporter-client-protocol.h")
 set(VIEWPORTER_CODE "${PROTOCOL_OUTPUT_DIR}/viewporter-protocol.c")
 add_custom_command(OUTPUT "${VIEWPORTER_HEADER}" "${VIEWPORTER_CODE}" COMMAND "${WAYLAND_SCANNER_BIN}" client-header "${VIEWPORTER_XML}" "${VIEWPORTER_HEADER}" COMMAND "${WAYLAND_SCANNER_BIN}" private-code "${VIEWPORTER_XML}" "${VIEWPORTER_CODE}" DEPENDS "${VIEWPORTER_XML}" VERBATIM)
 
+# the export bindings, which name a window to the portal (§5.3)
+set(XDG_FOREIGN_HEADER "${PROTOCOL_OUTPUT_DIR}/xdg-foreign-client-protocol.h")
+set(XDG_FOREIGN_CODE "${PROTOCOL_OUTPUT_DIR}/xdg-foreign-protocol.c")
+add_custom_command(OUTPUT "${XDG_FOREIGN_HEADER}" "${XDG_FOREIGN_CODE}" COMMAND "${WAYLAND_SCANNER_BIN}" client-header "${XDG_FOREIGN_XML}" "${XDG_FOREIGN_HEADER}" COMMAND "${WAYLAND_SCANNER_BIN}" private-code "${XDG_FOREIGN_XML}" "${XDG_FOREIGN_CODE}" DEPENDS "${XDG_FOREIGN_XML}" VERBATIM)
+
 # the generated protocol code compiles as c, which the language enables for this adapter
 enable_language(C)
 
@@ -108,7 +121,7 @@ file(GLOB_RECURSE LINUX_SOURCES "./*.linux.c++")
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
 # create the static library from the gathered sources, the private libdecor and the generated bindings
-add_library(albor-platform-wayland STATIC ${LINUX_SOURCES} ${CPP_SOURCES} ${LIBDECOR_SOURCES} "${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}" "${FRACTIONAL_SCALE_CODE}" "${VIEWPORTER_CODE}")
+add_library(albor-platform-wayland STATIC ${LINUX_SOURCES} ${CPP_SOURCES} ${LIBDECOR_SOURCES} "${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}" "${FRACTIONAL_SCALE_CODE}" "${VIEWPORTER_CODE}" "${XDG_FOREIGN_CODE}")
 
 # the adapter implements the framework's platform interfaces, which stay free of wayland types (§3.5, AD-05)
 target_include_directories(albor-platform-wayland PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<BUILD_INTERFACE:${PROTOCOL_OUTPUT_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
@@ -120,9 +133,9 @@ if(ALBOR_LIBDECOR_AVAILABLE)
     set_source_files_properties("${LIBDECOR_DIR}/src/plugins/cairo/libdecor-cairo.c" PROPERTIES COMPILE_DEFINITIONS "libdecor_plugin_description=albor_libdecor_cairo_plugin_description")
 endif()
 
-# the adapter needs the application loop it implements, and reaches wayland and xkbcommon directly (AD-16)
+# the adapter needs the application loop it implements, reaches wayland and xkbcommon directly, and rides the session bus for the portals (AD-16, §5.3)
 # albor-window arrives transitively through albor-application, so naming it again would duplicate the archive on the link line
-target_link_libraries(albor-platform-wayland PUBLIC albor-application PkgConfig::WAYLAND_CLIENT_PC PkgConfig::XKBCOMMON_PC)
+target_link_libraries(albor-platform-wayland PUBLIC albor-application PkgConfig::WAYLAND_CLIENT_PC PkgConfig::XKBCOMMON_PC PkgConfig::DBUS_PC)
 
 # wayland 1.21 added the pointer value120 event, which the 1.20 headers lack (AD-27)
 if(WAYLAND_CLIENT_PC_VERSION VERSION_GREATER_EQUAL 1.21)
@@ -136,11 +149,11 @@ endif()
 if(ALBOR_LIBDECOR_AVAILABLE)
     # the private libdecor is compiled into the adapter, so the consumer installs no libdecor package or runtime plugin (§5.3)
     target_compile_definitions(albor-platform-wayland PRIVATE ALBOR_WAYLAND_LIBDECOR=1)
-    target_link_libraries(albor-platform-wayland PRIVATE PkgConfig::PANGOCAIRO_PC PkgConfig::WAYLAND_CURSOR_PC PkgConfig::DBUS_PC ${CMAKE_DL_LIBS} m)
+    target_link_libraries(albor-platform-wayland PRIVATE PkgConfig::PANGOCAIRO_PC PkgConfig::WAYLAND_CURSOR_PC ${CMAKE_DL_LIBS} m)
 endif()
 
 # the third party sources and the machine generated bindings carry no fixable warnings, which the suppression records (§14.2)
-set_source_files_properties("${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}" "${FRACTIONAL_SCALE_CODE}" "${VIEWPORTER_CODE}" PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties("${XDG_SHELL_CODE}" "${XDG_DECORATION_CODE}" "${TEXT_INPUT_CODE}" "${XDG_ACTIVATION_CODE}" "${FRACTIONAL_SCALE_CODE}" "${VIEWPORTER_CODE}" "${XDG_FOREIGN_CODE}" PROPERTIES COMPILE_OPTIONS "-w")
 if(ALBOR_LIBDECOR_AVAILABLE)
     set_source_files_properties(${LIBDECOR_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
 endif()

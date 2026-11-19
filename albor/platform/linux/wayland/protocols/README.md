@@ -17,6 +17,7 @@ generated listener structs and request tables stay identical between the RHEL/Al
 | `xdg-activation-v1.xml` | `staging/xdg-activation/xdg-activation-v1.xml` |
 | `fractional-scale-v1.xml` | `staging/fractional-scale/fractional-scale-v1.xml` |
 | `viewporter.xml` | `stable/viewporter/viewporter.xml` |
+| `xdg-foreign-unstable-v2.xml` | `unstable/xdg-foreign/xdg-foreign-unstable-v2.xml` |
 
 The bindings are generated at build time by `wayland-scanner`, which still comes from the host's `libwayland`
 development package.

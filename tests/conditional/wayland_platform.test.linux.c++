@@ -42,7 +42,7 @@ namespace
         // every focus loss the platform reported, which a drag cancellation follows (§8.3)
         std::size_t focus_losses = 0;
 
-        // every appearance change the platform reported, which the portal path will raise in #234 (§8.4)
+        // every appearance change the platform reported, which a portal setting change raises (§8.4)
         std::size_t appearance_changes = 0;
 
         // override: count the resize, which a show and a set_size raise (§5.3)

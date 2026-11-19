@@ -1,5 +1,6 @@
 #include "albor/platform/linux/wayland/clipboard.h"
 #include "albor/platform/linux/wayland/event_loop.h"
+#include "albor/platform/linux/wayland/file_dialog.h"
 
 namespace
 {
@@ -9,6 +10,8 @@ namespace
         PlatformAutoInstall() {
             // the clipboard surface is installed first, because it names no shell object the loop needs (§3.5)
             albor::wayland::install_wayland_clipboard();
+            // the file dialog follows, which the desktop portal answers where one runs (§5.3)
+            albor::wayland::install_wayland_file_dialog();
             // the loop and window factories follow, which are what a run is built on (§5.3)
             albor::wayland::install_wayland_platform();
         }

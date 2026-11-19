@@ -340,7 +340,7 @@ add_subdirectory(include-folder-consumer)
 
 # the linux platform suite is a separate binary, because the wayland adapter carries its own platform marker (§5.3, AD-16)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ALBOR_WAYLAND_FOUND)
-    add_executable(albor-linux-tests "./conditional/wayland_platform.test.linux.c++")
+    add_executable(albor-linux-tests "./conditional/wayland_platform.test.linux.c++" "./conditional/portal.test.linux.c++")
     target_include_directories(albor-linux-tests PRIVATE ${ALBOR_SOURCE_DIR})
     target_compile_features(albor-linux-tests PRIVATE cxx_std_20)
     target_link_libraries(albor-linux-tests PRIVATE albor-platform-wayland-auto GTest::gtest_main)

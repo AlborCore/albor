@@ -37,8 +37,8 @@ are the framework's choice. The target map and advanced composition are on
 | DPI and scale factor | Full | fractional `wp_fractional_scale_v1` with `wp_viewporter`; integer output fallback, covered at scale 2 by the local container |
 | Event-loop frame pacing | Full | timerfd pacing |
 | Input normalization and focus | Partial | xkbcommon key and modifier mapping; no scripted real-device suite yet |
-| System appearance | Not yet | XDG portal appearance is #234 |
-| Native file dialogs | Not yet | XDG portal file chooser is #234 |
+| System appearance | Full | XDG portal `org.freedesktop.appearance` colour scheme over the session bus; a change reaches the window listener, and the accent stays the portable default |
+| Native file dialogs | Partial | XDG portal `FileChooser` over the session bus: open, save, title, filters, initial folder, proposed name and the exported parent window; a single selection, and a host without a portal refuses the panel |
 | Platform font resolution | Full | fontconfig resolves a family and weight and hands over its sfnt; embedded text never reaches it and a host without fontconfig degrades to embedded-only |
 | Renderer | Partial | Blend2D CPU presenting through `wl_shm`; the Vulkan backend is #110 |
 | Accessibility | Not yet | AT-SPI is #42 |
@@ -112,7 +112,7 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 | --- | --- | --- |
 | Application, event loop, tasks, timers | `application/` | shipped |
 | Window roles, modality, close request | `window/` | shipped |
-| Native file dialogs | `application/`, `platform/` | shipped — appkit panels, shell dialogs and a scripted headless backend |
+| Native file dialogs | `application/`, `platform/` | shipped — appkit panels, shell dialogs, the XDG portal chooser and a scripted headless backend |
 | Platform abstraction (macOS, Windows, Linux Wayland, headless) | `platform/` | shipped |
 | Render surface, metrics, scale factor | `render/` | shipped |
 | Frame pipeline, two-stage frame | `render/` | shipped |

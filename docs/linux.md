@@ -36,9 +36,13 @@ from 2027-04-17, and a floor package built there would be rejected by the symbol
   built-in Cairo frame as the fallback where the compositor has no `xdg-decoration`.
   The frame is compiled into `albor-platform-wayland`, so it installs with the package.
 - The Wayland protocol XMLs (`xdg-shell`, `xdg-decoration`, `text-input-v3`,
-  `xdg-activation-v1`, `fractional-scale-v1`, `viewporter`) are vendored at
-  wayland-protocols **1.37** and generated at build time, so the host's protocol package
-  version cannot change the adapter's API.
+  `xdg-activation-v1`, `fractional-scale-v1`, `viewporter`, `xdg-foreign-unstable-v2`) are
+  vendored at wayland-protocols **1.37** and generated at build time, so the host's protocol
+  package version cannot change the adapter's API.
+- Native file dialogs and the system colour scheme through the XDG desktop portals over the
+  session bus. The chooser is single selection; the exported `xdg-foreign` toplevel handle
+  names the parent window, `color-scheme` reaches the window listener, and a host without a
+  portal refuses the panel and keeps the portable dark scheme.
 - `xdg-activation-v1` window activation, with a no-op fallback where the compositor does not
   offer it.
 - `text-input-v3` IME with the candidate anchor; surrounding text is not sent yet.
@@ -60,19 +64,24 @@ from 2027-04-17, and a floor package built there would be rejected by the symbol
   the same Wayland connection.
 
 The suite runs against a headless Weston compositor. A normal desktop Wayland session is the
-real target, and the remote display path below is optional.
+real target, and the remote display path below is optional. The portal suite is self-contained:
+it starts its own `dbus-daemon` with a config that declares no service directory, owns
+`org.freedesktop.portal.Desktop` on that private bus, and drives the chooser and the settings
+interface through it, so neither the session bus nor the host's real portal is ever touched; a
+host without `dbus-daemon` skips those tests instead of failing them.
 
 ## Dependencies
 
-The adapter needs the Wayland client, its scanner, xkbcommon, and the Pango/Cairo/D-Bus
-libraries the vendored libdecor frame uses:
+The adapter needs the Wayland client, its scanner, xkbcommon, D-Bus and the Pango/Cairo
+libraries the vendored libdecor frame uses. The D-Bus client is a required dependency of the
+adapter, because the desktop portals answer on the session bus:
 
 | package (Debian/Ubuntu) | why |
 | --- | --- |
 | `libwayland-dev` | Wayland client and `wayland-scanner` |
 | `libxkbcommon-dev` | key and modifier mapping |
 | `libpango1.0-dev`, `libcairo2-dev` | the libdecor Cairo frame |
-| `libdbus-1-dev` | the libdecor cursor settings |
+| `libdbus-1-dev` | the desktop portal file chooser and colour scheme |
 | `pkg-config` | resolve the modules above |
 
 `wayland-protocols` is not needed: the XMLs are vendored. `libdecor-0-dev` and its plugin
@@ -177,12 +186,16 @@ export WAYLAND_DISPLAY=wayland-0
 kill "$weston_pid"
 ```
 
-The suite has 21 tests: window creation, show/hide/resize, metrics, a parented popup,
+The suite has 35 tests: window creation, show/hide/resize, metrics, a parented popup,
 xkb key and modifier mapping, frame pacing, the clipboard surface, the decoration strategy
 and client-side frame tests (native first, libdecor fallback, and a popup under a decorated
-parent), the fractional scale mapping and its integer fallback, and a real Blend2D frame
+parent), the fractional scale mapping and its integer fallback, a real Blend2D frame
 presented through `wl_shm`, including a present from a render thread while the UI thread
-resizes the window.
+resizes the window, and the XDG portal suite: an open and a save panel, a cancel, an empty
+result, an escaped path, the exported parent window, a host without a portal, a bus whose
+service is missing, a portal that names its own request handle, a bus that goes away while a
+panel runs, the colour scheme read through both settings methods, its setting change, and a
+change that arrives while a panel is open.
 The suite can run twice, once at the default scale and once under a Weston authoritative
 output scale of 2, so the integer scale path is exercised. Weston does not advertise
 `wp_fractional_scale_v1`, so the fractional case runs under a compositor that does, for
@@ -208,7 +221,11 @@ substitute: it lets X11 applications run on a Wayland host, which is the opposit
 
 ## Limits and follow-ups
 
-- **File dialogs and system appearance** go through XDG desktop portals. #234.
+- **File dialogs and system appearance** ride the XDG desktop portals over the session bus, which
+  needs `dbus-1` at build time and a running `org.freedesktop.portal.Desktop` at run time. The chooser
+  is single selection, because a multiple selection changes the public API; the accent colour is not
+  mirrored, so only `color-scheme` reaches the window. A host without a portal refuses the panel and
+  keeps the portable dark scheme.
 - **Platform font resolution** resolves a family and weight through fontconfig and hands over its sfnt bytes; embedded text never reaches it, and a host without fontconfig degrades to embedded-only.
 - **Vulkan** with Wayland/X11 WSI is the GPU path. #110.
 - **AT-SPI** accessibility is not implemented. #42.
