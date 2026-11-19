@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string_view>
 
@@ -27,6 +28,15 @@ namespace albor
 
     // choose the decoration for one toplevel, preferring the compositor's native chrome over libdecor (§5.3, AD-16)
     [[nodiscard]] WaylandDecorationMode choose_decoration(bool server_side_available, bool client_side_available);
+
+    // report the scale a compositor prefers from the one hundred twentieths the protocol carries (AD-27)
+    [[nodiscard]] float fractional_scale_factor(std::uint32_t preferred_scale);
+
+    // report whether a surface can honour a fractional scale, which needs both protocols (AD-27)
+    [[nodiscard]] bool fractional_scale_available(bool manager_available, bool viewporter_available);
+
+    // report the surface local destination a fractional buffer maps onto, rounded halfway away from zero (AD-27)
+    [[nodiscard]] Size viewport_destination(Size logical_size);
 
     // the opaque native state of one wayland window, defined only in the linux translation unit (§3.5)
     struct WaylandWindowState; // the xdg shell window that reports resize, close and scale changes (§5.3, AD-16, AD-22)
@@ -73,6 +83,9 @@ namespace albor
 
         // report the decoration the window ended up with, which a test asserts on (§5.3)
         [[nodiscard]] WaylandDecorationMode decoration_mode() const;
+
+        // report whether the window honours a fractional preferred scale, which a test asserts on (AD-27)
+        [[nodiscard]] bool fractional_scale_active() const;
 
         // report whether the window carries the libdecor client-side frame, which the decoration test asserts (§5.3)
         [[nodiscard]] bool uses_client_side_frame() const;

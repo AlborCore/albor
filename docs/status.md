@@ -34,7 +34,7 @@ are the framework's choice. The target map and advanced composition are on
 | Window modality and parent windows | Full | the framework gate enforces it before dispatch; Wayland has no native dialog role |
 | Clipboard | Partial | `wl_data_device` text selection; a headless compositor without a seat has no clipboard |
 | IME and text composition | Partial | `text-input-v3`; candidate anchor; surrounding text is not sent yet |
-| DPI and scale factor | Partial | integer output scale, covered at scale 2 by the local container; fractional scaling is #236 |
+| DPI and scale factor | Full | fractional `wp_fractional_scale_v1` with `wp_viewporter`; integer output fallback, covered at scale 2 by the local container |
 | Event-loop frame pacing | Full | timerfd pacing |
 | Input normalization and focus | Partial | xkbcommon key and modifier mapping; no scripted real-device suite yet |
 | System appearance | Not yet | XDG portal appearance is #234 |

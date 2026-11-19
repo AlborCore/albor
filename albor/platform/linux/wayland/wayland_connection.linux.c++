@@ -155,6 +155,16 @@ namespace albor::wayland
             xdg_activation_v1_destroy(m_activation);
             m_activation = nullptr;
         }
+        // the fractional scale manager is released, which the per surface objects no longer reference (AD-27)
+        if (m_fractional_scales != nullptr) {
+            wp_fractional_scale_manager_v1_destroy(m_fractional_scales);
+            m_fractional_scales = nullptr;
+        }
+        // the viewporter is released, which the per surface viewports no longer reference (AD-27)
+        if (m_viewporter != nullptr) {
+            wp_viewporter_destroy(m_viewporter);
+            m_viewporter = nullptr;
+        }
 #ifdef ALBOR_WAYLAND_LIBDECOR
         // the decoration context is released before the display, which its frames reference (§5.3)
         if (m_decoration_context != nullptr) {
@@ -233,6 +243,16 @@ namespace albor::wayland
     xdg_activation_v1* WaylandConnection::activation() const {
         // the protocol is null where the compositor cannot raise a window (§5.1)
         return m_activation;
+    }
+
+    wp_fractional_scale_manager_v1* WaylandConnection::fractional_scales() const {
+        // the manager is null where the compositor prefers an integer scale alone (AD-27)
+        return m_fractional_scales;
+    }
+
+    wp_viewporter* WaylandConnection::viewporter() const {
+        // the viewporter is null where the compositor cannot map a buffer onto a logical extent (AD-27)
+        return m_viewporter;
     }
 
 #ifdef ALBOR_WAYLAND_LIBDECOR
@@ -430,6 +450,18 @@ namespace albor::wayland
             m_activation_name = name;
             return;
         }
+        // the fractional scale manager is optional, and a compositor without one keeps the integer scale (AD-27)
+        if (interface_is(interface, wp_fractional_scale_manager_v1_interface.name)) {
+            m_fractional_scales = static_cast<wp_fractional_scale_manager_v1*>(wl_registry_bind(registry, name, &wp_fractional_scale_manager_v1_interface, 1));
+            m_fractional_scales_name = name;
+            return;
+        }
+        // the viewporter is optional, and a compositor without one cannot map a fractional buffer (AD-27)
+        if (interface_is(interface, wp_viewporter_interface.name)) {
+            m_viewporter = static_cast<wp_viewporter*>(wl_registry_bind(registry, name, &wp_viewporter_interface, 1));
+            m_viewporter_name = name;
+            return;
+        }
         // the text input manager is optional, and a compositor without one leaves the portable input defaults (§8.3)
         if (interface_is(interface, zwp_text_input_manager_v3_interface.name)) {
             m_text_inputs = static_cast<zwp_text_input_manager_v3*>(wl_registry_bind(registry, name, &zwp_text_input_manager_v3_interface, 1));
@@ -478,6 +510,16 @@ namespace albor::wayland
         if (m_activation_name == name) {
             m_activation = nullptr;
             m_activation_name = 0;
+            return;
+        }
+        if (m_fractional_scales_name == name) {
+            m_fractional_scales = nullptr;
+            m_fractional_scales_name = 0;
+            return;
+        }
+        if (m_viewporter_name == name) {
+            m_viewporter = nullptr;
+            m_viewporter_name = 0;
             return;
         }
         if (m_text_inputs_name == name) {

@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -179,6 +180,87 @@ TEST(WaylandPlatform, MetricsFollowTheCompositorScale) {
     EXPECT_FLOAT_EQ(metrics.pixel_size.width, metrics.logical_size.width * metrics.scale_factor);
     EXPECT_FLOAT_EQ(metrics.pixel_size.height, metrics.logical_size.height * metrics.scale_factor);
     // a run the compositor scaled expects the exact factor, which the headless runner passes in (§5.3)
+    if (const char* expected = std::getenv("ALBOR_EXPECT_SCALE"); expected != nullptr)
+        EXPECT_FLOAT_EQ(metrics.scale_factor, std::stof(expected));
+    window->close();
+}
+
+TEST(WaylandPlatform, FractionalScaleMapsPreferredScaleToMetrics) {
+    // act, assert one hundred twenty is the identity, which the protocol names as one logical pixel (AD-27)
+    EXPECT_FLOAT_EQ(fractional_scale_factor(120), 1.0f);
+    // act, assert a 1.25 desktop arrives as one hundred fifty, which the metric reports (AD-27)
+    EXPECT_FLOAT_EQ(fractional_scale_factor(150), 1.25f);
+    // act, assert a 1.5 desktop arrives as one hundred eighty, which the metric reports (AD-27)
+    EXPECT_FLOAT_EQ(fractional_scale_factor(180), 1.5f);
+    // act, assert a compositor that names no scale falls back to the identity (AD-27)
+    EXPECT_FLOAT_EQ(fractional_scale_factor(0), 1.0f);
+    // act, assert the physical extent at 1.5 is the logical extent times the factor (AD-27)
+    const WindowMetrics at_1_5 = WindowMetrics::from_logical(Size{240.0f, 160.0f}, 1.5f);
+    EXPECT_FLOAT_EQ(at_1_5.scale_factor, 1.5f);
+    EXPECT_FLOAT_EQ(at_1_5.pixel_size.width, 360.0f);
+    EXPECT_FLOAT_EQ(at_1_5.pixel_size.height, 240.0f);
+    // act, assert the physical extent at 1.25 follows the same mapping (AD-27)
+    const WindowMetrics at_1_25 = WindowMetrics::from_logical(Size{320.0f, 200.0f}, 1.25f);
+    EXPECT_FLOAT_EQ(at_1_25.pixel_size.width, 400.0f);
+    EXPECT_FLOAT_EQ(at_1_25.pixel_size.height, 250.0f);
+    // act, assert the viewport destination is the logical extent the buffer is scaled onto (AD-27)
+    EXPECT_EQ(viewport_destination(Size{240.0f, 160.0f}), (Size{240.0f, 160.0f}));
+    // act, assert the destination rounds halfway away from zero, which the toplevel rule names (AD-27)
+    EXPECT_EQ(viewport_destination(Size{240.5f, 160.5f}), (Size{241.0f, 161.0f}));
+}
+
+TEST(WaylandPlatform, FractionalScaleFallsBackWithoutBothProtocols) {
+    // act, assert only the pair of protocols enables the fractional mapping (AD-27)
+    EXPECT_TRUE(fractional_scale_available(true, true));
+    // act, assert a compositor without the viewporter keeps the integer scale (AD-27)
+    EXPECT_FALSE(fractional_scale_available(true, false));
+    // act, assert a compositor without the manager keeps the integer scale (AD-27)
+    EXPECT_FALSE(fractional_scale_available(false, true));
+    // act, assert a compositor with neither keeps the integer scale (AD-27)
+    EXPECT_FALSE(fractional_scale_available(false, false));
+    // arrange a shown window on whichever compositor the suite runs against (AD-27)
+    WindowOptions options;
+    options.title = "albor-wayland-fractional-fallback";
+    options.size = Size{240.0f, 160.0f};
+    const std::unique_ptr<PlatformWindow> window = PlatformWindow::create(options);
+    ASSERT_NE(window, nullptr);
+    window->show();
+    ASSERT_TRUE(window->visible());
+    const auto* wayland = dynamic_cast<const WaylandPlatformWindow*>(window.get());
+    ASSERT_NE(wayland, nullptr);
+    // act
+    const WindowMetrics metrics = window->metrics();
+    // assert a compositor without the protocols reports an integral factor, which the fallback path applies (AD-27)
+    if (!wayland->fractional_scale_active())
+        EXPECT_FLOAT_EQ(metrics.scale_factor, static_cast<float>(static_cast<int>(metrics.scale_factor)));
+    // assert the physical extent follows the reported factor on either path (AD-27)
+    EXPECT_FLOAT_EQ(metrics.pixel_size.width, metrics.logical_size.width * metrics.scale_factor);
+    EXPECT_FLOAT_EQ(metrics.pixel_size.height, metrics.logical_size.height * metrics.scale_factor);
+    window->close();
+}
+
+TEST(WaylandPlatform, FractionalScaleReportsThePhysicalExtent) {
+    // arrange a shown window, which a compositor with both protocols reports the preference on (AD-27)
+    WindowOptions options;
+    options.title = "albor-wayland-fractional";
+    options.size = Size{240.0f, 160.0f};
+    const std::unique_ptr<PlatformWindow> window = PlatformWindow::create(options);
+    ASSERT_NE(window, nullptr);
+    window->show();
+    ASSERT_TRUE(window->visible());
+    const auto* wayland = dynamic_cast<const WaylandPlatformWindow*>(window.get());
+    ASSERT_NE(wayland, nullptr);
+    // a compositor without both protocols cannot express the preference, which the fallback test covers (AD-27)
+    if (!wayland->fractional_scale_active())
+        GTEST_SKIP() << "the compositor does not advertise fractional scale, so the fractional path is not exercised";
+    // act
+    const WindowMetrics metrics = window->metrics();
+    // assert the factor is a whole number of one hundred twentieths, which the protocol carries (AD-27)
+    EXPECT_NEAR(metrics.scale_factor * 120.0f, std::round(metrics.scale_factor * 120.0f), 0.001f);
+    // assert the physical extent is the logical extent at the reported factor (AD-27)
+    EXPECT_FLOAT_EQ(metrics.pixel_size.width, metrics.logical_size.width * metrics.scale_factor);
+    EXPECT_FLOAT_EQ(metrics.pixel_size.height, metrics.logical_size.height * metrics.scale_factor);
+    // a run that names the expected factor asserts it exactly, which the 1.25 and 1.5 runners pass in (AD-27)
     if (const char* expected = std::getenv("ALBOR_EXPECT_SCALE"); expected != nullptr)
         EXPECT_FLOAT_EQ(metrics.scale_factor, std::stof(expected));
     window->close();

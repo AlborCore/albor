@@ -36,17 +36,23 @@ from 2027-04-17, and a floor package built there would be rejected by the symbol
   built-in Cairo frame as the fallback where the compositor has no `xdg-decoration`.
   The frame is compiled into `albor-platform-wayland`, so it installs with the package.
 - The Wayland protocol XMLs (`xdg-shell`, `xdg-decoration`, `text-input-v3`,
-  `xdg-activation-v1`) are vendored at wayland-protocols **1.37** and generated at build
-  time, so the host's protocol package version cannot change the adapter's API.
+  `xdg-activation-v1`, `fractional-scale-v1`, `viewporter`) are vendored at
+  wayland-protocols **1.37** and generated at build time, so the host's protocol package
+  version cannot change the adapter's API.
 - `xdg-activation-v1` window activation, with a no-op fallback where the compositor does not
   offer it.
 - `text-input-v3` IME with the candidate anchor; surrounding text is not sent yet.
 - `wl_data_device` text clipboard and xkbcommon key and modifier normalization. Pointer motion
   reaches the app through `wl_pointer.motion`, and the departure through `wl_pointer.leave`,
   which ends the hover the pointer can no longer follow.
-- Integer output scale and timerfd frame pacing. The Wayland surface v6 scale/transform and
-  pointer relative-direction listeners are compiled only on a Wayland 1.22+ client; the
-  pointer high-resolution wheel event is compiled on 1.21+.
+- Fractional scaling through `wp_fractional_scale_v1` and `wp_viewporter`, with the
+  preferred scale reported in `WindowMetrics::scale_factor`. The buffer stays at buffer
+  scale 1 and the viewport maps it onto the logical extent, so a 1.25 or 1.5 desktop gets
+  its exact physical buffer; a compositor without both protocols falls back to the core
+  preferred buffer scale, and then to the integer `wl_output` scale. Timerfd frame pacing
+  rides the same surface. The Wayland surface v6 scale/transform and pointer
+  relative-direction listeners are compiled only on a Wayland 1.22+ client; the pointer
+  high-resolution wheel event is compiled on 1.21+.
 - A `NativeWindowHandle` carrying `wl_display*` and `wl_surface*` for a future Vulkan WSI.
 - The portable **Blend2D** renderer, which presents each finished frame through a `wl_shm`
   buffer. There is no GPU backend on Linux yet; that is #110.
@@ -171,12 +177,18 @@ export WAYLAND_DISPLAY=wayland-0
 kill "$weston_pid"
 ```
 
-The suite has 18 tests: window creation, show/hide/resize, metrics, a parented popup,
+The suite has 21 tests: window creation, show/hide/resize, metrics, a parented popup,
 xkb key and modifier mapping, frame pacing, the clipboard surface, the decoration strategy
 and client-side frame tests (native first, libdecor fallback, and a popup under a decorated
-parent), and a real Blend2D frame presented through `wl_shm`, including a present from a render thread while the UI thread resizes the window.
+parent), the fractional scale mapping and its integer fallback, and a real Blend2D frame
+presented through `wl_shm`, including a present from a render thread while the UI thread
+resizes the window.
 The suite can run twice, once at the default scale and once under a Weston authoritative
-output scale of 2, so the integer scale path is exercised. The Linux CI jobs are
+output scale of 2, so the integer scale path is exercised. Weston does not advertise
+`wp_fractional_scale_v1`, so the fractional case runs under a compositor that does, for
+example sway 1.12 with its headless backend and `output HEADLESS-1 scale 1.5`; the suite
+then asserts the reported factor, and `ALBOR_EXPECT_SCALE=1.5` makes the assertion exact
+rather than a capability skip. The Linux CI jobs are
 temporarily disabled; the container workflow above is the local route until a Linux host is
 available. A headless compositor has no real input devices or decorations, so a
 compositor-driven popup dismissal and the decorated desktop path still need a real Wayland
@@ -196,7 +208,6 @@ substitute: it lets X11 applications run on a Wayland host, which is the opposit
 
 ## Limits and follow-ups
 
-- **Fractional scaling** is not implemented; the integer output scale is used. #236.
 - **File dialogs and system appearance** go through XDG desktop portals. #234.
 - **Platform font resolution** resolves a family through fontconfig and hands over its sfnt bytes; embedded text never reaches it, and a host without fontconfig degrades to embedded-only.
 - **Vulkan** with Wayland/X11 WSI is the GPU path. #110.

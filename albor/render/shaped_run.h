@@ -99,9 +99,9 @@ namespace albor
             if (m_font_size != rhs.m_font_size || m_font_hash != rhs.m_font_hash)
                 return false;
             // the lines are compared at their own shape, which is origins and glyphs (§9.1)
-            return m_lines.size() == rhs.m_lines.size() && std::equal(m_lines.begin(), m_lines.end(), rhs.m_lines.begin(), [](const Line& lhs, const Line& rhs) {
+            return m_lines.size() == rhs.m_lines.size() && std::equal(m_lines.begin(), m_lines.end(), rhs.m_lines.begin(), [](const Line& left, const Line& right) {
                        // the origin is where the line hangs from, and the glyphs are the shape the run is (§9.1)
-                       return lhs.origin == rhs.origin && lhs.glyphs == rhs.glyphs;
+                       return left.origin == right.origin && left.glyphs == right.glyphs;
                    });
         }
 

@@ -3,6 +3,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -42,6 +43,28 @@ namespace albor
         return WaylandDecorationMode::None;
     }
 
+    float fractional_scale_factor(std::uint32_t preferred_scale) {
+        // a compositor that named no scale leaves the identity, which the integer path also starts from (AD-27)
+        if (preferred_scale == 0)
+            return 1.0f;
+        // the protocol carries the numerator over one hundred twentieths, which is one logical pixel (AD-27)
+        return static_cast<float>(preferred_scale) / 120.0f;
+    }
+
+    bool fractional_scale_available(bool manager_available, bool viewporter_available) {
+        // both protocols are needed, because a preferred scale without a viewport cannot be mapped (AD-27)
+        return manager_available && viewporter_available;
+    }
+
+    Size viewport_destination(Size logical_size) {
+        // the destination is rounded halfway away from zero, which is the rounding the toplevel rule names (AD-27)
+        const long width = std::max(1L, std::lround(logical_size.width));
+        // the height follows the same rounding, which keeps the aspect the compositor configured (AD-27)
+        const long height = std::max(1L, std::lround(logical_size.height));
+        // the destination is the logical extent the physical buffer is scaled onto (AD-27)
+        return Size{static_cast<float>(width), static_cast<float>(height)};
+    }
+
     // the opaque xdg state, defined here so that no wayland type reaches a public header (§3.5, AD-05)
     struct WaylandWindowState;
 
@@ -79,6 +102,12 @@ namespace albor
 
         // the surface the compositor composes, which no buffer may be attached to before the first configure (§5.3)
         wl_surface* surface = nullptr;
+
+        // the fractional preferred scale object, which is null where the compositor prefers an integer scale (AD-27)
+        wp_fractional_scale_v1* fractional_scale = nullptr;
+
+        // the viewport that maps the physical buffer onto the logical extent, which is null without the protocol (AD-27)
+        wp_viewport* viewport = nullptr;
 
         // the shell surface that carries the xdg role state (§5.3)
         xdg_surface* shell_surface = nullptr;
@@ -146,7 +175,7 @@ namespace albor
         Size requested_size;
 
         // the scale the compositor prefers, which separates logical pixels from physical ones (AD-27)
-        int scale = 1;
+        float scale_factor = 1.0f;
 
         // the metrics the last configure reported, which the framework reads as authoritative (§9.1)
         WindowMetrics metrics;
@@ -315,15 +344,41 @@ namespace albor
         // build the shm buffer a mapped window presents, which a scale change rebuilds (AD-27)
         bool attach_initial_buffer(WaylandWindowState* state);
 
-        // apply a new buffer scale, which a preferred scale and an output change drive (AD-27)
-        void apply_scale(WaylandWindowState* state, int scale) {
-            // a compositor that reports no scale yet keeps the integer default, which a layout divides by (AD-27)
-            const int effective_scale = std::max(1, scale);
+        // report whether a window maps its buffer through the fractional scale and the viewport (AD-27)
+        bool uses_fractional_scale(const WaylandWindowState* state) {
+            // both objects are needed, because a preference without a viewport cannot be mapped (AD-27)
+            return state->fractional_scale != nullptr && state->viewport != nullptr;
+        }
+
+        // report the integer buffer scale a window presents at, which a fractional window keeps at one (AD-27)
+        std::int32_t buffer_scale_of(const WaylandWindowState* state) {
+            // a fractional window maps through the viewport, so the protocol keeps the buffer scale at one (AD-27)
+            if (uses_fractional_scale(state))
+                return 1;
+            // the integer path rounds the scale to the factor the compositor reads (AD-27)
+            return static_cast<std::int32_t>(std::max(1L, std::lround(state->scale_factor)));
+        }
+
+        // map the viewport onto a logical extent, which a fractional window reads its buffer through (AD-27)
+        void apply_viewport_destination(WaylandWindowState* state, Size logical_size) {
+            // a window without a viewport maps its buffer directly, which the integer path does (AD-27)
+            if (state->viewport == nullptr)
+                return;
+            // the destination is the logical extent the physical buffer is scaled onto (AD-27)
+            const Size destination = viewport_destination(logical_size);
+            // the compositor is told the logical extent the buffer maps onto (AD-27)
+            wp_viewport_set_destination(state->viewport, static_cast<std::int32_t>(destination.width), static_cast<std::int32_t>(destination.height));
+        }
+
+        // apply a new scale, which a preferred scale and an output change drive (AD-27)
+        void apply_scale(WaylandWindowState* state, float scale_factor) {
+            // a compositor that reports no scale yet keeps the identity, which a layout divides by (AD-27)
+            const float effective_scale = scale_factor > 0.0f ? scale_factor : 1.0f;
             // a scale that did not change applies nothing, which is what the comparison guards (AD-27)
-            if (state->scale == effective_scale)
+            if (state->scale_factor == effective_scale)
                 return;
             // the scale moves first, because a metrics listener reads it while handling the change (AD-27)
-            state->scale = effective_scale;
+            state->scale_factor = effective_scale;
             // the shared state is held locally, because a listener may tear the window down later (§4.2, §10.5)
             const std::shared_ptr<wayland::WaylandSurfaceState> surface_state = state->native.state;
             // a surface and its state live together, which a teardown clears (§10.5)
@@ -331,11 +386,11 @@ namespace albor
                 // the surface is locked, so the scale change lands atomically against a present (AD-27, §10.5)
                 const std::lock_guard<std::mutex> surface_lock(surface_state->mutex);
                 // the compositor is told the scale, which the buffer it reads is interpreted at (AD-27)
-                wl_surface_set_buffer_scale(state->surface, static_cast<std::int32_t>(effective_scale));
+                wl_surface_set_buffer_scale(state->surface, buffer_scale_of(state));
             }
-            // the metrics are rebuilt at the new scale, which is what a scale flip changes (AD-27)
-            const WindowMetrics metrics = WindowMetrics::from_logical(state->metrics.logical_size, static_cast<float>(effective_scale));
-            // an unchanged pixel size raises nothing, which is what the comparison guards (§9.1)
+            // the metrics are rebuilt at the new scale, which is what a scale change changes (AD-27)
+            const WindowMetrics metrics = WindowMetrics::from_logical(state->metrics.logical_size, effective_scale);
+            // the scale and the buffer scale already moved, so an unchanged pixel size raises nothing (§9.1, AD-27)
             if (metrics == state->metrics)
                 return;
             // the framework receives the metrics the platform now reports (§9.1)
@@ -356,15 +411,60 @@ namespace albor
             // a configure that names no size keeps the size the client asked for, which the request carries (§5.3)
             const Size logical = width > 0 && height > 0 ? Size{static_cast<float>(width), static_cast<float>(height)} : state->requested_size;
             // the metrics are rebuilt from the logical size and the scale, which is what the framework reads (§9.1, AD-27)
-            const WindowMetrics metrics = WindowMetrics::from_logical(logical, static_cast<float>(state->scale));
+            const WindowMetrics metrics = WindowMetrics::from_logical(logical, state->scale_factor);
             // an unchanged configure raises nothing, which is what the comparison guards (§9.1)
             if (metrics == state->metrics)
                 return;
             // the metrics move first, because a listener reads them while handling the resize (§5.3, D9.1)
             state->metrics = metrics;
+            // the viewport follows the logical extent, which the next frame maps its buffer onto (AD-27)
+            apply_viewport_destination(state, metrics.logical_size);
             // the framework receives the metrics the platform now reports (§9.1)
             if (state->listener != nullptr)
                 state->listener->on_platform_resize(metrics);
+        }
+
+        // the preferred scale the compositor announced, which the fractional protocol owns (AD-27)
+        void on_fractional_preferred_scale(void* data, wp_fractional_scale_v1*, std::uint32_t preferred_scale) {
+            // the state is kept alive across the listener, because the scale may tear the window down (§4.2)
+            const std::shared_ptr<WaylandWindowState> state = static_cast<WaylandWindowState*>(data)->shared_from_this();
+            // the fraction the compositor prefers is applied, which the protocol carries over one hundred twenty (AD-27)
+            apply_scale(state.get(), fractional_scale_factor(preferred_scale));
+        }
+
+        // the listener set of the fractional scale, which carries the preferred scale (AD-27)
+        constexpr wp_fractional_scale_v1_listener FRACTIONAL_SCALE_LISTENER = {&on_fractional_preferred_scale};
+
+        // destroy the per surface scale objects, which a surface teardown requires first (AD-27)
+        void destroy_scale_objects(WaylandWindowState* state) {
+            // the fractional scale is destroyed first, because it extends the surface (AD-27)
+            if (state->fractional_scale != nullptr) {
+                wp_fractional_scale_v1_destroy(state->fractional_scale);
+                state->fractional_scale = nullptr;
+            }
+            // the viewport is destroyed with the surface it maps, which no commit may outlive (AD-27)
+            if (state->viewport != nullptr) {
+                wp_viewport_destroy(state->viewport);
+                state->viewport = nullptr;
+            }
+        }
+
+        // create the per surface scale objects, which the fractional protocols need before a commit (AD-27)
+        void create_scale_objects(WaylandWindowState* state) {
+            // a compositor without both protocols keeps the integer scale, which no object is created for (AD-27)
+            if (state->surface == nullptr || !fractional_scale_available(state->connection->fractional_scales() != nullptr, state->connection->viewporter() != nullptr))
+                return;
+            // the viewport maps the physical buffer onto the logical extent, which a fraction needs (AD-27)
+            state->viewport = wp_viewporter_get_viewport(state->connection->viewporter(), state->surface);
+            // the fractional scale object carries the preferred scale the compositor announces (AD-27)
+            state->fractional_scale = wp_fractional_scale_manager_v1_get_fractional_scale(state->connection->fractional_scales(), state->surface);
+            // the pair is only usable together, so a refused object releases the other (AD-27)
+            if (state->viewport == nullptr || state->fractional_scale == nullptr) {
+                destroy_scale_objects(state);
+                return;
+            }
+            // the preference arrives through the listener, which the compositor announces once created (AD-27)
+            wp_fractional_scale_v1_add_listener(state->fractional_scale, &FRACTIONAL_SCALE_LISTENER, state);
         }
 
         // free one buffer the compositor released, which carries its own mapping (§6.2)
@@ -526,6 +626,8 @@ namespace albor
             }
             // the surface is destroyed, which the compositor unmaps under (§5.3)
             if (state->surface != nullptr) {
+                // the per surface scale objects are destroyed first, because they extend the surface (AD-27)
+                destroy_scale_objects(state);
                 wl_surface_destroy(state->surface);
                 state->surface = nullptr;
             }
@@ -629,7 +731,7 @@ namespace albor
                 xdg_positioner_destroy(state->positioner);
                 state->positioner = nullptr;
             }
-            // the activation request names the surface, so it is released before the surface dies (§5.1)
+            // the activation request names the surface, so it is released first (§5.1)
             release_pending_activation(state);
             // the render thread is stopped before the surface it presents through dies (§10.5)
             stop_presenting(state);
@@ -640,6 +742,8 @@ namespace albor
             }
             // the surface is destroyed last, because the role objects reference it (§5.1)
             if (state->surface != nullptr) {
+                // the per surface scale objects are destroyed first, because they extend the surface (AD-27)
+                destroy_scale_objects(state);
                 wl_surface_destroy(state->surface);
                 state->surface = nullptr;
             }
@@ -671,8 +775,8 @@ namespace albor
             if (state->surface == nullptr || state->connection->shm() == nullptr)
                 return false;
             // the scale converts the logical request into the physical buffer (AD-27)
-            const int width = static_cast<int>(state->requested_size.width * static_cast<float>(state->scale));
-            const int height = static_cast<int>(state->requested_size.height * static_cast<float>(state->scale));
+            const int width = static_cast<int>(state->requested_size.width * state->scale_factor);
+            const int height = static_cast<int>(state->requested_size.height * state->scale_factor);
             // a request that carries no area attaches nothing, which keeps the window unmapped (§6.2)
             if (width <= 0 || height <= 0)
                 return false;
@@ -728,8 +832,10 @@ namespace albor
             state->pool_data = data;
             state->pool_fd = fd;
             state->pool_size = size;
+            // the viewport maps the physical buffer onto the requested logical extent (AD-27)
+            apply_viewport_destination(state, state->requested_size);
             // the scale is applied before the commit, which the buffer is read at (AD-27)
-            wl_surface_set_buffer_scale(state->surface, static_cast<std::int32_t>(state->scale));
+            wl_surface_set_buffer_scale(state->surface, buffer_scale_of(state));
             // the buffer is attached, which the commit below maps (§5.3)
             wl_surface_attach(state->surface, buffer, 0, 0);
             // the whole surface is marked damaged, which is what a first frame presents (§6.2)
@@ -760,8 +866,11 @@ namespace albor
             if (state->connection->compositor_version() >= 6)
                 return;
 #endif
-            // the scale of the output the window sits on is applied, which is the fallback authority (AD-27)
-            apply_scale(state.get(), state->connection->output_scale());
+            // a fractional window reads the protocol preference, so the output is not the authority (AD-27)
+            if (uses_fractional_scale(state.get()))
+                return;
+            // the scale of the output the window sits on is applied, which the fallback authority is (AD-27)
+            apply_scale(state.get(), static_cast<float>(state->connection->output_scale()));
         }
 
         // the output the surface left, which carries no fact the adapter tracks (AD-27)
@@ -774,8 +883,11 @@ namespace albor
         void on_surface_preferred_scale(void* data, wl_surface*, std::int32_t factor) {
             // the state is kept alive across the listener, because the scale may tear the window down (§4.2)
             const std::shared_ptr<WaylandWindowState> state = static_cast<WaylandWindowState*>(data)->shared_from_this();
-            // the scale the compositor prefers is applied, which is the authority from surface version six on (AD-27)
-            apply_scale(state.get(), static_cast<int>(factor));
+            // the fractional protocol overrides the integer preference, which the compositor announces there (AD-27)
+            if (uses_fractional_scale(state.get()))
+                return;
+            // the scale the compositor prefers is applied, which the authority from surface version six on is (AD-27)
+            apply_scale(state.get(), static_cast<float>(std::max(1, static_cast<int>(factor))));
         }
 
         // the preferred transform the compositor announced, which the adapter keeps identity (AD-27)
@@ -1457,10 +1569,14 @@ namespace albor
                 return false;
             // the surface listener carries the scale facts, installed with the state (AD-27)
             wl_surface_add_listener(state->surface, &SURFACE_LISTENER, state);
+            // the fractional scale and the viewport extend the fresh surface, which the reopen needs (AD-27)
+            create_scale_objects(state);
             // the shell surface carries the fresh xdg role, created before any buffer exists (§5.1)
             state->shell_surface = xdg_wm_base_get_xdg_surface(state->connection->shell(), state->surface);
             // a shell surface the compositor refused leaves the surface destroyed (§5.1)
             if (state->shell_surface == nullptr) {
+                // the per surface scale objects follow the surface they extend (AD-27)
+                destroy_scale_objects(state);
                 wl_surface_destroy(state->surface);
                 state->surface = nullptr;
                 return false;
@@ -1471,6 +1587,8 @@ namespace albor
             if (!create_popup_role(state)) {
                 xdg_surface_destroy(state->shell_surface);
                 state->shell_surface = nullptr;
+                // the per surface scale objects follow the surface they extend (AD-27)
+                destroy_scale_objects(state);
                 wl_surface_destroy(state->surface);
                 state->surface = nullptr;
                 return false;
@@ -1521,6 +1639,8 @@ namespace albor
         }
         // the surface listener carries the scale facts, installed with the state (AD-27)
         wl_surface_add_listener(state->surface, &SURFACE_LISTENER, state.get());
+        // the fractional scale and the viewport extend the surface, which the preferred scale arrives through (AD-27)
+        create_scale_objects(state.get());
         // the shared state is built with the surface, because the first roundtrip already reports the scale (§10.5, AD-27)
         state->native.state = std::make_shared<wayland::WaylandSurfaceState>();
         state->native.state->owner = connection;
@@ -1645,6 +1765,8 @@ namespace albor
                 // the raw role is spent, and a fresh surface gives libdecor the role it owns (§5.3)
                 destroy_toplevel_role(state.get());
                 if (state->surface != nullptr) {
+                    // the per surface scale objects follow the surface they extend (AD-27)
+                    destroy_scale_objects(state.get());
                     wl_surface_destroy(state->surface);
                     state->surface = nullptr;
                 }
@@ -1658,6 +1780,8 @@ namespace albor
                 }
                 // the surface listener carries the scale facts, installed with the state (AD-27)
                 wl_surface_add_listener(state->surface, &SURFACE_LISTENER, state.get());
+                // the fractional scale and the viewport extend the replacement surface, which libdecor draws (AD-27)
+                create_scale_objects(state.get());
                 // the native handle follows the replacement surface, which a renderer attaches through (§3.5, AD-05)
                 if (state->native.state != nullptr) {
                     const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
@@ -1675,7 +1799,7 @@ namespace albor
         }
         // a compositor that proposed no size leaves the requested one, which the metrics carry now (§5.3)
         if (!state->metrics.valid())
-            state->metrics = WindowMetrics::from_logical(state->requested_size, static_cast<float>(state->scale));
+            state->metrics = WindowMetrics::from_logical(state->requested_size, state->scale_factor);
         // the pointer is taken where the seat announced one, which the capabilities name (§8.3)
         if (connection->seat() != nullptr && (connection->seat_capabilities() & WL_SEAT_CAPABILITY_POINTER) != 0) {
             // the pointer version is the seat's, which caps the release request and the events (§8.3)
@@ -1950,6 +2074,11 @@ namespace albor
     WaylandDecorationMode WaylandPlatformWindow::decoration_mode() const {
         // the strategy and the compositor's mode answer decide the chrome, which a test reads (§5.3)
         return m_state->decoration_mode;
+    }
+
+    bool WaylandPlatformWindow::fractional_scale_active() const {
+        // both objects are needed, which the fractional protocols create together (AD-27)
+        return uses_fractional_scale(m_state.get());
     }
 
     bool WaylandPlatformWindow::uses_client_side_frame() const {
