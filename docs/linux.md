@@ -198,7 +198,7 @@ substitute: it lets X11 applications run on a Wayland host, which is the opposit
 
 - **Fractional scaling** is not implemented; the integer output scale is used. #236.
 - **File dialogs and system appearance** go through XDG desktop portals. #234.
-- **Platform font resolution** resolves a family through fontconfig and hands over its sfnt bytes; embedded text never reaches it, and a host without fontconfig degrades to embedded-only.
+- **Platform font resolution** resolves a family and weight through fontconfig and hands over its sfnt bytes; embedded text never reaches it, and a host without fontconfig degrades to embedded-only.
 - **Vulkan** with Wayland/X11 WSI is the GPU path. #110.
 - **AT-SPI** accessibility is not implemented. #42.
 - **X11** is the Tier 2 adapter and is a separate module.

@@ -304,8 +304,8 @@ namespace albor::harfbuzz
     }
 
     std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create_platform(std::string_view family, FontWeight weight) {
-        // the resolver names the platform face, which is the only source before a build embeds a font (§9.1, AD-28)
-        std::unique_ptr<HarfbuzzTypefaceResolver> resolver = family.empty() ? HarfbuzzTypefaceResolver::create_default() : HarfbuzzTypefaceResolver::create(std::string(family));
+        // the resolver names the platform face at the weight, before a build embeds one (§9.1, AD-28)
+        std::unique_ptr<HarfbuzzTypefaceResolver> resolver = family.empty() ? HarfbuzzTypefaceResolver::create_default(weight) : HarfbuzzTypefaceResolver::create(std::string(family), weight);
         // a platform with no face has nothing to shape or draw, so the engine is refused (§9.1)
         if (resolver == nullptr)
             return nullptr;
@@ -346,7 +346,7 @@ namespace albor::harfbuzz
         // the bytes are enough to draw, so a platform typeface is resolved only when the platform offers one (§9.1, AD-34)
         m_state->require_typeface = false;
         // a resolved typeface still marks the run as one a backend resolves by content (§9.1, AD-34)
-        resolve_typeface(family_name);
+        resolve_typeface(family_name, weight);
     }
 
     HarfbuzzTextEngine::HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name, FontWeight weight) :
@@ -362,9 +362,9 @@ namespace albor::harfbuzz
         m_state->face = build_face(std::vector<std::uint8_t>(font_bytes, font_bytes + byte_count));
     }
 
-    void HarfbuzzTextEngine::resolve_typeface(std::string_view family_name) {
+    void HarfbuzzTextEngine::resolve_typeface(std::string_view family_name, FontWeight weight) {
         // the typeface is optional now, because a run draws from its bytes when the platform names no face (§9.1, AD-34)
-        m_state->resolver = HarfbuzzTypefaceResolver::create(std::string(family_name));
+        m_state->resolver = HarfbuzzTypefaceResolver::create(std::string(family_name), weight);
         // a platform with no such face leaves the run drawing through its outlines (§9.1, AD-34)
         if (m_state->resolver == nullptr)
             return;

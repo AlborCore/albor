@@ -148,10 +148,17 @@ application, not by CI.
 | Area | macOS | Windows | Assessment |
 | --- | --- | --- | --- |
 | HarfBuzz text engine | Same shared engine | Same shared engine | Parity |
-| Platform font resolver | CoreText | DirectWrite | Both implemented |
-| Platform font tests | 8 CoreText tests | 8 DirectWrite tests | Parity |
+| Platform font resolver | CoreText | DirectWrite | Both select family and weight |
+| Platform font tests | 9 CoreText tests | 9 DirectWrite tests | Parity |
 | Shaped-run parity | 4 tests | 4 tests | Parity |
 | Repeated measure allocation | 0 allocations | 0 allocations | Parity |
+
+The macOS system UI face is a variable font, so its Regular and Bold instances share one set of table
+bytes. The resolver selects the instance and the suite proves it by the instance's name and bold trait,
+but the engine shapes and draws from the carried tables, so a bold system face still measures and draws
+the regular run; baking the instance coordinates into those bytes is the follow-up that closes it. No
+caller requests a platform weight yet, so the difference is latent. Windows and Linux ship one file per
+weight, so their bytes differ, and both suites assert the weight through the shaped width.
 
 The Windows shaped failures were test geometry, not a reference-renderer defect: at 28 px the Windows default
 face reports an ascent of `30.214844` and a descent of `7.027344`, so the fixed origin placed the baseline outside
