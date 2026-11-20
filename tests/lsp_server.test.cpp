@@ -197,7 +197,14 @@ TEST(LspServerChecks, InitializeAnswersWithoutNeedingADocument) {
     EXPECT_EQ(publish->kind(), core::Json::Kind::Object);
     const core::Json* sync = capabilities->member("textDocumentSync");
     ASSERT_NE(sync, nullptr);
-    EXPECT_EQ(sync->as_number(), 1.0);
+    // the sync options carry the full change kind and the save notification a client registers for (§12.2)
+    ASSERT_EQ(sync->kind(), core::Json::Kind::Object);
+    const core::Json* change = sync->member("change");
+    ASSERT_NE(change, nullptr);
+    EXPECT_EQ(change->as_number(), 1.0);
+    const core::Json* save = sync->member("save");
+    ASSERT_NE(save, nullptr);
+    EXPECT_EQ(save->kind(), core::Json::Kind::Object);
     EXPECT_EQ(server.document_count(), 0U);
 }
 
@@ -2625,4 +2632,391 @@ TEST(LspRenameChecks, RenameRefusesACatalogTypeOrADeclaredComponent) {
     const core::Json* declared_error = declared.member("error");
     ASSERT_NE(declared_error, nullptr);
     EXPECT_NE(declared_error->member("message")->as_string().find("already declared in this file"), std::string::npos);
+}
+
+TEST(LspImportRefreshChecks, SavingAnImportedBufferRecompilesTheOpenRoot) {
+    // arrange a window that imports a saved panel, with both buffers open in the editor (§11.1, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-save-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the panel declares one property a window sets, which is what the import carries (§11.1)
+    const std::string panel_text = R"(component Panel { in property<string> label_text: "Panel"; Column { Label { text: label_text; } } })";
+    std::ofstream(root / "panel.ui") << panel_text;
+    // the window imports the panel and assigns its property, which is the cross-file form (§11.1)
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel { label_text: "Shared"; } } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, window_text, window_uri);
+    (void)did_open(server, panel_text, panel_uri);
+    // act the panel is saved, which must recompile the window that imports it (§11.1, §12.2)
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":)") + core::Json(panel_uri).to_string() + "}}}";
+    const Exchange saved = server.handle_line(line);
+    // assert the saved panel and the importing window are both republished (§12.2, §11.1)
+    bool saved_panel = false;
+    bool refreshed_window = false;
+    for (const Notification& notification : saved.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        // a payload without a string uri names no routed file, so it is skipped (§12.2)
+        if (uri == nullptr || uri->kind() != core::Json::Kind::String)
+            continue;
+        // the saved document is republished as its own root, because the editor still holds its buffer (§12.2)
+        if (uri->as_string() == panel_uri)
+            saved_panel = true;
+        // the importer is republished too, which is what the save notification has to trigger (§11.1, §12.2)
+        if (uri->as_string() == window_uri) {
+            refreshed_window = true;
+            // the window is clean, so its publication clears every squiggle it had (§16)
+            const core::Json* entries = payload.member("diagnostics");
+            ASSERT_NE(entries, nullptr);
+            EXPECT_TRUE(entries->as_array().empty());
+        }
+    }
+    EXPECT_TRUE(saved_panel);
+    EXPECT_TRUE(refreshed_window);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, AChangedWatchedImportRefreshesTheOpenRoot) {
+    // arrange a window that imports a saved panel, with both files clean on disk (§11.1, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-change";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string panel_text = R"(component Panel { Column {} })";
+    std::ofstream(root / "panel.ui") << panel_text;
+    // the window imports the panel and instantiates it, which is the cross-file form (§11.1)
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, window_text, window_uri);
+    // act the panel changes on disk, which the client reports as a changed watched file (§11.1, §12.2)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":2}]}})";
+    const Exchange changed = server.handle_line(line);
+    // assert the imported file is republished with the unknown widget it now declares (§16)
+    bool saw_broken_panel = false;
+    for (const Notification& notification : changed.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the import (§12.2)
+        if (uri == nullptr || entries == nullptr || uri->as_string() != panel_uri)
+            continue;
+        saw_broken_panel = true;
+        EXPECT_FALSE(entries->as_array().empty());
+    }
+    EXPECT_TRUE(saw_broken_panel);
+    // act the panel is fixed on disk and reported again, which must clear the stale publication (§12.2, §16)
+    std::ofstream(root / "panel.ui") << panel_text;
+    const Exchange restored = server.handle_line(line);
+    // assert the imported file now carries an empty publication, which clears the old squiggle (§12.2, §16)
+    bool saw_clean_panel = false;
+    for (const Notification& notification : restored.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the import (§12.2)
+        if (uri == nullptr || entries == nullptr || uri->as_string() != panel_uri)
+            continue;
+        saw_clean_panel = true;
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    EXPECT_TRUE(saw_clean_panel);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, AnUnsavedImportedBufferWinsOverTheDiskOnAWatchedChange) {
+    // arrange a broken panel on disk and a clean panel buffer, which is what an editor holds before saving (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-buffer";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the disk copy names an unknown widget, which would fail if the server read it (§16)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string panel_text = R"(component Panel { Column {} })";
+    // the window imports the panel and instantiates it, which reads the open buffer (§11.1, §12.2)
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    (void)did_open(server, window_text, window_uri);
+    ASSERT_EQ(server.last_diagnostic_count(), 0U);
+    // act the disk copy is reported as changed, which must not replace the unsaved buffer (§12.2)
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":2}]}})";
+    const Exchange changed = server.handle_line(line);
+    // assert the root is republished clean, because the buffer still wins over the disk (§12.2)
+    ASSERT_FALSE(changed.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    for (const Notification& notification : changed.notifications) {
+        // the payload is parsed, because the diagnostics are what this assertion reads (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* entries = payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr);
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, ACreatedWatchedImportRefreshesTheRootThatNamedIt) {
+    // arrange a window that imports a panel which does not exist yet (§11.1, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-create";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    LspServer server;
+    const Exchange opened = did_open(server, window_text, window_uri);
+    // assert the missing import is the window's only diagnostic (§11.1, §16)
+    ASSERT_EQ(opened.notifications.size(), 1U);
+    const core::Json opened_payload = core::Json::parse(opened.notifications.at(0).payload).value_or(core::Json());
+    const core::Json* opened_entries = opened_payload.member("diagnostics");
+    ASSERT_NE(opened_entries, nullptr);
+    EXPECT_FALSE(opened_entries->as_array().empty());
+    // act the panel is created on disk, which the client reports as a created watched file (§11.1, §12.2)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column {} })";
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":1}]}})";
+    const Exchange created = server.handle_line(line);
+    // assert the root is republished clean, because the import now resolves (§11.1, §16)
+    ASSERT_FALSE(created.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    bool saw_clean_window = false;
+    for (const Notification& notification : created.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the root (§12.2)
+        if (uri == nullptr || entries == nullptr || uri->as_string() != window_uri)
+            continue;
+        saw_clean_window = true;
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    EXPECT_TRUE(saw_clean_window);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, ADeletedWatchedImportRefreshesTheRootAndClearsItsOwnDiagnostics) {
+    // arrange a window that imports a broken saved panel, which publishes the panel's diagnostic (§16)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-delete";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the panel is broken, which is what the window's first compile reads (§11.1, §16)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    const Exchange opened = did_open(server, window_text, window_uri);
+    // assert the panel diagnostic was published against the imported file (§16)
+    ASSERT_EQ(opened.notifications.size(), 2U);
+    // act the panel is deleted on disk, which the client reports as a deleted watched file (§11.1, §12.2)
+    std::error_code removed;
+    std::filesystem::remove(root / "panel.ui", removed);
+    ASSERT_FALSE(removed);
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":3}]}})";
+    const Exchange deleted = server.handle_line(line);
+    // assert the root now carries the missing import, because the file can no longer be read (§11.1, §16)
+    bool saw_broken_window = false;
+    bool saw_cleared_panel = false;
+    for (const Notification& notification : deleted.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the deletion (§12.2)
+        if (uri == nullptr || entries == nullptr)
+            continue;
+        // the importer is republished with the missing import, which is the new problem (§11.1, §16)
+        if (uri->as_string() == window_uri) {
+            saw_broken_window = true;
+            EXPECT_FALSE(entries->as_array().empty());
+        }
+        // the deleted file's own publication is cleared, because no root still diagnoses it (§12.2, §16)
+        if (uri->as_string() == panel_uri) {
+            saw_cleared_panel = true;
+            EXPECT_TRUE(entries->as_array().empty());
+        }
+    }
+    EXPECT_TRUE(saw_broken_window);
+    EXPECT_TRUE(saw_cleared_panel);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, AWatchedFileNoRootReadsChangesNothing) {
+    // arrange an open root that imports no file, so no path is a reverse edge for it (§11.1, §12.2)
+    LspServer server;
+    (void)did_open(server, R"(component Panel { Column {} })");
+    // act the client reports a change to a ui file no root imported (§12.2)
+    const std::string line = R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":"file:///unrelated.ui","type":2}]}})";
+    const Exchange watched = server.handle_line(line);
+    // assert nothing is republished, because no root read the changed path (§12.2)
+    EXPECT_TRUE(watched.notifications.empty());
+}
+
+TEST(LspImportRefreshChecks, SavingKeepsTheEditorBufferAuthoritativeOverTheDiskAndTheSaveText) {
+    // arrange a panel that is clean in the editor and broken on disk, with a window that imports it (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-save-buffer";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the disk copy is broken, which a server that reads it instead of the buffer would publish (§12.2, §16)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string panel_text = R"(component Panel { Column {} })";
+    // the window imports the panel and instantiates it, which is the cross-file form (§11.1)
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    (void)did_open(server, window_text, window_uri);
+    ASSERT_EQ(server.last_diagnostic_count(), 0U);
+    // act the panel is saved with a broken text member, which the server must not adopt (§12.2)
+    const std::string text = core::Json(std::string(R"(component Panel { Column { Nope {} } })")).to_string();
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":)") + core::Json(panel_uri).to_string() + R"(},"text":)" + text + "}}";
+    const Exchange saved = server.handle_line(line);
+    // assert the buffer still wins, so no publication carries a diagnostic (§12.2, §16)
+    ASSERT_FALSE(saved.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    EXPECT_EQ(server.document_count(), 2U);
+    for (const Notification& notification : saved.notifications) {
+        // the payload is parsed, because the diagnostics are what this assertion reads (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* entries = payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr);
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, AWatchedImportChangeRepublishesEachOpenRootOnce) {
+    // arrange two windows that import the same clean panel, with both windows open (§11.1, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-two-roots";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column {} })";
+    // each window imports the panel and instantiates it, so both windows read the one path (§11.1)
+    const std::string left_text = R"(import "panel.ui"; component Left { Column { Panel {} } })";
+    std::ofstream(root / "left.ui") << left_text;
+    const std::string right_text = R"(import "panel.ui"; component Right { Column { Panel {} } })";
+    std::ofstream(root / "right.ui") << right_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string left_path = (root / "left.ui").generic_string();
+    const std::string left_uri = "file://" + std::string(left_path.starts_with('/') ? "" : "/") + left_path;
+    const std::string right_path = (root / "right.ui").generic_string();
+    const std::string right_uri = "file://" + std::string(right_path.starts_with('/') ? "" : "/") + right_path;
+    LspServer server;
+    (void)did_open(server, left_text, left_uri);
+    (void)did_open(server, right_text, right_uri);
+    // act the panel breaks on disk, which both open windows read through the import (§11.1, §12.2)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":2}]}})";
+    const Exchange changed = server.handle_line(line);
+    // assert each root is republished once, because the set a notification invalidates is deduped (§12.2)
+    std::size_t left_count = 0;
+    std::size_t right_count = 0;
+    bool saw_broken_panel = false;
+    for (const Notification& notification : changed.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the import (§12.2)
+        if (uri == nullptr || entries == nullptr)
+            continue;
+        // each importer is counted, because one compile per root is what the dedupe guarantees (§12.2)
+        if (uri->as_string() == left_uri)
+            left_count++;
+        else if (uri->as_string() == right_uri)
+            right_count++;
+        // the broken import is published at least once, because it is what the recompile found (§16)
+        if (uri->as_string() == panel_uri && !entries->as_array().empty())
+            saw_broken_panel = true;
+    }
+    EXPECT_EQ(left_count, 1U);
+    EXPECT_EQ(right_count, 1U);
+    EXPECT_TRUE(saw_broken_panel);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, ATransitiveImportChangeRefreshesTheRootThatReadIt) {
+    // arrange a window whose import reads a second import, with all three files open on disk (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-transitive";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / "b.ui") << R"(component B { Column {} })";
+    // a.ui imports b.ui, which the window never names directly (§11.1)
+    std::ofstream(root / "a.ui") << R"(import "b.ui"; component A { Column { B {} } })";
+    // the window imports a.ui, so b.ui is a dependency only through the loader's graph (§11.1)
+    const std::string window_text = R"(import "a.ui"; component Window { Column { A {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string b_path = (root / "b.ui").generic_string();
+    const std::string b_uri = "file://" + std::string(b_path.starts_with('/') ? "" : "/") + b_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, window_text, window_uri);
+    // act the second import breaks on disk, which only the transitive dependency set names (§11.1, §12.2)
+    std::ofstream(root / "b.ui") << R"(component B { Column { Nope {} } })";
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(b_uri).to_string() + R"(,"type":2}]}})";
+    const Exchange changed = server.handle_line(line);
+    // assert the window is recompiled and the broken second import is published (§11.1, §16)
+    bool recompiled_window = false;
+    bool saw_broken_b = false;
+    for (const Notification& notification : changed.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the graph (§12.2)
+        if (uri == nullptr || entries == nullptr)
+            continue;
+        // the root publication is what proves the transitive reverse edge was followed (§11.1, §12.2)
+        if (uri->as_string() == window_uri)
+            recompiled_window = true;
+        // the broken file is published with its unknown widget (§16)
+        if (uri->as_string() == b_uri && !entries->as_array().empty())
+            saw_broken_b = true;
+    }
+    EXPECT_TRUE(recompiled_window);
+    EXPECT_TRUE(saw_broken_b);
+    std::filesystem::remove_all(root, ignored);
 }

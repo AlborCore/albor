@@ -74,6 +74,9 @@ namespace albor::language_server
         // forget a closed root and clear the publications no other root still owns (§12.2)
         void close_root(std::string_view uri, std::vector<Notification>& notifications);
 
+        // recompile the open roots a change invalidates, which a save and a watched file both use (§11.1, §12.2)
+        [[nodiscard]] std::vector<Notification> recompile_roots(const std::vector<std::string>& roots);
+
         // rebuild the catalog from the builtins and the configured manifests (§11.2, AD-17)
         void reload_catalog();
 

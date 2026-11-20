@@ -218,7 +218,9 @@ async function main() {
     try {
         // the handshake names the manifest list the extension passes, and asserts the capabilities it relies on (§12.2)
         const initialized = await connection.request("initialize", { processId: process.pid, rootUri: null, capabilities: {}, initializationOptions: { manifests: [manifest_file] } });
-        assert.equal(initialized.capabilities.textDocumentSync, 1);
+        // the sync options carry the full change kind and the save notification, which the server refreshes importers from (§11.1, §12.2)
+        assert.equal(initialized.capabilities.textDocumentSync.change, 1);
+        assert.equal(initialized.capabilities.textDocumentSync.save.includeText, false);
         assert.ok(initialized.capabilities.completionProvider !== undefined);
         assert.equal(initialized.capabilities.hoverProvider, true);
         connection.notify("initialized", {});

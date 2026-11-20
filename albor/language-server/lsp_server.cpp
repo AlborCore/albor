@@ -1092,6 +1092,23 @@ namespace albor::language_server
         }
     }
 
+    std::vector<Notification> LspServer::recompile_roots(const std::vector<std::string>& roots) {
+        // the publications accumulate in root order, because one notification may invalidate several roots (§12.2)
+        std::vector<Notification> publications;
+        // each root is compiled once, because the caller already deduped the set (§12.2)
+        for (const std::string& root : roots) {
+            // a root that closed while the exchange was handled has nothing to compile (§12.2)
+            if (m_documents.find(root) == nullptr)
+                continue;
+            // the compile publishes the root and its imports, and clears what it no longer owns (§12.2, §16)
+            Exchange compiled = compile_root(root);
+            // the publications join the one exchange the notification returns (§12.2)
+            append_publications(publications, std::move(compiled.notifications));
+        }
+        // the publications are what the notification answers with, in the order the roots were named (§12.2)
+        return publications;
+    }
+
     void LspServer::reload_catalog() {
         // the builtins are the fallback, because a project without a manifest keeps the editor it has (§11.1, AD-17)
         compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
@@ -1187,8 +1204,20 @@ namespace albor::language_server
             publish.set("relatedInformation", core::Json(false));
             // the diagnostics capability is what an editor looks for (§12.2)
             capabilities.set("publishDiagnostics", std::move(publish));
+            // the sync options are the document notifications this server reads, which the client registers for (§12.2)
+            core::Json sync;
+            // an open and a close notification are what the document store answers from (§12.2)
+            sync.set("openClose", core::Json(true));
             // the full document text is what the parser takes, so every change replaces the whole buffer (§12.2)
-            capabilities.set("textDocumentSync", core::Json(1.0));
+            sync.set("change", core::Json(1.0));
+            // a save notification refreshes the saved document and every importer it invalidates (§11.1, §12.2)
+            core::Json save;
+            // the buffer is already current, so a save needs no text the server would have to store (§12.2)
+            save.set("includeText", core::Json(false));
+            // the save options join the sync options, which is where the protocol carries them (§12.2)
+            sync.set("save", std::move(save));
+            // the sync options are what an editor looks for before it sends any of them (§12.2)
+            capabilities.set("textDocumentSync", std::move(sync));
             // completion is offered inside an element body and after a property colon (§12.2)
             capabilities.set("completionProvider", core::Json(std::map<std::string, core::Json, std::less<>>{}));
             // hover is offered on an element or property name (§12.2)
@@ -1237,39 +1266,61 @@ namespace albor::language_server
             return Exchange{.reply = {}, .notifications = {}};
         }
 
-        // a watched manifest change reloads the catalog and recompiles every open root (§11.2, §12.2)
+        // a watched file change refreshes the catalog and every root that read the changed path (§11.1, §11.2, §12.2)
         if (method->as_string() == "workspace/didChangeWatchedFiles") {
-            // the change list names the files the client watched, which is where a manifest edit arrives (§11.2, §12.2)
+            // the change list names the watched files, where a manifest or an import edit arrives (§11.2, §12.2)
             const core::Json* changes = params == nullptr ? nullptr : params->member("changes");
-            // the flag records whether a configured manifest changed, because other files leave the catalog alone (§11.2)
-            bool affected = false;
             // a notification that names no change list changes nothing, so nothing is recompiled (§12.2)
-            if (changes != nullptr && changes->kind() == core::Json::Kind::Array) {
-                // each change names one file, which is compared against the configured manifest paths (§11.2, §12.2)
-                for (const core::Json& change : changes->as_array()) {
-                    // a change without a uri names no file, so it cannot be a manifest edit (§12.2)
-                    const std::optional<std::string> uri = string_member(change, "uri");
-                    // a file outside the configured manifests is not a catalog source (§11.2, AD-17)
-                    if (uri && is_manifest_path(document_path(*uri)))
-                        affected = true;
+            if (changes == nullptr || changes->kind() != core::Json::Kind::Array)
+                return Exchange{.reply = {}, .notifications = {}};
+            // the flag records whether a configured manifest changed, because that invalidates every root (§11.2)
+            bool manifest_changed = false;
+            // the roots accumulate across changes, because one notification may name several files (§11.1, §12.2)
+            std::vector<std::string> roots;
+            // each change names one file, compared against the catalog and the dependency graph (§11.1, §12.2)
+            for (const core::Json& change : changes->as_array()) {
+                // a change without a uri names no file, so it cannot invalidate a root (§12.2)
+                const std::optional<std::string> uri = string_member(change, "uri");
+                // a change the uri cannot decode names no path this server reads (§12.2)
+                if (!uri)
+                    continue;
+                // the normalized path is what a manifest list and a dependency set are keyed by (§11.1, §11.2)
+                const std::filesystem::path changed = document_path(*uri).lexically_normal();
+                // a configured manifest invalidates the catalog, and with it every open root (§11.2, AD-17)
+                if (is_manifest_path(changed)) {
+                    manifest_changed = true;
+                    continue;
+                }
+                // each open root that read the changed path is stale until it is recompiled (§11.1, §12.2)
+                for (const auto& [root, dependencies] : m_root_dependencies) {
+                    // a root whose dependency set lacks the path is not affected by it (§11.1, §12.2)
+                    if (std::find(dependencies.begin(), dependencies.end(), changed.generic_string()) == dependencies.end())
+                        continue;
+                    // a root an earlier change already named is compiled once (§12.2)
+                    if (std::find(roots.begin(), roots.end(), root) != roots.end())
+                        continue;
+                    // the importer joins the set that is recompiled below (§11.1, §12.2)
+                    roots.push_back(root);
                 }
             }
-            // a change to any other watched file produces neither a reply nor a publication (§12.2)
-            if (!affected)
+            // a change no open root read leaves every publication as it stands (§12.2)
+            if (!manifest_changed && roots.empty())
                 return Exchange{.reply = {}, .notifications = {}};
             // the catalog is rebuilt first, because every recompile below must resolve the new declarations (§11.2, AD-17)
-            reload_catalog();
-            // the publications accumulate across every open root, because a manifest is global (§12.2, §16)
-            std::vector<Notification> publications;
-            // every open root is recompiled, because any of them may name a type the manifest declares (§11.2, §16)
-            for (const std::string& root : m_documents.uris()) {
-                // the compile publishes the root and its imports, and clears what it no longer owns (§12.2, §16)
-                Exchange compiled = compile_root(root);
-                // the publications join the one exchange the notification returns (§12.2)
-                append_publications(publications, std::move(compiled.notifications));
+            if (manifest_changed)
+                reload_catalog();
+            // every open root is recompiled when the catalog moved, because any may name a declared type (§11.2, §16)
+            if (manifest_changed) {
+                for (const std::string& root : m_documents.uris()) {
+                    // a root already invalidated by an import is compiled once, in that position (§12.2)
+                    if (std::find(roots.begin(), roots.end(), root) != roots.end())
+                        continue;
+                    // the root joins the set the reload invalidates, because the catalog is shared (§11.2, §16)
+                    roots.push_back(root);
+                }
             }
             // a notification produces no reply, and the publications carry every refreshed root (§12.2)
-            return Exchange{.reply = {}, .notifications = std::move(publications)};
+            return Exchange{.reply = {}, .notifications = recompile_roots(roots)};
         }
 
         // an opened or changed document is stored and compiled, which is the whole of the loop (§12.2, §16)
@@ -1346,6 +1397,46 @@ namespace albor::language_server
             m_last_diagnostics = changed_diagnostics;
             // a notification produces no reply, and the publications carry every file that changed (§12.2)
             return Exchange{.reply = {}, .notifications = std::move(publications)};
+        }
+
+        // a saved document is recompiled with its importers, because a save may land an import change (§11.1, §12.2)
+        if (method->as_string() == "textDocument/didSave") {
+            // a save names its document through the parameters, which every document notification carries (§12.2)
+            if (params == nullptr || !params->is_object())
+                return Exchange{.reply = {}, .notifications = {}};
+            // the document is named through a text document identifier (§12.2)
+            const core::Json* text_document = params->member("textDocument");
+            // a save without a document names nothing, so nothing is recompiled (§12.2)
+            if (text_document == nullptr || !text_document->is_object())
+                return Exchange{.reply = {}, .notifications = {}};
+            // the uri names the file the editor wrote to disk (§12.2)
+            const std::optional<std::string> uri = string_member(*text_document, "uri");
+            // a save without a uri cannot be routed, so nothing is recompiled (§12.2)
+            if (!uri)
+                return Exchange{.reply = {}, .notifications = {}};
+            // the saved path is what its importers key on, because an import is a reverse edge (§11.1, §12.2)
+            const std::filesystem::path saved_path = document_path(*uri).lexically_normal();
+            // the saved document is compiled first when it is open, because it is what the editor shows (§12.2)
+            std::vector<std::string> roots;
+            // an open saved document is recompiled, because the save may have changed an import on disk (§11.1, §12.2)
+            if (m_documents.find(*uri) != nullptr)
+                roots.push_back(*uri);
+            // every open root that read the saved path is recompiled, because its diagnostics depend on it (§11.1, §12.2)
+            for (const auto& [root, dependencies] : m_root_dependencies) {
+                // the saved document is already first, so it is not compiled twice (§12.2)
+                if (root == *uri)
+                    continue;
+                // a root whose dependency set lacks the saved path is not affected by the save (§11.1, §12.2)
+                if (std::find(dependencies.begin(), dependencies.end(), saved_path.generic_string()) == dependencies.end())
+                    continue;
+                // the importer joins the set that is recompiled below (§11.1, §12.2)
+                roots.push_back(root);
+            }
+            // a save nothing reads changes no publication, which keeps an unrelated save quiet (§12.2)
+            if (roots.empty())
+                return Exchange{.reply = {}, .notifications = {}};
+            // a notification produces no reply, and the publications carry the saved document and its importers (§12.2)
+            return Exchange{.reply = {}, .notifications = recompile_roots(roots)};
         }
 
         // a closed document is forgotten, which is what didClose means (§12.2)
