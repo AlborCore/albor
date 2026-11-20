@@ -6,7 +6,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 # create the static library from the gathered cpp sources
 add_library(albor-manifest STATIC ${CPP_SOURCES})
 
-# the parser is included by its own tools and tests, because nothing inside the framework includes it (§2.1)
+# the parser is included by its own tools, the language server and the tests; no runtime module reaches it (§2.1, §11.2, AD-17)
 target_include_directories(albor-manifest PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-manifest PUBLIC cxx_std_20)
 

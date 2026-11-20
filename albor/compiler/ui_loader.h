@@ -28,6 +28,19 @@ namespace albor::compiler
         Skipped,
     };
 
+    // one file the last run checked, which an editor indexes for cross file answers (§12.2)
+    struct LoadedFile
+    {
+        // the normalized source path, which is the import graph key (§11.1)
+        std::filesystem::path path;
+
+        // the parse tree the checked file aliases, which stays alive with the loader (§11.1)
+        const SourceFile* source = nullptr;
+
+        // the checked file the index resolves against (§11.1)
+        const CheckedFile* checked = nullptr;
+    };
+
     // the loader that resolves ui imports into one checked file and the interfaces the file brings into scope (§11.1)
     class UiImportLoader
     {
@@ -43,6 +56,9 @@ namespace albor::compiler
 
         // hand out the root parse tree the checked file aliases, which an editor index reads after the check (§12.2)
         [[nodiscard]] const SourceFile* root_source() const;
+
+        // hand out every file the last run checked, which an editor indexes for cross file answers (§12.2)
+        [[nodiscard]] const std::vector<LoadedFile>& loaded_files() const;
 
     private:
         // load one file, reporting a missing, cyclic or invalid import against the span that named it (§11.1)
@@ -74,6 +90,9 @@ namespace albor::compiler
 
         // the root parse tree of the last run, which an editor index reads before the result is cached (§12.2)
         const SourceFile* m_root_source = nullptr;
+
+        // the files the last run checked, which an editor indexes for cross file answers (§12.2)
+        std::vector<LoadedFile> m_loaded;
 
         // the files currently open on the import path, which is what makes a cycle detectable (§11.1)
         std::vector<std::filesystem::path> m_stack;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
@@ -8,7 +9,9 @@
 #include <vector>
 
 #include "albor/compiler/source_index.h"
+#include "albor/compiler/value_type.h"
 #include "albor/language-server/lsp_document.h"
+#include "albor/language-server/lsp_support.h"
 
 namespace albor::language_server
 {
@@ -30,6 +33,22 @@ namespace albor::language_server
 
         // the notifications sent while handling it, which is how diagnostics are published (§12.2, §16)
         std::vector<Notification> notifications;
+    };
+
+    // one file of a root's compiled graph, which references and rename read (§12.2)
+    struct IndexedSource
+    {
+        // the identity of the file, which is its path or the uri of an unsaved buffer (§12.2)
+        std::string key;
+
+        // the uri an editor addresses the file by, which is its open buffer or its saved file (§12.2)
+        std::string uri;
+
+        // the component the file exports, which its stem names (§11.1, §14.2)
+        std::string exported_component;
+
+        // the declarations and uses the compile resolved (§12.2)
+        compiler::SourceIndex index;
     };
 
     // the language server, which answers an editor using the same compiler the build runs (§12.2, §16)
@@ -55,6 +74,24 @@ namespace albor::language_server
         // forget a closed root and clear the publications no other root still owns (§12.2)
         void close_root(std::string_view uri, std::vector<Notification>& notifications);
 
+        // recompile the open roots a change invalidates, which a save and a watched file both use (§11.1, §12.2)
+        [[nodiscard]] std::vector<Notification> recompile_roots(const std::vector<std::string>& roots);
+
+        // rebuild the catalog from the builtins and the configured manifests (§11.2, AD-17)
+        void reload_catalog();
+
+        // report whether a changed path is a configured manifest, which a refresh keys on (§11.2, §12.2)
+        [[nodiscard]] bool is_manifest_path(const std::filesystem::path& path) const;
+
+        // the manifest paths the client configured, which is the catalog source the build uses too (§11.2, AD-17)
+        std::vector<std::filesystem::path> m_manifests;
+
+        // the catalog every compile, completion and hover resolves against, which carries the manifests (§11.2, AD-17)
+        compiler::ElementCatalog m_catalog = compiler::ElementCatalog::with_builtins();
+
+        // the components each open root resolves, which completion and hover answer from (§11.1, §12.2)
+        std::map<std::string, ComponentSurface, std::less<>> m_component_surfaces;
+
         // the documents the editor has open, which every request is answered from (§12.2)
         DocumentStore m_documents;
 
@@ -64,8 +101,8 @@ namespace albor::language_server
         // the files each open root read, which is what an imported change recompiles (§11.1, §12.2)
         std::map<std::string, std::vector<std::string>, std::less<>> m_root_dependencies;
 
-        // the editor index of each open root, which definition, outline and tokens answer from (§12.2)
-        std::map<std::string, compiler::SourceIndex, std::less<>> m_source_indexes;
+        // the files each open root checked, root first, which references and rename read (§11.1, §12.2)
+        std::map<std::string, std::vector<IndexedSource>, std::less<>> m_sources;
 
         // how many diagnostics the last compile produced, which an agreement test reads (§16)
         std::size_t m_last_diagnostics = 0;

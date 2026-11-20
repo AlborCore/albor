@@ -555,6 +555,9 @@ namespace albor::compiler
                 append_tree_symbols(*content, component.children);
             // the component joins the outline before its references, because both read one declaration (§12.2)
             index.symbols.push_back(std::move(component));
+            // the base clause names a component, which a derived body fills (§11.1)
+            if (!declaration.base.empty())
+                add_use(index, declaration.base, SourceUseKind::Element, declaration.base_span, component_target(checked, declaration.base));
             // the checked component supplies the resolved declarations a reference resolves against (§11.1)
             const CheckedComponent* resolved = component_named(checked, declaration.name);
             // the component scope carries its own members and the file's globals, which a default may read (§11.1)

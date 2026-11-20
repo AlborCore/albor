@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/AlborCore/albor)](LICENSE)
 
 [![Build Status](https://github.com/alborCore/albor/workflows/build/badge.svg)](https://github.com/alborCore/albor/actions)
-[![Coverage](https://codecov.io/gh/AlborCore/albor/branch/main/graph/badge.svg)](https://codecov.io/gh/AlborCore/albor)
+[![Coverage](https://codecov.io/gh/AlborCore/albor/graph/badge.svg?token=TTLRYCEZ90)](https://codecov.io/gh/AlborCore/albor)
 
 [![Language](https://img.shields.io/github/languages/top/AlborCore/albor)](https://github.com/AlborCore/albor)
 [![Last commit](https://img.shields.io/github/last-commit/AlborCore/albor/main)](https://github.com/AlborCore/albor/commits/main)

@@ -21,6 +21,11 @@ namespace albor::compiler
         return m_root_source;
     }
 
+    const std::vector<LoadedFile>& UiImportLoader::loaded_files() const {
+        // every checked file is handed out in load order, which is what an editor indexes (§12.2)
+        return m_loaded;
+    }
+
     std::optional<CheckedFile> UiImportLoader::check(const std::filesystem::path& source, RootNameCheck root_name) {
         // the catalog is reset first, because a declaration a previous root added must not leak into this run (§11.1)
         m_catalog = m_initial_catalog;
@@ -28,6 +33,8 @@ namespace albor::compiler
         m_checked.clear();
         // the previous root tree is dropped, because an index names this run alone (§12.2)
         m_root_source = nullptr;
+        // the previous loaded list is dropped with it, because every file is indexed per run (§12.2)
+        m_loaded.clear();
         // the open path starts empty, because the root has no importer (§11.1)
         m_stack.clear();
         // the dependency list starts empty, because it names this run alone (§14.2)
@@ -71,6 +78,8 @@ namespace albor::compiler
         const std::vector<Token> tokens = Lexer(*text, file_diagnostics).tokenize();
         // the parse tree is owned by the loader, because every checked expression aliases it (§11.1)
         auto parsed = std::make_unique<SourceFile>(Parser(tokens, file_diagnostics).parse());
+        // the parse tree is remembered, because an editor index reads it after the check (§12.2)
+        const SourceFile* source_file = parsed.get();
         // the root tree is remembered, because an editor index reads it after the check (§12.2)
         if (root)
             m_root_source = parsed.get();
@@ -188,6 +197,8 @@ namespace albor::compiler
         m_stack.pop_back();
         // a file with a problem is cached too, because its interface still resolves the instances around the error (§11.1)
         m_checked.emplace(key, checked);
+        // the file joins the loaded set, because an editor indexes every file the compile checked (§12.2)
+        m_loaded.push_back(LoadedFile{.path = normalized, .source = source_file, .checked = &m_checked.at(key)});
         // the caller decides whether to generate, because the diagnostics already carry the blocking problem (§11.1)
         return checked;
     }
