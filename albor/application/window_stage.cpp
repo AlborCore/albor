@@ -142,6 +142,11 @@ namespace albor
         m_frame_index++;
     }
 
+    void WindowStage::request_full_frame() {
+        // the request marks the whole tree pending, which the next build spends on a full scene (§6.1)
+        m_pipeline->request_full_frame();
+    }
+
     void WindowStage::resized(RendererBackend& renderer, const Window& window) {
         // a stage that never drew has no surface to resize, which the layout invalidation still answers (§6.3)
         if (!wired())

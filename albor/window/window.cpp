@@ -43,9 +43,14 @@ namespace albor
         // a window without a native window has nothing to put on screen (§5.1)
         if (!m_platform)
             return;
+        // the previous state tells a show that brought the window back from one that changed nothing (§5.1)
+        const bool was_visible = m_visible;
         m_platform->show();
         // the platform is the authority on whether the window is on screen, which a refused popup role reports (§5.1)
         m_visible = m_platform->visible();
+        // a window that came back on screen repaints, because the surface retained nothing while it was gone (§6.1)
+        if (m_visible && !was_visible && m_shown_handler)
+            m_shown_handler();
     }
 
     void Window::activate() {
@@ -177,6 +182,11 @@ namespace albor
     void Window::set_hidden_handler(std::function<void()> handler) {
         // the handler cancels the drag before the native surface leaves the screen (§8.3)
         m_hidden_handler = std::move(handler);
+    }
+
+    void Window::set_shown_handler(std::function<void()> handler) {
+        // the handler repaints the surface a show returned to screen, which retained no content (§6.1)
+        m_shown_handler = std::move(handler);
     }
 
     void Window::close() {

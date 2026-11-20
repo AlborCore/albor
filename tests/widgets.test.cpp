@@ -8903,6 +8903,53 @@ TEST(ComboBoxChecks, APopupPressWinsOverALaterSiblingThroughTheRouter) {
     EXPECT_TRUE(outside.handled);
 }
 
+TEST(ComboBoxChecks, ANativePopupClosesOnAnOutsidePressThroughTheRouter) {
+    // arrange a combo box that opens a native surface, with a button painted after it (§5.1, §8.3)
+    RecordingPopupHost host;
+    PopupHost* previous = window_popup_host();
+    set_window_popup_host(&host);
+    {
+        BindingEngine engine;
+        StubTextEngine text_engine;
+        UiNode root;
+        auto column = std::make_unique<ColumnLayout>();
+        auto combo = std::make_unique<ComboBox>(&engine, &text_engine);
+        auto button = std::make_unique<Button>(&engine, &text_engine, "Below");
+        ComboBox* choice = combo.get();
+        choice->set_items({"Alpha", "Beta"});
+        Button* below = button.get();
+        std::size_t clicks = 0;
+        below->set_on_click([&clicks] { clicks++; });
+        column->add_child(std::move(combo));
+        column->add_child(std::move(button));
+        root.add_child(std::move(column));
+        Size measured{};
+        root.measure(SizeConstraints::unconstrained(), measured);
+        root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 200.0f}));
+        choice->open();
+        ASSERT_TRUE(choice->expanded());
+        ASSERT_EQ(host.opens, 1u);
+        // assert the owner keeps an input layer, because the native window cannot see the owner's press (§8.3)
+        ASSERT_EQ(root.overlays().size(), 1U);
+        // act a press on the button below the trigger goes through the real dispatcher (§8.3)
+        Event outside{.kind = EventKind::PointerDown, .position = Point{5.0f, 60.0f}};
+        InputDispatcher::dispatch(root, outside);
+        // assert the press closed the native surface and the button did not act on it (§8.3)
+        EXPECT_FALSE(choice->expanded());
+        EXPECT_EQ(host.closes, 1u);
+        EXPECT_EQ(clicks, 0u);
+        EXPECT_TRUE(outside.handled);
+        // act the trigger is pressed again, which reopens the surface it kept (§8.3)
+        Event trigger{.kind = EventKind::PointerDown, .position = Point{5.0f, 5.0f}};
+        InputDispatcher::dispatch(root, trigger);
+        // assert the trigger toggled the list open again, which the outside press left possible (§8.3)
+        EXPECT_TRUE(choice->expanded());
+        EXPECT_EQ(host.shows, 1u);
+        EXPECT_TRUE(trigger.handled);
+    }
+    set_window_popup_host(previous);
+}
+
 TEST(ComboBoxChecks, ADisabledControlCannotOpen) {
     // arrange a disabled combo box with options (§8.3)
     BindingEngine engine;

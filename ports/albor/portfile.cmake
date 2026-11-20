@@ -32,8 +32,7 @@ vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
         blend2d ALBOR_RENDERER_BLEND2D
 )
 
-# linux carries the portable renderer by default, because it is the only renderer the umbrella can carry until #110,
-# so the feature's OFF is dropped and the project's own platform default applies (AD-16, AD-26)
+# linux keeps the portable renderer on, because it is the fallback beside the Vulkan umbrella and the software reference (AD-16, AD-26)
 if(VCPKG_TARGET_IS_LINUX)
     list(REMOVE_ITEM FEATURE_OPTIONS "-DALBOR_RENDERER_BLEND2D=OFF")
 endif()

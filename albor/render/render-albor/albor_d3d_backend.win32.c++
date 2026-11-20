@@ -431,6 +431,13 @@ namespace albor::render
             return target;
         }
 
+        // round an offscreen extent up to a bucket, so a cast that wobbles by a pixel keeps its target (§6.2, AD-06)
+        [[nodiscard]] UINT bucket_extent(UINT value) {
+            // the bucket trades a few pixels of memory for a target a wobbling cast keeps (§6.2, AD-06)
+            constexpr UINT SCRATCH_BUCKET = 16;
+            return (value + SCRATCH_BUCKET - 1u) / SCRATCH_BUCKET * SCRATCH_BUCKET;
+        }
+
         // write one uniform block into the dynamic buffer, which the discard map leaves the previous frame free (§6.3)
         void upload_uniforms(ID3D11Buffer* buffer, const void* block, std::size_t size) {
             ID3D11DeviceContext* context = device_state().context.Get();
@@ -564,6 +571,25 @@ namespace albor::render
 
             // the render target view the pass clears and binds, which the target allocates alongside (§6.3)
             ComPtr<ID3D11RenderTargetView> m_target_view;
+
+            // one offscreen target the surface keeps, which a shadow or a layer paints into (§6.2, AD-06)
+            struct ScratchTarget
+            {
+                // the target the pass paints and the composite samples (§6.2)
+                RenderTarget target;
+
+                // whether the current frame already took the target (§6.2)
+                bool in_use = false;
+            };
+
+            // take one offscreen target of the bucketed extent, which a steady frame reuses (§6.2, AD-06)
+            [[nodiscard]] RenderTarget acquire_scratch(UINT width, UINT height);
+
+            // how many offscreen targets a surface keeps before the least recently used one goes (§6.2, AD-06)
+            static constexpr std::size_t MAXIMUM_SCRATCH_TARGETS = 16;
+
+            // the offscreen targets the surface keeps between frames, which a shadow or a layer paints into (§6.2, AD-06)
+            std::vector<ScratchTarget> m_scratch;
 
             // the composition swapchain the window presents through (§5.3, §6.3)
             ComPtr<IDXGISwapChain1> m_swap_chain;
@@ -1306,11 +1332,14 @@ namespace albor::render
             if (pixels_width == 0 || pixels_height == 0)
                 return;
             // two offscreen targets ping pong the silhouette through the two blur directions (§6.2)
-            RenderTarget silhouette = create_render_target(device, pixels_width, pixels_height);
-            RenderTarget scratch = create_render_target(device, pixels_width, pixels_height);
+            RenderTarget silhouette = acquire_scratch(pixels_width, pixels_height);
+            RenderTarget scratch = acquire_scratch(pixels_width, pixels_height);
             // a refused offscreen target leaves the cast unpainted, because the blur has no surface to land on (§6.2)
             if (silhouette.view == nullptr || scratch.view == nullptr)
                 return;
+            // a bucketed target is larger than the cast, so the composite reads its corner of it (§6.2)
+            const float u_max = width / static_cast<float>(silhouette.width);
+            const float v_max = height / static_cast<float>(silhouette.height);
             // the silhouette carries the cast colour, which the blur then spreads (§6.2)
             ShadowUniforms uniforms{};
             uniforms.color[0] = static_cast<float>(shadow.color & 0xFFu) / 255.0f;
@@ -1350,9 +1379,9 @@ namespace albor::render
                 // the kernel carries a spread of 1.69 taps, which the sigma turns into a texel step (§6.2)
                 const float step = sigma / 2.5f;
                 // the horizontal pass spreads the silhouette across the scratch target (§6.2)
-                blur_pass(silhouette, scratch, uniforms, 1.0f, 0.0f, step, width, height);
+                blur_pass(silhouette, scratch, uniforms, 1.0f, 0.0f, step, static_cast<float>(silhouette.width), static_cast<float>(silhouette.height));
                 // the vertical pass spreads it back, which finishes the separable gaussian (§6.2)
-                blur_pass(scratch, silhouette, uniforms, 0.0f, 1.0f, step, width, height);
+                blur_pass(scratch, silhouette, uniforms, 0.0f, 1.0f, step, static_cast<float>(silhouette.width), static_cast<float>(silhouette.height));
             }
             // the cast composites over what is under it, which the fill pipeline blends source over (§6.2)
             bind_target(target, false);
@@ -1362,8 +1391,8 @@ namespace albor::render
                 // the corner lands where the offscreen target sits on the frame (§6.2)
                 quad[index].x = corners[index][0];
                 quad[index].y = corners[index][1];
-                quad[index].u = (index == 1 || index == 4 || index == 5) ? 1.0f : 0.0f;
-                quad[index].v = (index == 2 || index == 3 || index == 5) ? 1.0f : 0.0f;
+                quad[index].u = (index == 1 || index == 4 || index == 5) ? u_max : 0.0f;
+                quad[index].v = (index == 2 || index == 3 || index == 5) ? v_max : 0.0f;
             }
             // the quad is drawn as two triangles over the four corners the target spans (§6.2)
             DrawUniforms draw{};
@@ -1447,6 +1476,39 @@ namespace albor::render
             context->Draw(6, 0);
         }
 
+        RenderTarget AlborRenderSurface::acquire_scratch(UINT width, UINT height) {
+            // the bucket is the extent the target is allocated at, so a wobbling cast keeps one target (§6.2, AD-06)
+            const UINT bucket_width = bucket_extent(width);
+            const UINT bucket_height = bucket_extent(height);
+            for (ScratchTarget& scratch : m_scratch) {
+                // a target the frame already took cannot serve another pass (§6.2)
+                if (scratch.in_use || scratch.target.view == nullptr)
+                    continue;
+                // a target of another extent carries the wrong grid, which the pass cannot sample (§6.2)
+                if (scratch.target.width != bucket_width || scratch.target.height != bucket_height)
+                    continue;
+                scratch.in_use = true;
+                return scratch.target;
+            }
+            // a surface at its ceiling recycles the oldest target, which a growing cast would otherwise hold (§6.2, AD-06)
+            if (m_scratch.size() >= MAXIMUM_SCRATCH_TARGETS) {
+                ScratchTarget& coldest = m_scratch.front();
+                if (coldest.in_use)
+                    return {};
+                coldest.target = create_render_target(device_state().device.Get(), bucket_width, bucket_height);
+                coldest.in_use = true;
+                return coldest.target;
+            }
+            // a new target joins the surface, which its later frames reuse (§6.2, AD-06)
+            ScratchTarget scratch;
+            scratch.target = create_render_target(device_state().device.Get(), bucket_width, bucket_height);
+            if (scratch.target.view == nullptr)
+                return {};
+            scratch.in_use = true;
+            m_scratch.push_back(std::move(scratch));
+            return m_scratch.back().target;
+        }
+
         void AlborRenderSurface::encode() {
             DeviceState& state = device_state();
             ID3D11Device* device = state.device.Get();
@@ -1462,6 +1524,9 @@ namespace albor::render
             // a full frame clears the target, while a partial frame keeps the pixels outside its damage (§6.1)
             bind_target(frame, !m_damage.has_value());
             context->RSSetState(state.rasterizer.Get());
+            // every offscreen target the previous frame took is free again, which a steady frame reuses (§6.2, AD-06)
+            for (ScratchTarget& scratch : m_scratch)
+                scratch.in_use = false;
             // the retained vertex and index buffers take the batch, which a steady frame rewrites (§6.3, AD-06)
             const bool has_vertices = fill_vertices(m_batch_vertices, device, context, m_batch.vertices.data(), m_batch.vertices.size());
             const bool has_indices = fill_indices(device, context, m_batch.indices);
@@ -1508,7 +1573,7 @@ namespace albor::render
                     // an empty group has nothing to composite, so it opens no pass at all (§6.2)
                     if (layer.draw_end <= layer.draw_begin)
                         continue;
-                    RenderTarget offscreen = create_render_target(device, frame.width, frame.height);
+                    RenderTarget offscreen = acquire_scratch(frame.width, frame.height);
                     // a refused target draws the group into its parent instead, because no offscreen exists (§6.2)
                     if (offscreen.view != nullptr) {
                         open.push_back(OpenLayer{.target = std::move(offscreen), .draw_end = layer.draw_end, .opacity = layer.opacity});

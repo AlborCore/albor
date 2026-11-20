@@ -1,7 +1,6 @@
 #include "albor/widgets/combo_box.h"
 
 #include <algorithm>
-#include <cmath>
 #include <memory>
 #include <utility>
 
@@ -38,8 +37,13 @@ namespace albor
         // override: paint the list after the ordinary tree, which is what puts it above every sibling (§8.3)
         void render(RenderContext& context) override { m_owner.paint_popup(context); }
 
-        // override: the layer's damage is the popup rectangle, because the layer has no arranged bounds (§6.1)
-        [[nodiscard]] Rect visual_bounds() const override { return m_owner.expanded() ? m_owner.popup_rect() : Rect{}; }
+        // override: the layer's damage is the popup rectangle, while a native popup owns its own window (§6.1)
+        [[nodiscard]] Rect visual_bounds() const override {
+            // a native popup paints in its own window, so the layer covers no area of the owner (§5.1)
+            if (m_owner.m_popup_window.valid())
+                return Rect{};
+            return m_owner.expanded() ? m_owner.popup_rect() : Rect{};
+        }
 
         // override: the open popup owns every pointer position, including the outside press that closes it (§8.3)
         [[nodiscard]] bool hit_test(Point logical_point) const override {
@@ -440,6 +444,9 @@ namespace albor
         // a closed popup has no option under any point (§8.3)
         if (!m_expanded)
             return -1;
+        // a native popup owns its rows, so no point of the owner names one (§5.1)
+        if (m_popup_window.valid())
+            return -1;
         // the point must land in the popup before it can name a row (§8.3)
         const Rect popup = popup_rect();
         if (popup.empty() || point.x < popup.x || point.x >= popup.x + popup.width || point.y < popup.y || point.y >= popup.y + popup.height)
@@ -491,6 +498,9 @@ namespace albor
     void ComboBox::paint_popup(RenderContext& context) {
         // a closed popup draws nothing, which is what a dismissed layer leaves behind (§8.2)
         if (!m_expanded)
+            return;
+        // a native popup paints the list in its own window, so the layer draws no second copy (§5.1)
+        if (m_popup_window.valid())
             return;
         // the popup is clipped to its own rectangle, because a long list is bounded by the ceiling (§6.2)
         const ControlMetrics& m = metrics();
@@ -560,6 +570,9 @@ namespace albor
             return;
         // a move while the popup is open highlights the row under the pointer (§8.3)
         if (event.kind == EventKind::PointerMove && m_expanded) {
+            // a native popup highlights its own rows, so a move in the owner changes nothing (§5.1)
+            if (m_popup_window.valid())
+                return;
             // the row under the pointer becomes the hover row, which paints a highlight (§8.3)
             const int hovered = option_at(event.position);
             // an unchanged row redraws nothing, because the popup looks the same (§6.1)
@@ -849,15 +862,6 @@ namespace albor
         m_expanded = true;
         // the committed row is the initial highlight, while an empty selection starts at the first row (§8.3)
         m_hovered = m_selected >= 0 ? m_selected : 0;
-        // a native host turns the popup into a real transient surface owned by the application (§5.1)
-        if (PopupHost* host = window_popup_host(); host != nullptr && open_native_popup(*host)) {
-            // an in-tree layer from an earlier fallback must not also paint (§8.3)
-            if (m_popup != nullptr)
-                m_popup->set_visible(false);
-            // the trigger changed to the expanded state, so the frame is requested (§6.1)
-            invalidate();
-            return;
-        }
         // a widget that joined a tree adds its popup to the topmost layer, which draws above every sibling (§8.3)
         if (UiNode* root = popup_root(); root != nullptr && m_popup == nullptr) {
             // the layer is created before it is moved into the root, so the widget keeps a stable pointer (§8.3)
@@ -866,6 +870,15 @@ namespace albor
             m_popup = popup.get();
             // the root owns the layer and paints it after the ordinary tree (§8.3)
             root->add_overlay(std::move(popup));
+        }
+        // a native host turns the popup into a real transient surface owned by the application (§5.1)
+        if (PopupHost* host = window_popup_host(); host != nullptr && open_native_popup(*host)) {
+            // the layer stays for input, because the outside press of the owner is its dismissal (§8.3)
+            if (m_popup != nullptr)
+                m_popup->set_visible(true);
+            // the trigger changed to the expanded state, so the frame is requested (§6.1)
+            invalidate();
+            return;
         }
         // an existing layer is made visible again, because the root keeps it between openings (§8.3)
         if (m_popup != nullptr)

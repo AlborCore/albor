@@ -1,11 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
-#include "albor/core/geometry.h"
 #include "albor/ui/ui_event.h"
 
-namespace albor::wayland
+namespace albor::linux_platform
 {
     // the xkb keysym of the space bar, which the portable set names Space (§8.3)
     constexpr std::uint32_t KEYSYM_SPACE = 0x00000020;
@@ -126,4 +126,7 @@ namespace albor::wayland
 
     // map the modifiers a keymap resolved onto the portable set, one flag per key (§8.3)
     [[nodiscard]] Modifiers modifiers_from_state(bool shift, bool control, bool alt, bool logo);
-} // namespace albor::wayland
+
+    // hand out the text a key press commits, which is empty for a control character or an accelerator chord (§8.3)
+    [[nodiscard]] std::string text_from_key(const Modifiers& modifiers, const char* typed, int length);
+} // namespace albor::linux_platform

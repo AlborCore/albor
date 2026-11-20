@@ -34,6 +34,13 @@ namespace albor::render
         // the pixel format every target uses, which reads back as canonical rgba8 bytes (§6.3, AD-26)
         constexpr MTLPixelFormat TARGET_FORMAT = MTLPixelFormatRGBA8Unorm;
 
+        // round an offscreen extent up to a bucket, so a cast that wobbles by a pixel keeps its texture (§6.2, AD-06)
+        [[nodiscard]] NSUInteger bucket_extent(NSUInteger value) {
+            // the bucket trades a few pixels of memory for a target a wobbling cast keeps (§6.2, AD-06)
+            constexpr NSUInteger SCRATCH_BUCKET = 16;
+            return (value + SCRATCH_BUCKET - 1u) / SCRATCH_BUCKET * SCRATCH_BUCKET;
+        }
+
         // one draw state, which both shader stages read as a packed buffer, aligned as msl pads it (§6.3)
         struct alignas(16) DrawUniforms
         {
@@ -355,8 +362,11 @@ namespace albor::render
             // encode every recorded draw of the batch into the frame (§6.3)
             void encode(id<MTLCommandBuffer> command, MTLRenderPassDescriptor* pass);
 
+            // take one offscreen target of the bucketed extent from a slot, which a steady frame reuses (§6.2, AD-06)
+            id<MTLTexture> acquire_scratch(std::size_t slot_index, NSUInteger width, NSUInteger height);
+
             // blur a cast offscreen and composite it under the shape, which runs four passes (§6.2)
-            void composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow, id<MTLTexture> target) const;
+            void composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow, id<MTLTexture> target, std::size_t slot_index);
 
             // composite a layer onto the target beneath it at the opacity its group names (§6.2)
             void composite_layer(id<MTLCommandBuffer> command, id<MTLTexture> layer, id<MTLTexture> target, float opacity) const;
@@ -382,6 +392,16 @@ namespace albor::render
             // the immutable batch the frame builds, which the encoder consumes once (§6.3)
             FrameBatch m_batch;
 
+            // one offscreen target a slot keeps, which a shadow or a layer paints into (AD-06)
+            struct ScratchTexture
+            {
+                // the texture the pass paints and the composite samples (§6.2)
+                id<MTLTexture> __strong texture = nil;
+
+                // whether the current frame already took the texture (AD-06)
+                bool in_use = false;
+            };
+
             // one retained pair of batch buffers, which a frame fills and the gpu reads (§6.3, AD-06)
             struct BatchSlot
             {
@@ -393,10 +413,16 @@ namespace albor::render
 
                 // the command that last read this slot, which its next use waits on (§6.3)
                 id<MTLCommandBuffer> __strong command = nil;
+
+                // the offscreen targets the slot keeps, which a shadow or a layer paints into (AD-06)
+                std::vector<ScratchTexture> scratch;
             };
 
             // how many slots the surface cycles, which covers the drawables the layer keeps in flight (§6.3)
             static constexpr std::size_t BATCH_SLOT_COUNT = 3;
+
+            // how many offscreen targets a slot keeps before the least recently used one goes (§6.2, AD-06)
+            static constexpr std::size_t MAXIMUM_SCRATCH_TEXTURES = 16;
 
             // the retained batch buffers, which a frame writes and the gpu reads three frames later (§6.3, AD-06)
             std::array<BatchSlot, BATCH_SLOT_COUNT> m_batch_slots;
@@ -552,7 +578,7 @@ namespace albor::render
 
         void blur_pass(id<MTLCommandBuffer> command, id<MTLTexture> source, id<MTLTexture> target, ShadowUniforms uniforms, float dx, float dy, float step, float width, float height);
 
-        void AlborRenderSurface::composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow, id<MTLTexture> target) const {
+        void AlborRenderSurface::composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow, id<MTLTexture> target, std::size_t slot_index) {
             // the offscreen target covers the caster plus the reach, clipped to the frame it lands on (§6.2)
             const float reach = std::max(shadow.reach, 1.0f);
             const float left = std::max(shadow.rect.x - reach, 0.0f);
@@ -565,15 +591,15 @@ namespace albor::render
             // the two offscreen dimensions never exceed the frame, which bounds the allocation a blur can request (§6.2)
             const float width = right - left;
             const float height = bottom - top;
-            // two offscreen targets ping pong the silhouette through the two blur directions (§6.2)
-            MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:static_cast<NSUInteger>(width) height:static_cast<NSUInteger>(height) mipmapped:NO];
-            descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-            descriptor.storageMode = MTLStorageModePrivate;
-            id<MTLTexture> silhouette = [device_state().device newTextureWithDescriptor:descriptor];
-            id<MTLTexture> scratch = [device_state().device newTextureWithDescriptor:descriptor];
+            // two offscreen targets the slot keeps ping pong the silhouette through the two blur directions (§6.2, AD-06)
+            id<MTLTexture> silhouette = acquire_scratch(slot_index, static_cast<NSUInteger>(width), static_cast<NSUInteger>(height));
+            id<MTLTexture> scratch = acquire_scratch(slot_index, static_cast<NSUInteger>(width), static_cast<NSUInteger>(height));
             // a refused offscreen target leaves the cast unpainted, because the blur has no surface to land on (§6.2)
             if (silhouette == nil || scratch == nil)
                 return;
+            // a bucketed target is larger than the cast, so the composite reads its corner of it (§6.2)
+            const float u_max = width / static_cast<float>(silhouette.width);
+            const float v_max = height / static_cast<float>(silhouette.height);
             // the silhouette carries the cast colour, which the blur then spreads (§6.2)
             ShadowUniforms uniforms{};
             uniforms.color[0] = static_cast<float>(shadow.color & 0xFFu) / 255.0f;
@@ -614,9 +640,9 @@ namespace albor::render
                 // the kernel carries a spread of 1.69 taps, which the sigma turns into a texel step (§6.2)
                 const float step = sigma / 2.5f;
                 // the horizontal pass spreads the silhouette across the scratch target (§6.2)
-                blur_pass(command, silhouette, scratch, uniforms, 1.0f, 0.0f, step, width, height);
+                blur_pass(command, silhouette, scratch, uniforms, 1.0f, 0.0f, step, static_cast<float>(silhouette.width), static_cast<float>(silhouette.height));
                 // the vertical pass spreads it back, which finishes the separable gaussian (§6.2)
-                blur_pass(command, scratch, silhouette, uniforms, 0.0f, 1.0f, step, width, height);
+                blur_pass(command, scratch, silhouette, uniforms, 0.0f, 1.0f, step, static_cast<float>(silhouette.width), static_cast<float>(silhouette.height));
             }
             // the cast composites over what is under it, which the fill pipeline blends source over (§6.2)
             BatchVertex quad[4];
@@ -625,8 +651,8 @@ namespace albor::render
                 // the corner lands where the offscreen target sits on the frame (§6.2)
                 quad[index].x = corners[index][0];
                 quad[index].y = corners[index][1];
-                quad[index].u = (index == 1 || index == 3) ? 1.0f : 0.0f;
-                quad[index].v = (index >= 2) ? 1.0f : 0.0f;
+                quad[index].u = (index == 1 || index == 3) ? u_max : 0.0f;
+                quad[index].v = (index >= 2) ? v_max : 0.0f;
             }
             // the quad is drawn as one strip over the four corners the target spans (§6.2)
             DrawUniforms draw{};
@@ -760,19 +786,63 @@ namespace albor::render
             }
         }
 
+        id<MTLTexture> AlborRenderSurface::acquire_scratch(std::size_t slot_index, NSUInteger width, NSUInteger height) {
+            // the bucket is the extent the texture is allocated at, so a wobbling cast keeps one texture (§6.2, AD-06)
+            const NSUInteger bucket_width = bucket_extent(width);
+            const NSUInteger bucket_height = bucket_extent(height);
+            std::vector<ScratchTexture>& scratch = m_batch_slots[slot_index].scratch;
+            for (ScratchTexture& candidate : scratch) {
+                // a texture the frame already took cannot serve another pass (§6.2)
+                if (candidate.in_use || candidate.texture == nil)
+                    continue;
+                // a texture of another extent carries the wrong grid, which the pass cannot sample (§6.2)
+                if (candidate.texture.width != bucket_width || candidate.texture.height != bucket_height)
+                    continue;
+                candidate.in_use = true;
+                return candidate.texture;
+            }
+            // a slot at its ceiling recycles the oldest texture, which a growing cast would otherwise hold (§6.2, AD-06)
+            if (scratch.size() >= MAXIMUM_SCRATCH_TEXTURES) {
+                ScratchTexture& coldest = scratch.front();
+                if (coldest.in_use)
+                    return nil;
+                MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:bucket_width height:bucket_height mipmapped:NO];
+                descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+                descriptor.storageMode = MTLStorageModePrivate;
+                coldest.texture = [device_state().device newTextureWithDescriptor:descriptor];
+                coldest.in_use = true;
+                return coldest.texture;
+            }
+            // a new texture joins the slot, which its later frames reuse (§6.2, AD-06)
+            MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:bucket_width height:bucket_height mipmapped:NO];
+            descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+            descriptor.storageMode = MTLStorageModePrivate;
+            id<MTLTexture> texture = [device_state().device newTextureWithDescriptor:descriptor];
+            if (texture == nil)
+                return nil;
+            scratch.push_back(ScratchTexture{.texture = texture, .in_use = true});
+            return scratch.back().texture;
+        }
+
         void AlborRenderSurface::encode(id<MTLCommandBuffer> command, MTLRenderPassDescriptor* pass) {
             // the frame opens one encoder, which a layer or shadow pass has to close and reopen (§6.2)
             id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
             [encoder setRenderPipelineState:device_state().pipeline];
             [encoder setFragmentSamplerState:device_state().sampler atIndex:0];
+            // the slot this frame uses was read three frames ago, so its command and targets are free (§6.3, AD-06)
+            const std::size_t frame_slot = m_batch_slot;
+            BatchSlot& slot = m_batch_slots[frame_slot];
+            if (slot.command != nil)
+                [slot.command waitUntilCompleted];
+            // the command this frame submits is what the next use of the slot waits on (§6.3)
+            slot.command = command;
+            // every offscreen target the previous frame in this slot took is free again (§6.2, AD-06)
+            for (ScratchTexture& scratch : slot.scratch)
+                scratch.in_use = false;
             // a frame with no geometry still composites its shadows, which the draw loop reaches without buffers (§6.2)
             id<MTLBuffer> vertices = nil;
             id<MTLBuffer> indices = nil;
             if (!m_batch.vertices.empty() && !m_batch.indices.empty()) {
-                // the slot this frame fills was read three frames ago, so the gpu is done with it before the copy (§6.3)
-                BatchSlot& slot = m_batch_slots[m_batch_slot];
-                if (slot.command != nil)
-                    [slot.command waitUntilCompleted];
                 // a slot grows to the batch size once, so a later frame copies into it instead of allocating (AD-06)
                 const NSUInteger vertex_bytes = static_cast<NSUInteger>(m_batch.vertices.size() * sizeof(BatchVertex));
                 const NSUInteger index_bytes = static_cast<NSUInteger>(m_batch.indices.size() * sizeof(std::uint32_t));
@@ -790,8 +860,6 @@ namespace albor::render
                 if (slot.vertices != nil && slot.indices != nil) {
                     std::memcpy(slot.vertices.contents, m_batch.vertices.data(), vertex_bytes);
                     std::memcpy(slot.indices.contents, m_batch.indices.data(), index_bytes);
-                    // the command keeps the slot it reads, so the next frame in this slot can wait on it (§6.3)
-                    slot.command = command;
                     vertices = slot.vertices;
                     indices = slot.indices;
                     [encoder setVertexBuffer:vertices offset:0 atIndex:0];
@@ -855,10 +923,7 @@ namespace albor::render
                     if (layer.draw_end <= layer.draw_begin)
                         continue;
                     [encoder endEncoding];
-                    MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:m_target.width height:m_target.height mipmapped:NO];
-                    descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-                    descriptor.storageMode = MTLStorageModePrivate;
-                    id<MTLTexture> texture = [device_state().device newTextureWithDescriptor:descriptor];
+                    id<MTLTexture> texture = acquire_scratch(frame_slot, m_target.width, m_target.height);
                     // a refused target draws the group into its parent instead, because no offscreen exists (§6.2)
                     if (texture != nil) {
                         encoder = reopen(texture, true);
@@ -870,7 +935,7 @@ namespace albor::render
                 // a draw that casts a shadow closes the pass, blurs the cast and reopens it (§6.2)
                 if (draw.shadow >= 0) {
                     [encoder endEncoding];
-                    composite_shadow(command, m_batch.shadows[static_cast<std::size_t>(draw.shadow)], target);
+                    composite_shadow(command, m_batch.shadows[static_cast<std::size_t>(draw.shadow)], target, frame_slot);
                     // the pass resumes over what it already painted, which the load keeps (§6.2)
                     encoder = reopen(target, false);
                     continue;

@@ -2,6 +2,8 @@
 
 #include <cstring>
 
+#include <poll.h>
+
 namespace albor::wayland
 {
 #ifdef ALBOR_WAYLAND_LIBDECOR
@@ -67,6 +69,15 @@ namespace albor::wayland
         void on_seat_name(void*, wl_seat*, const char*) {
             // the label is for the user, which no framework path reads (§8.3)
         }
+
+        // the liveness check the shell sends, which a client that never answers is marked unresponsive for (§4.1, §5.3)
+        void on_shell_ping(void*, xdg_wm_base* shell, std::uint32_t serial) {
+            // the pong is what keeps the window responsive, which kwin desaturates and titles unresponsive without (§5.3)
+            xdg_wm_base_pong(shell, serial);
+        }
+
+        // the one event the shell carries, which the connection answers from the ui thread (§5.3)
+        constexpr xdg_wm_base_listener SHELL_LISTENER = {&on_shell_ping};
     } // namespace
 
     std::map<std::string, std::weak_ptr<WaylandConnection>>& WaylandConnection::cache() {
@@ -328,13 +339,44 @@ namespace albor::wayland
     }
 
     void WaylandConnection::dispatch() {
-        // the display is read for the events the poll reported, the read half dispatch_pending omits (§4.1)
-        if (wl_display_dispatch(m_display) < 0)
-            return;
+        // the read is taken only when the display still carries bytes, so a caller never waits on another thread (§4.1)
+        if (wl_display_prepare_read(m_display) == 0) {
+            // the descriptor is checked without waiting, because the read below would block on an idle display (§4.1)
+            pollfd display = {wl_display_get_fd(m_display), POLLIN, 0};
+            if (poll(&display, 1, 0) > 0 && (display.revents & POLLIN) != 0) {
+                // the bytes that arrived are read once, which the queued dispatch then hands to the listeners (§4.1)
+                if (wl_display_read_events(m_display) < 0)
+                    return;
+            }
+            else {
+                // a display without bytes releases the read, so another thread may prepare one (§4.1)
+                wl_display_cancel_read(m_display);
+            }
+        }
+        // the dispatch never waits, because the vulkan wsi reads the same display on the render thread (§6.3, AD-18b)
+        wl_display_dispatch_pending(m_display);
 #ifdef ALBOR_WAYLAND_LIBDECOR
         // the decoration queue is dispatched after the display, which its frames ride (§5.3)
         dispatch_decorations();
 #endif
+    }
+
+    bool WaylandConnection::prepare_read() {
+        // the read is prepared before the wait, so the loop owns the bytes its poll reports (§4.1)
+        return wl_display_prepare_read(m_display) == 0;
+    }
+
+    void WaylandConnection::read_display() {
+        // a prepared read is always completed, because the display cannot be used otherwise (§4.1)
+        if (wl_display_read_events(m_display) < 0)
+            return;
+        // the read bytes are dispatched now, which keeps the queue this loop owns empty (§4.1)
+        wl_display_dispatch_pending(m_display);
+    }
+
+    void WaylandConnection::cancel_read() {
+        // a read the poll found nothing for is released, so another thread may prepare one (§4.1)
+        wl_display_cancel_read(m_display);
     }
 
     void WaylandConnection::flush() {
@@ -429,6 +471,8 @@ namespace albor::wayland
         if (interface_is(interface, xdg_wm_base_interface.name)) {
             m_shell = static_cast<xdg_wm_base*>(wl_registry_bind(registry, name, &xdg_wm_base_interface, version < 6 ? version : 6));
             m_shell_name = name;
+            // the ping listener is what keeps the window responsive, so every shell carries it (§5.3)
+            xdg_wm_base_add_listener(m_shell, &SHELL_LISTENER, this);
             return;
         }
         // the shm is what the initial buffers come from (§6.2)

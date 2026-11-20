@@ -3,6 +3,7 @@
 *.metal text eol=lf
 *.hlsl text eol=lf
 *.dxbc binary
+*.spv binary
 *.sha256 text eol=lf
 
 # the build scripts run under bash on every runner, including windows, so they keep lf endings

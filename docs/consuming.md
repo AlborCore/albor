@@ -25,15 +25,16 @@ target_link_libraries(my_app PRIVATE albor-blend2d)
 
 | target | renderer | availability |
 | --- | --- | --- |
-| `albor` | `render-albor` GPU on macOS and Windows; Blend2D on Linux | macOS, Windows and Linux Wayland |
-| `albor-blend2d` | Blend2D CPU rasterizer | macOS, Windows and Linux Wayland |
+| `albor` | `render-albor` GPU on macOS, Windows and Linux (Vulkan) | macOS, Windows, Linux Wayland and Linux X11 |
+| `albor-blend2d` | Blend2D CPU rasterizer | macOS, Windows, Linux Wayland and Linux X11 |
 | advanced `-auto` targets | explicit choice, see below | where the module is built |
 
-The umbrella is offered only where a desktop platform adapter exists: macOS, Windows and
-Linux Wayland today. The Linux adapter needs the Wayland, xkbcommon and Pango/Cairo/D-Bus
-development packages, and the Linux `albor` umbrella carries Blend2D until the Vulkan
-backend lands (#110). On a host without a desktop adapter, use the granular targets below
-for a headless or test application.
+The umbrella is offered only where a desktop platform adapter exists: macOS, Windows,
+Linux Wayland and Linux X11 today. The Linux adapters need the Wayland, xkbcommon,
+XCB and Pango/Cairo/D-Bus development packages, and the `albor` umbrella carries
+`render-albor` on Vulkan when the Vulkan loader is present, with Blend2D as the fallback.
+On a host without a desktop adapter, use the granular targets below for a headless or
+test application.
 
 ## A minimal consumer project
 
@@ -82,13 +83,13 @@ target_link_libraries(my_app PRIVATE albor)
 `albor` installs the recommended runtime: platform adapter, HarfBuzz, widgets, layout,
 accessibility, i18n, resources and the in-repo GPU renderer. The portable renderer is a
 package feature on macOS and Windows, where a plain install carries no Blend2D binaries.
-The Linux package carries Blend2D by default, because it is the only renderer the Linux
-umbrella can carry until the Vulkan backend lands (#110):
+The Linux package carries Blend2D by default as the portable fallback and the software
+reference, while `albor` itself carries the Vulkan backend when it was configured:
 
 | feature | what the package gains |
 | --- | --- |
-| *(none)* | `albor`, the recommended runtime; on Linux it carries Blend2D by default |
-| `blend2d` | `albor-blend2d`, the portable CPU renderer umbrella on macOS and Windows |
+| *(`none`)* | `albor`, the recommended runtime; on Linux it also builds Blend2D by default as the fallback and software reference |
+| `blend2d` | `albor-blend2d`, the portable CPU renderer umbrella, on every platform that builds it |
 
 Until the framework sits in a vcpkg registry, the port ships inside the repository
 (`ports/albor/`) and a consumer wires it through an overlay:
@@ -191,7 +192,8 @@ target_link_libraries(my_app PRIVATE
 
 The same rules apply to every composition:
 
-- Exactly one platform adapter, one text engine and one renderer may be linked.
+- Exactly one text engine and one renderer may be linked. On Linux the umbrella links both
+  the Wayland and X11 adapters and selects one at run time.
 - The `-auto` targets are whole-archive targets, because their translation units register
   themselves at load. Link the target, not the raw archive.
 - Do not combine `albor` or `albor-blend2d` with another platform, text, or renderer target.

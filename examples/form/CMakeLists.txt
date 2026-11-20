@@ -1,8 +1,9 @@
 # the widget form example, which is the test bed and the showcase every widget the framework ships (§14)
 
-# the example drives the desktop platform directly, so it only builds where an adapter exists (AD-16)
-if(NOT APPLE AND NOT WIN32)
-    message(STATUS "form-albor: skipped, the example needs the macos/windows platform adapter")
+# the example drives a desktop platform directly, so it only builds where a renderer umbrella exists (AD-16)
+# the umbrella is the public target the top level creates for one platform and renderer pair (§3.3, AD-19)
+if(NOT TARGET albor AND NOT TARGET albor-blend2d)
+    message(STATUS "form: skipped, the example needs a desktop platform and a renderer")
     return()
 endif()
 
