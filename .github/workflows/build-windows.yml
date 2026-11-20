@@ -1,0 +1,189 @@
+name: build windows
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-pr:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    outputs:
+      has_pr: ${{ steps.check.outputs.has_pr }}
+    steps:
+      - uses: ./.github/actions/check-pr
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  shaders-windows:
+    name: shaders (windows)
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: windows-2022
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: shader
+        run: bash build/shaders.sh --d3d
+
+  build-windows:
+    name: build (${{ matrix.preset }})
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: windows-2022
+    permissions:
+      contents: read
+      pull-requests: read
+      code-quality: write
+      id-token: write
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: release
+            enable: true
+          - preset: debug
+            enable: true
+          - preset: coverage
+            enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+    env:
+      MSVC_TOOLSET: 14.44
+      WINDOWS_SDK: 10.0.22621.0
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage-%p.profraw
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: platform setup
+        if: matrix.enable
+        run: |
+          mkdir -p .vcpkg-cache
+          # msvc has no source-based coverage, so the coverage job also installs the pdb-based collector
+          if [ "${{ matrix.preset }}" = "coverage" ]; then
+            bash build/install-ccache.sh --coverage
+          else
+            bash build/install-ccache.sh
+          fi
+
+      - name: msvc environment
+        if: matrix.enable
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: 14.44
+          sdk: 10.0.22621.0
+
+      - name: toolchain, vcpkg, caches, configure and build
+        if: matrix.enable
+        uses: ./.github/actions/build-common
+        with:
+          preset: ${{ matrix.preset }}
+          vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
+          platform: Windows
+          extra-configure: -DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions
+
+      - name: unit tests
+        if: matrix.enable
+        working-directory: .build-${{ matrix.preset }}/tests
+        run: |
+          # coverage wraps both suites so one report measures the same binaries as the other platforms
+          if [ "${{ matrix.preset }}" = "coverage" ]; then
+            root="${GITHUB_WORKSPACE//\\//}"
+            # the font suite exports a binary report first, so both suites can share one cobertura file
+            OpenCppCoverage --sources "$root/albor" --export_type="binary:$root/coverage-fonts.cov" --working_dir . -- ./albor-generated-font-checks.exe
+            # the main suite imports that report, which puts both runs under the windows flag
+            OpenCppCoverage --sources "$root/albor" --input_coverage="$root/coverage-fonts.cov" --export_type="cobertura:$root/coverage.xml" --working_dir . -- ./albor-tests.exe
+          else
+            ./albor-tests && ./albor-generated-font-checks
+          fi
+
+      - name: coverage report (cobertura)
+        if: matrix.enable && matrix.preset == 'coverage'
+        run: |
+          # pdb paths in the report are absolute, which the flag's albor/ filter cannot match
+          python_bin=python3
+          command -v python3 >/dev/null 2>&1 || python_bin=python
+          "$python_bin" - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          root = os.getcwd().replace('\\', '/').rstrip('/')
+          tree = ET.parse('coverage.xml')
+          report = tree.getroot()
+          sources = report.find('sources')
+          if sources is not None:
+              for source in list(sources):
+                  source.text = '.'
+          for node in report.iter('class'):
+              name = node.get('filename')
+              if not name:
+                  continue
+              value = name.replace('\\', '/')
+              if value.lower().startswith(root.lower()):
+                  value = value[len(root):]
+              node.set('filename', value.lstrip('/'))
+          tree.write('coverage.xml', encoding='utf-8', xml_declaration=True)
+          PY
+
+      - name: build scope
+        if: matrix.enable && matrix.preset == 'debug'
+        run: bash build/check-build-scope.sh
+
+      - name: node
+        if: matrix.enable && matrix.preset == 'debug'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/albor-vscode/package-lock.json
+
+      - name: language client smoke test
+        if: matrix.enable && matrix.preset == 'debug'
+        working-directory: tools/albor-vscode
+        env:
+          ALBOR_LSP: ${{ github.workspace }}/.build-${{ matrix.preset }}/tools/albor-lsp/albor-lsp.exe
+        run: |
+          npm ci
+          npm test
+
+      - name: font selection check
+        if: matrix.enable
+        env:
+          ALBOR_BUILD_DIR: .build-${{ matrix.preset }}
+        run: bash build/check-font-selection.sh
+
+      - name: upload coverage to codecov
+        if: matrix.enable && matrix.preset == 'coverage'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: windows
+          name: windows-coverage
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
