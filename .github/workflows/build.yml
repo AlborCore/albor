@@ -276,9 +276,8 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-
             vcpkg-${{ runner.os }}-
 
       - name: restore - ccache directory
@@ -462,7 +461,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage.lcov
-          flags: ${{ matrix.coverage-flag || 'macos' }}
+          flags: ${{ matrix.coverage-flag }}
           name: ${{ matrix.name }}
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
@@ -472,7 +471,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
 
       - name: save - ccache directory
         if: matrix.enable && !cancelled()
@@ -536,9 +535,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-linux-alma9-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-linux-alma9-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
-            vcpkg-linux-alma9-${{ steps.toolchain.outputs.fingerprint }}-
+            vcpkg-linux-alma9-
             vcpkg-Linux-
 
       - name: restore - ccache directory
@@ -613,7 +612,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-linux-alma9-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-linux-alma9-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
 
       - name: save - ccache directory
         if: success()
