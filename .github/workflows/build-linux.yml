@@ -236,7 +236,8 @@ jobs:
         run: |
           llvm-profdata-18 merge -sparse coverage-*.profraw -o coverage.profdata
           objects=()
-          for name in albor-tests albor-generated-font-checks albor-render-blend2d-auto-checks albor-render-albor-auto-checks albor-automation-host-tests; do
+          # only the binaries that ran under coverage are passed, so the profile matches the objects
+          for name in albor-tests albor-generated-font-checks albor-linux-tests; do
             path="./.build-coverage/tests/$name"
             if [ ! -f "$path" ] && [ -f "$path.exe" ]; then
               path="$path.exe"
@@ -249,7 +250,8 @@ jobs:
               fi
             fi
           done
-          llvm-cov-18 export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' "${objects[@]}" > coverage.lcov
+          # a merged profile can warn about a few counter mismatches while still exporting a correct report
+          llvm-cov-18 export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' "${objects[@]}" > coverage.lcov 2> >(grep -v 'functions have mismatched data' >&2)
           # the export carries absolute source paths, which the coverage api needs relative to the repository root
           python_bin=python3
           command -v python3 >/dev/null 2>&1 || python_bin=python
