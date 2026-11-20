@@ -24,7 +24,7 @@ every element may carry an `id`.
 | [RadioGroup](radio-group.md) | container | one choice among radio buttons in a row or column |
 | [MenuBar](menu.md) | container | the top strip that hosts menu items or menus |
 | [Menu](menu.md) | container | an ordered set of menu items and separators |
-| [ToolBar](menu.md#toolbar) | container | a horizontal strip that hosts controls |
+| [ToolBar](menu.md#menubar-and-toolbar) | container | a horizontal strip that hosts controls |
 | [Label](label.md) | leaf | a run of text |
 | [Button](button.md) | leaf | a push control with a click signal |
 | [MenuItem](menu.md#menuitem) | leaf | one menu row that invokes a shared command |
@@ -77,8 +77,8 @@ keys address it by ([Components](../ui-language/components.md#identity)).
 ## Units
 
 Length properties (`spacing`, `padding`, `font_size`, a viewport size, a canvas extent)
-accept `px` — logical pixels that scale with display density — and `phx` — physical device
-pixels. `px` is the default choice; see [Layout](../concepts/layout.md#units).
+use `px` — logical pixels that scale with display density. The `phx` suffix is lexed but
+refused by codegen today (`E0502`); see [Layout](../concepts/layout.md#units).
 
 ## Assignment is a binding
 

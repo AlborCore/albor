@@ -156,8 +156,8 @@ Button {
     action: save;                  // bound to the shared command
 }
 
-// or, from a handler:
-on_shortcut: {
+// or, from a handler for a signal the element declares:
+on_clicked: {
     save.invoke();
 }
 ```
@@ -188,7 +188,7 @@ a read of either is a compile error.
 ## What handlers compile to
 
 Each `on_` block becomes a **static function** on the generated implementation, subscribed
-through the element's signal slot. There is no `std::function` per handler and no dynamic
-dispatch: the handler is a plain function over the component's own context, which is the
-same convention the binding system uses
+through the element's signal slot. Handler bodies are plain static functions over the
+component's own context, the same convention the binding system uses; only the element's
+signal slot is type-erased. There is no dynamic dispatch.
 ([Properties and bindings](../concepts/bindings.md#what-compiles)).

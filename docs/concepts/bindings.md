@@ -35,9 +35,8 @@ generated binding is a static function plus an array of property ids.
 ## The evaluation model
 
 - **Eager push.** A `set` or a bound write propagates dirtiness along the dependency graph
-  in a topological pass and re-evaluates affected bindings immediately, including the
-  consumers of the property the binding wrote. There is no pull phase, no dirty-flag sweep
-  at frame start, and no stale window.
+  immediately. Affected bindings settle in stage 1 of the next frame in topological order,
+  before layout and scene build, so no consumer reads a stale value.
 - **Cycles are refused.** A static dependency cycle is rejected by the `.ui` compiler. A
   dynamic cycle that slips past — through an imperative write, for instance — is halted by
   an execution-pass budget (64 iterations) and flagged.
@@ -47,10 +46,11 @@ generated binding is a static function plus an array of property ids.
 
 ## What compiles
 
-Every binding and every handler compiles to a **plain static function** over the component's
-own context, with its dependencies as declared `PropertyId` arrays. No `std::function` per
-binding, no per-binding heap allocation. This is the convention the whole generated codebase
-follows, and it is why a tree with a thousand bindings is unremarkable.
+Every binding and every handler in generated code compiles to a **plain static function** over
+the component's own context, with its dependencies as declared `PropertyId` arrays: no
+`std::function` per binding and no per-binding heap allocation. The hand-written
+`Property::bind(...)` overload is the allocating convenience API for runtime code; it is not
+what generated components use.
 
 ## In C++
 
@@ -81,7 +81,10 @@ CounterPanel::CounterPanel(albor::BindingEngine* engine, albor::TextEngine* text
 ```
 
 Reading is `property.get()`; writing is `property.set(value)` or `operator=`. An imperative
-`set` **overrides** any declarative binding on that property; `rebind()` restores it.
+`set` **overrides** any declarative binding on that property; `rebind()` restores it. Animation
+writes use a third channel: `animate()` publishes a presence record so the animation runs without
+erasing a user binding or an imperative override, and `end_animation()` yields back. Precedence is
+imperative override > active animation > binding > constructed value.
 
 ## Property directions, in both worlds
 
@@ -100,7 +103,8 @@ snapshot** — `Snapshot<T>`, which is `std::shared_ptr<const T>`:
 
 ```cpp
 // a worker thread owns its data and never touches a UI object
-albor::Observable<Snapshot<WaveformData>> data;
+albor::Observable<Snapshot<WaveformData>> data{std::make_shared<const WaveformData>()};
+data.set_poster([](auto work) { albor::Application::instance().post(std::move(work)); });
 
 // publish from anywhere, safely: post_set is the thread-safe path
 data.post_set(std::make_shared<const WaveformData>(std::move(next)));

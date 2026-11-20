@@ -26,11 +26,11 @@ field scrolls because something capped it, not because it was wrapped in a viewp
 | written | meaning |
 | --- | --- |
 | `12px` | **logical pixels** — the unit layout works in; scale with display density |
-| `12phx` | **physical device pixels** — always one device pixel; do not scale |
+| `12phx` | **physical device pixels** — lexed but refused by codegen (`E0502`); generated layouts use `px` only |
 
 `px` is the default choice. Properties that are lengths — `spacing`, `padding`, `font_size`,
-a `Canvas` extent, a viewport size — accept either; the density-scaled ones treat `px` as the
-logical unit they were designed around. A 1-pixel hairline is what `phx` is for.
+a `Canvas` extent, a viewport size — use logical pixels. The `phx` suffix is parsed but codegen
+refuses it today, so a 1-pixel hairline is authored in `px` and scaled by the surface.
 
 ## Containers
 
@@ -144,7 +144,7 @@ extent it measured, even when that means the row or column overflows.
 Flexibility is therefore **declared, never inferred** from a child's measured size: a child
 that happens to measure as wide as the offer is still fixed unless it says `stretch`.
 
-The full source of these — `align_panel.ui` in `examples/form/` — is the reference for the
+The full source of these — `widget_form.ui` in `examples/form/` — is the reference for the
 idioms a real form is built from.
 
 ## Skipping work

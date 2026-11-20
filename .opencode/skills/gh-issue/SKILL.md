@@ -29,7 +29,7 @@ gh issue view <number> --json number,title,body,state,labels,comments,url
 
 - Read **every** comment, not only the body: decisions are often settled there.
 - Extract four things into working notes: the summary, the expected behavior, the
-  acceptance criteria, and every spec reference (`§N`, `AD-NN`) the issue cites.
+  acceptance criteria, and every contract reference (`BDG-NN`, `GAP-NN`, `§N`) the issue cites.
 - Note the labels. `bug` means reproduce and fix; `enhancement` means design against
   the spec before planning; `phase-N` tells you which module owns the change.
 
@@ -41,7 +41,7 @@ the **Architecture Map** of `AGENTS.md`.
 
 Read what the change is bound by, not the whole repository:
 
-- The cited sections of `albor-design-v4.md`, and `§13` when a decision is touched.
+- The cited sections of `docs/framework-design.md`, and its boundary clauses (`BDG-NN`) when a decision is touched.
 - The **Non-negotiable Boundaries** of `AGENTS.md`. A change that crosses one is a
   stop condition, not a judgment call.
 - `STYLE-GUIDE.md` before proposing C++.
@@ -57,7 +57,7 @@ the Direct3D path — so the plan follows the established shape instead of inven
 one.
 
 Understand ownership and lifetime before planning: who allocates, who releases,
-which thread the code runs on (`§10.2`, `§10.5`), and whether the node is alive when
+which thread the code runs on (`§5.3`, `§7` of the design contract), and whether the node is alive when
 the new code runs. Issues in this repository are frequently lifetime bugs.
 
 ## 4. Draft the plan
@@ -82,7 +82,7 @@ It contains:
 Keep it as long as the change needs and no longer. A one-line fix gets a short plan.
 
 Stop and ask — inside the plan, as an open question — when the change would reopen a
-settled decision (`§13`), weaken a boundary, change a public header's shape, or when
+settled decision in `docs/framework-design.md`, weaken a boundary, change a public header's shape, or when
 two requirements contradict. Do not resolve that silently in the plan.
 
 ## 5. Gate 1: plan approval
@@ -135,17 +135,17 @@ bash build/snapshot.sh gh-<number>
 
 - Minimal change in the module the Architecture Map names. Do not refactor
   neighboring code the issue did not ask about.
-- **Platform parity in the same change** (`§5.3`, AD-16): a platform source carries its
+- **Platform parity in the same change** (BDG-10): a platform source carries its
   twins on the other two platforms (`*.macos.mm` ↔ `*.win32.c++` ↔ `*.linux.c++`), with
-  the same tests. Native render backends are symmetric too (`§6.3`, AD-05):
+  the same tests. Native render backends are symmetric too (BDG-09):
   Metal, Direct3D 11 and Vulkan move together.
 - File names follow the platform-infix rule; a source that reaches a platform API
   carries that platform's infix, and the module `CMakeLists.txt` and every `#include`
   are updated with it.
-- Keep generated code generated (`§14`, AD-17): fix the generator, never the output.
-- No platform or renderer type in a public header (`§3.5`, AD-05, AD-19).
-- Dev/Test-only behavior is excluded at link time, never with `#ifdef` (AD-04).
-- Reference the spec in the code where the decision matters, as `§N` / `AD-NN`.
+- Keep generated code generated (§11, BDG-07): fix the generator, never the output.
+- No platform or renderer type in a public header (BDG-08).
+- Dev/Test-only behavior is excluded at link time, never with `#ifdef` (BDG-03).
+- Reference the design contract where the decision matters, as `BDG-NN`, `GAP-NN` or `§N`.
 - Comments: one line above the statement, no consecutive comment block
   (`STYLE-GUIDE.md`). The formatter check enforces this in touched code.
 
@@ -238,7 +238,7 @@ Iterate on the code until the user approves. Gate 3 is explicit, like gate 1.
 ## 14. Commit and push
 
 After approval, commit on the current branch in the repository's voice: lowercase
-prose, one line per changed group, `§N` / `AD-NN` where a decision is cited. Never
+prose, one line per changed group, `BDG-NN` / `GAP-NN` / `§N` where a decision is cited. Never
 commit files the change did not touch, and never amend a commit the user did not ask
 to amend.
 

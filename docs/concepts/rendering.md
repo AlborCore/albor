@@ -41,7 +41,7 @@ optimisation of the same result, never a second set of visibility rules.
 Rendering sits behind a stable interface; the backend is **selected by linking**:
 
 - **`albor`** is the normal application target. It carries the recommended GPU backend,
-  `render-albor` (Metal on macOS, Direct3D on Windows), and installs it at load.
+  `render-albor` (Metal on macOS, Direct3D 11 on Windows, Vulkan on Linux), and installs it at load.
 - **`albor-blend2d`** carries the portable Blend2D CPU backend instead. It is the renderer
   choice for an application that does not want the GPU path.
 - **Advanced targets** are available for a deliberate composition:
@@ -81,8 +81,9 @@ Canvas {
 - `measure_text(text, font_size)` returns the run width, so a label can place the content after it
 - `canvas_width` and `canvas_height` are the canvas extent, in logical units, read-only
   inside the block.
-- Coordinates are relative to the canvas corner; the block re-runs when its bound properties
-  change, so the example above is a live progress meter driven by `level`.
+- Coordinates are relative to the canvas corner. The block is installed once and runs every
+  frame, reading current property values, so the example above is a live progress meter driven
+  by `level`.
 
 The vocabulary is deliberately closed: a compact drawing set, not a universal drawing API.
 Anything with expensive retained content belongs in a **custom render node**.
@@ -97,13 +98,16 @@ resources** the renderer keeps alive across frames:
 LineBatch        // batches of lines with a shared style
 PathResource     // a retained path
 PictureResource  // a retained recorded picture
+ImageResource    // a retained image
+MeshResource     // a retained textured triangle mesh
+GlyphOutline     // a retained embedded-font outline
 ```
 
 The node's draw happens on the render side of the two-stage frame through the `RenderContext`
 — the same portable surface the software backend implements, which is what makes the
 GPU/software parity suite meaningful. The `chart` example (`examples/chart/`) is the
-reference: a manifest-declared `WaveformView` whose C++ implementation batches a waveform
-into a `LineBatch` and hands it over.
+reference: a manifest-declared `WaveformView` that receives an immutable waveform snapshot
+and publishes a `selection_changed` signal.
 
 The data rule that makes this safe: application data reaches a render node as an immutable
 `Snapshot<T>` — `std::shared_ptr<const T>` — published from the owning thread. Nothing

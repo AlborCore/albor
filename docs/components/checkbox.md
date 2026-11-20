@@ -11,7 +11,7 @@ selection flag.
 | `disabled` | `bool` | refuses interaction |
 | `outline` | `color` | the box border colour; defaults to the theme |
 | `check_fill` | `color` | the mark colour; defaults to the theme's accent |
-| `action` | `command` | binds a shared command |
+| `action` | `command` | binds a shared command; `command` is a synonym |
 
 Plus the [common properties](index.md#common-properties).
 

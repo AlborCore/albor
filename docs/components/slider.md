@@ -13,7 +13,7 @@ parameter scrubber.
 | `disabled` | `bool` | refuses interaction |
 | `track_color` | `color` | the rail colour; defaults to the theme |
 | `thumb_color` | `color` | the handle colour; defaults to the theme's accent |
-| `action` | `command` | binds a shared command |
+| `action` | `command` | binds a shared command; `command` is a synonym |
 
 Plus the [common properties](index.md#common-properties).
 
@@ -56,7 +56,7 @@ component LevelControl {
 - `value:` is a binding, so a property write from anywhere — a timer, a command, another
   control — moves the thumb. `on_changed` is the reverse direction, written by hand; the
   two together are the standard two-way pattern.
-- `min`/`max` are ordinary floats; nothing stops `min` from exceeding `max` in the data —
-  keep the range consistent.
+- `min`/`max` are ordinary floats; a non-ascending pair is refused and the previous range is
+  kept.
 - `thumb_color` defaulting to the accent is what makes a slider read as the primary control
   on a surface without extra styling.

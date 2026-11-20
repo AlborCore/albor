@@ -21,9 +21,9 @@
     current configuration; [Linux](linux.md) records the baseline and its container.
 
   See [Status and platforms](status.md) for the build baselines and toolchains.
-- **No shader toolchain is needed to build** — the Metal and Direct3D shaders ship as
-  compiled artifacts. Only a change to a shader source needs the matching compiler; see
-  [Tooling](tooling.md#the-shaders)
+- **No shader toolchain is needed to build** — the Metal, Direct3D and Vulkan shaders ship as
+  compiled artifacts with committed stamps. Only a change to a shader source needs the matching
+  compiler; see [Tooling](tooling.md#the-shaders)
 
 ## Build the repository
 
@@ -37,6 +37,8 @@ directly rather than through `ctest`:
 
 ```sh
 ./.build-debug/tests/albor-tests
+bash build/check-format.sh
+bash build/check-link-boundary.sh
 ```
 
 ### AddressSanitizer
@@ -67,8 +69,8 @@ selection**, but a normal application makes that choice once.
 | `albor-blend2d` | the same runtime with the portable Blend2D renderer |
 | `albor-devrt-auto` | dev runtime: hot swap of `.ui` structure (optional, see [Tooling](tooling.md)) |
 
-`albor` is available on the desktop platforms with an adapter (macOS, Windows and Linux
-Wayland today). On a platform without a desktop adapter, use the headless or granular
+`albor` is available on the desktop platforms with an adapter (macOS, Windows, Linux Wayland
+and Linux X11). On a platform without a desktop adapter, use the headless or granular
 targets; see [Consuming Albor](consuming.md#advanced-composition).
 
 ## Embedding fonts
@@ -259,7 +261,7 @@ Complete, buildable applications live in the repository's `examples/` directory:
 | `hello-window` | an empty window with no generated component |
 | `hello-world` | the same window through the default GPU target and through `albor-blend2d` |
 | `greeting` | a compiled `.ui` component with signals, labels and a timer |
-| `form` | every shipped widget, plus the alignment patterns of `align_panel.ui` |
+| `form` | the main-window facade and the alignment patterns of `widget_form.ui` |
 | `reactive-counter` | hand-written C++ components on the reactive property engine |
 | `chart` | a manifest-declared native component with custom rendering |
 | `commands` | one shared `Command` bound across button, menu row and shortcut |
@@ -268,8 +270,10 @@ After `cmake --build --preset debug`, each example binary mirrors its source pat
 build directory, for example:
 
 ```sh
-./.build-debug/examples/greeting/albor-greeting
+./.build-debug/examples/hello-world/hello-world-albor
 ```
+
+The `greeting` example is macOS-only; most other examples build on every desktop platform.
 
 ## Where to go next
 

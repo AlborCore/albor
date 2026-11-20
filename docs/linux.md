@@ -1,6 +1,6 @@
 # Linux
 
-The Linux platform adapter is `albor/platform/linux/wayland/` for **Wayland** (Tier 1, §5.3, AD-22) and
+The Linux platform adapter is `albor/platform/linux/wayland/` for **Wayland** (Tier 1, §5.3) and
 `albor/platform/linux/x11/` for **X11** (Tier 2). The GPU backend is `render-albor` on Vulkan, with Wayland
 and XCB WSI through the platform HAL.
 
@@ -114,7 +114,9 @@ real target, and the remote display path below is optional. The portal suite is 
 it starts its own `dbus-daemon` with a config that declares no service directory, owns
 `org.freedesktop.portal.Desktop` on that private bus, and drives the chooser and the settings
 interface through it, so neither the session bus nor the host's real portal is ever touched; a
-host without `dbus-daemon` skips those tests instead of failing them.
+host without `dbus-daemon` skips those tests instead of failing them. The accessibility suite is
+self-contained in the same way: it starts its own `dbus-daemon`, owns `org.a11y.atspi.Registry`
+and `org.a11y.Bus` on it, and reads the published tree with a raw libdbus client.
 
 ## Dependencies
 
@@ -131,7 +133,7 @@ adapter, because the desktop portals answer on the session bus:
 | `mesa-vulkan-drivers` | the lavapipe device the CI windowed suite runs on; its ICD is named `lvp_icd.json` from mesa 25 and `lvp_icd.x86_64.json` before it |
 | `xvfb` | the headless X server the X11 suite runs under |
 | `libpango1.0-dev`, `libcairo2-dev` | the libdecor Cairo frame |
-| `libdbus-1-dev` | the desktop portal file chooser and colour scheme |
+| `libdbus-1-dev` | the desktop portal file chooser and colour scheme, and the AT-SPI accessibility bus |
 | `pkg-config` | resolve the modules above |
 | `autoconf`, `automake`, `libtool`, `autoconf-archive` | autotools vcpkg uses to build the `gperf` host port from source |
 
@@ -292,7 +294,7 @@ grab, and dismisses it on the first press outside its bounds, which raises the s
 notification a Wayland `xdg_popup.done` does. A close request the window manager sends
 (`WM_DELETE_WINDOW`) tears the native window down and raises that notification too, which is what
 drops the framework stage and lets the last window end the run. X11 remains Tier 2: it has no
-IME, no AT-SPI bridge and no fractional scale protocol.
+IME and no fractional scale protocol.
 
 ## A display on a remote X11 host
 
@@ -316,7 +318,18 @@ substitute: it lets X11 applications run on a Wayland host, which is the opposit
 - **Platform font resolution** resolves a family and weight through fontconfig and hands over its sfnt bytes; embedded text never reaches it, and a host without fontconfig degrades to embedded-only.
 - **Vulkan** with Wayland/X11 WSI is the GPU path, and `render-albor` is the default Linux renderer when the
   Vulkan loader is present. Blend2D stays the portable fallback.
-- **AT-SPI** accessibility is not implemented. #42.
+- **AT-SPI** accessibility lives in `albor/accessibility/accessibility_platform.linux.c++` and answers on the
+  D-Bus accessibility bus the `org.a11y.Bus` launcher names, with the session bus as the fallback. A publish
+  rebuilds the indexed object tree and broadcasts `children-changed` on the application root, but only when
+  the roots actually changed. A client request is queued on the dispatch thread and run by the next publish,
+  so application code never runs off the UI thread. Role, role name, name, description, interfaces, bounds,
+  state, action, range, text, editable text and radio-group selection are exposed, and the adapter is
+  platform neutral above that surface, so X11 applications are served by the same bridge. The gaps are shared with macOS and Windows: only structure is announced, so
+  state, name, selection and focus changes raise no event; a list and a tab view do not expose container
+  selection yet; and an index-based object path can go stale after a republish. On Linux alone the extents
+  are the published logical bounds rather than screen coordinates, because the adapter never learns where
+  its window sits. A request that arrives after the last publish waits for the next frame, because publish is
+  the marshalling point the automation transport uses too. `dbus-1` is a build-time dependency.
 - **X11** is the Tier 2 adapter, built from `albor/platform/linux/x11/`.
 - A headless Weston has no seat, so clipboard readiness, real input devices and a
   compositor-driven popup dismissal need a desktop session; the suite covers activation's
@@ -326,10 +339,9 @@ substitute: it lets X11 applications run on a Wayland host, which is the opposit
 
 ## CI
 
-The Linux debug and release jobs are **temporarily disabled** in `.github/workflows/build.yml`
-until a Linux host can run the full vcpkg build and the platform suite. The `linux-floor`
-job runs the same work on `almalinux:9` and is disabled with them. Re-enable the two matrix
-entries and remove the `linux-floor` job's `if: false` when the host is ready. The jobs
+The Linux debug, release and coverage jobs run in `.github/workflows/build-linux.yml` with
+lavapipe. Only the `linux-floor` job, which runs the floor check on `almalinux:9`, is disabled
+with `if: false`. The jobs
 install the Wayland, Pango, Cairo and D-Bus development packages, run `albor-linux-tests`
 after `albor-tests`, and add a second run under a scale-2 Weston. The AlmaLinux job also
 ends with `build/check-linux-floor.sh`, which rejects a newer `GLIBC`, `GLIBCXX` or

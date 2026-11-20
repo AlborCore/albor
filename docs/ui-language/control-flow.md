@@ -49,19 +49,20 @@ toolbar that dimly disables — anything whose state must survive being switched
 ## `Repeat`: rows over a collection
 
 ```text
-inout property<vector<string>> items;
+in property<vector<TaskRecord>> tasks;  // a manifest record with a `key` field
 
 Column {
-    Repeat(item in items) {
-        Label { text: item; }
+    Repeat(task in tasks) {
+        Label { text: task.title; }
     }
 }
 ```
 
-`Repeat(item in collection)` instantiates its body once per element. The item name binds the
-current element; the body is ordinary markup and may be any size. A `Repeat` is not a root
-element: the rows it builds need a container to hang from. An optional second name is
-the row index:
+A row must be a manifest record whose `key` field is its identity; scalar rows and records
+declared in `.ui` are refused (`E0503`). `Repeat(item in collection)` instantiates its body
+once per element. The item name binds the current element; the body is ordinary markup and may
+be any size. A `Repeat` is not a root element: the rows it builds need a container to hang
+from. An optional second name is the row index:
 
 ```text
 Repeat(item in items, index) {
@@ -73,7 +74,7 @@ A record row may carry its own collection fields, which the body reads like any 
 An option card can therefore give every row its own choices:
 
 ```text
-inout property<vector<OptionRow>> options;
+in property<vector<OptionRow>> options;  // a manifest record with a `key` field
 
 Repeat(option in options) {
     ComboBox { items: option.choices; }

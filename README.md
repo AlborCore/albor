@@ -26,7 +26,7 @@ modality, and a two-stage render pipeline that never blocks the UI thread on dra
 > `render-albor`, the in-repo GPU 2D renderer, draws shapes, retained
 > resources, outlined text, shadows, composited layers and all Porter-Duff composition
 > modes, and is gated against a software reference by a parity suite. The architecture
-> is settled and specified in [`albor-design-v4.md`](albor-design-v4.md).
+> and acceptance contract is [`docs/framework-design.md`](docs/framework-design.md).
 
 ## Why Albor exists
 
@@ -54,30 +54,30 @@ an existing declarative framework:
 
 ## Design pillars
 
-These are non-negotiable invariants (AD-NN in the design spec); violating any of them
+These are non-negotiable invariants (BDG-NN in the design contract); violating any of them
 is a defect, not a style choice:
 
-- **No interpreter in Release (AD-01).** Production builds contain no `.ui` parser, no
+- **No interpreter in Release (BDG-01).** Production builds contain no `.ui` parser, no
   IR evaluator, no type registry, no property-by-name reflection. `.ui` compiles to
   native C++.
-- **Two-stage frame (AD-18).** The UI thread runs layout and records an immutable
+- **Two-stage frame (BDG-06).** The UI thread runs layout and records an immutable
   `FrameScene`; a render thread executes it. Render execution never calls application
   code.
-- **Immutable snapshots cross threads (§10.5).** Application data reaches custom nodes
+- **Immutable snapshots cross threads (BDG-06).** Application data reaches custom nodes
   and bindings as `std::shared_ptr<const T>` in an observable `Snapshot<T>`; workers
   never mutate live UI objects.
-- **No platform or renderer types in public headers (AD-05).** Rendering, windowing,
+- **No platform or renderer types in public headers (BDG-08).** Rendering, windowing,
   text shaping and property storage sit behind stable interfaces, so any subsystem can
   be swapped without breaking application code.
-- **The manifest is the single source of truth (AD-17).** Native C++ components exposed
+- **The manifest is the single source of truth (BDG-07).** Native C++ components exposed
   to `.ui` are declared in native manifests; the C++ glue is generated, and the
   compiler never parses application headers.
-- **Explicit identity (AD-11).** A node's author-assigned `id:` is its authoritative
+- **Explicit identity (BDG-05).** A node's author-assigned `id:` is its authoritative
   identity; generated keys are correlation hints only.
-- **Concrete, non-virtual facades (AD-03).** Generated public headers expose a stable
+- **Concrete, non-virtual facades (§11).** Generated public headers expose a stable
   interface over a private implementation — never an abstract base with virtual
   dispatch.
-- **Dev/Test features are excluded at link time, never with `#ifdef` (AD-04).** Class
+- **Dev/Test features are excluded at link time, never with `#ifdef` (BDG-03).** Class
   layout is byte-identical across Release, Dev and Test.
 
 ## The language
@@ -181,8 +181,8 @@ hatch: `application.stage(handle)` reaches the wiring itself, and
 `albor-devrt-auto` is the whole switch. An application that links it gets hot swap of
 `.ui` structure and property values; an application that does not is unaffected, and a
 reference to the extension from a Release target **fails to link** rather than compiling away
-(§12.1, AD-01, AD-04). No application code changes between the two, and the framework itself
-knows nothing about the extension beyond four null-checked hook calls.
+(§12, BDG-01, BDG-03). No application code changes between the two, and the framework itself
+knows nothing about the extension beyond the registration hooks present in every build.
 
 Complete, buildable versions live in [`examples/`](examples/) — a hand-built reactive
 counter, a manifest-driven chart with custom line-batch rendering, the compiled
@@ -197,22 +197,22 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | startup facade: one call wires window, surface, pipeline, executor and input | done (§4.1, §6.1) |
 | dev runtime extension: self-installing, patches a live tree in place | done (§12.1) |
 | macOS platform: AppKit window, display-link pacing, input | done (§5) |
-| `render-albor` GPU backend: fills, strokes, outlined text, retained resources, images, shadows, layers, fill rules, 11 composition modes | done on macOS, Windows and Linux (§6.2–§6.4, AD-26) |
-| software reference (Blend2D + HarfBuzz glyph atlas) and Blend2D windowed backend | done (§6.3, AD-26) |
-| GPU/software parity suite, headless CI | done (AD-26, §16) |
+| `render-albor` GPU backend: fills, strokes, outlined text, retained resources, images, shadows, layers, fill rules, 11 composition modes | done on macOS, Windows and Linux (§6.2, BDG-09) |
+| software reference (Blend2D + HarfBuzz glyph atlas) and Blend2D windowed backend | done (§6.3) |
+| GPU/software parity suite, headless CI | done (§13.2) |
 | reactive properties, eager-push binding engine, snapshots | done (§7) |
 | ui tree, components, event routing, focus | done (§8) |
 | measure/arrange layout, row/column/stack/grid/padding | done (§8.2) |
 | widgets: Button, Label, CheckBox, RadioButton, RadioGroup, Slider, NumericStepper, Canvas, Image, TextField, ComboBox, Panel, Card, ListBox, ScrollView, ProgressBar, TabView, Tab, TabTitle | done (§8) |
 | semantic tree, explicit keys, semantic provider | done (§10.1) |
 | `.ui` compiler, manifest, glue generator, codegen | done (phase 4, §11) |
-| text shaping (HarfBuzz), embedded font registration and weights, i18n catalog | done (§9.1, AD-34) |
+| text shaping (HarfBuzz), embedded font registration and weights, i18n catalog | done (§9) |
 | animation engine, theme system and widget states | done (§7.3) |
 | inspector, LSP, preview host, automation core, MCP adapter | done (Dev/Test only, phase 5) |
-| accessibility: macOS NSAccessibility and Windows UI Automation bridges | done; AT-SPI adapter planned (§10.2) |
+| accessibility: macOS NSAccessibility, Windows UI Automation and Linux AT-SPI bridges | done (§10.2, BDG-10) |
 | Win32 platform: window, clipboard, event loop, text encoding, named-pipe automation | implemented and built in CI; Direct3D backend ships (§5.3) |
 | Wayland and X11 platforms with the Vulkan and Blend2D renderers | implemented; the Linux CI jobs run the offscreen suite on lavapipe and the windowed suite under Weston and Xvfb. |
-| out-of-process dev service that delivers definitions to the extension | planned (§12.1, AD-12) |
+| out-of-process dev service that delivers definitions to the extension | planned (GAP-03) |
 
 ## Building
 
@@ -312,9 +312,9 @@ feature), and the pinned `REF` names a commit that exists on GitHub.
 
 - [`docs/`](docs/index.md) — the user guide, including
   [Consuming Albor](docs/consuming.md) for third-party applications.
-- [`albor-design-v4.md`](albor-design-v4.md) — the architecture specification; the
-  single source of truth for module layout and decisions (`AD-NN`, `§N` are cited
-  throughout the code and reviews).
+- [`docs/framework-design.md`](docs/framework-design.md) — the architecture and acceptance
+  contract; the single source of truth for boundaries, module ownership and open gaps
+  (`BDG-NN`, `GAP-NN` and `§N` are cited throughout code and reviews).
 - [`STYLE-GUIDE.md`](STYLE-GUIDE.md) — code style rules enforced by
   `build/check-format.sh`.
 - [`AGENTS.md`](AGENTS.md) — the contract for AI agents working in this repository.

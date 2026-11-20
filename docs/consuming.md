@@ -148,7 +148,7 @@ underlying targets directly. The framework's public building blocks are:
 
 | target | carries |
 | --- | --- |
-| `albor-platform-auto` | the selected desktop platform adapter (`-macos-auto`, `-windows-auto` or `-wayland-auto`) |
+| `albor-platform-auto` | the selected desktop platform adapter (`-macos-auto`, `-windows-auto`, `-wayland-auto` or `-x11-auto`) |
 | `albor-platform-macos-auto` | AppKit window, input and display-link pacing |
 | `albor-platform-windows-auto` | Win32 window, input and event loop |
 | `albor-platform-wayland-auto` | Wayland window, input, xdg-shell, activation and decorations |
@@ -158,12 +158,12 @@ underlying targets directly. The framework's public building blocks are:
 | `albor-layout` | the measure/arrange contract and containers |
 | `albor-widgets` | Button, Label, TextField, Slider, CheckBox, RadioButton, RadioGroup, NumericStepper, Canvas, Image, ListBox, ScrollView, ProgressBar, TabView and the containers |
 | `albor-accessibility` | the semantic/accessibility bridge |
-| `albor-i18n` | translation catalogs and RTL helpers |
+| `albor-i18n` | translation catalogs and locale reading-direction reporting (RTL layout mirroring is a gap) |
 | `albor-resources` | image decoding, the image registry and the font registry |
 | `albor-application` | application lifecycle, tasks, timers and window wiring |
 | `albor-ui` | the UI tree, components, event routing and scene build |
 | `albor-render` | the portable rendering HAL, frame scene and pipeline |
-| `albor-render-albor-auto` | the in-repo GPU backend (Metal or Direct3D) |
+| `albor-render-albor-auto` | the in-repo GPU backend (Metal, Direct3D 11 or Vulkan) |
 | `albor-render-blend2d-auto` | the Blend2D CPU backend |
 | `albor-render-software-auto` | the Test-configuration software reference |
 | `albor-devrt-auto` | the Dev hot-swap extension |
@@ -205,7 +205,7 @@ The same rules apply to every composition:
 
 A window is created through `Application::create_window`. `WindowOptions` names its role
 (`Normal`, `Dialog`, `Tool`, `Popup`), its modality (`None`, `WindowModal`, `ApplicationModal`)
-and the parent it belongs to. Role and modality are separate (AD-08): the role is the native
+and the parent it belongs to. Role and modality are separate (§5.2): the role is the native
 window style, the modality is a framework constraint enforced before any event reaches a stage.
 
 - `WindowModal` blocks its parent window; `ApplicationModal` blocks every other window that was
@@ -297,7 +297,7 @@ endif()
 ```
 
 A Release link that references `albor-devrt` or `albor-automation` fails at link time, by
-design (AD-04, AD-10). See [Tooling](tooling.md#hot-reload) and
+design (BDG-03, BDG-04). See [Tooling](tooling.md#hot-reload) and
 [Automation and MCP](automation.md).
 
 ## Requirements and deployment
@@ -322,9 +322,9 @@ design (AD-04, AD-10). See [Tooling](tooling.md#hot-reload) and
   the Wayland protocol XMLs are vendored into the framework, so no libdecor package, plugin
   directory or `wayland-protocols` package is needed. [Linux](linux.md) lists the packages
   and the Alma 9 container.
-- **No shader toolchain is needed to build.** The Metal `.metallib` and the Direct3D `.dxbc`
-  are committed artifacts. Only a change to a shader source needs the matching compiler; see
-  [Tooling](tooling.md#the-shaders).
+- **No shader toolchain is needed to build.** The Metal `.metallib`, Direct3D `.dxbc` and
+  Vulkan `.spv` are committed artifacts with stamps. Only a change to a shader source needs the
+  matching compiler; see [Tooling](tooling.md#the-shaders).
 - A consumer that names its own deployment floor must use 13.3 or newer on macOS; the
   installed package config refuses a lower floor before it links.
 
@@ -361,5 +361,5 @@ without changing consumer CMake. When that lands, the consumer still links `albo
 - **A font is not resolved.** Declare the face with `albor_build_font_assets` before the UI
   component and set the generated default family before the first window.
 - **A shader stamp check fails.** A shader source and its committed artifact disagree; run
-  `bash build/shaders.sh --write` for Metal or `bash build/shaders.sh --d3d --write` for
-  Direct3D in the framework checkout.
+  `bash build/shaders.sh --write` for Metal, `bash build/shaders.sh --d3d --write` for Direct3D
+  or `bash build/shaders.sh --vulkan --write` for Vulkan in the framework checkout.

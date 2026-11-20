@@ -13,6 +13,7 @@ keyboard.
 | `viewport_height` | `float` | the list's height; density-scaled, accepts `px` |
 | `overscan` | `float` | extra rows built past each edge to hide populate cost; accepts `px` |
 | `scrollbar` | `scrollbar` | `Scrollbar.as_needed`, `Scrollbar.off`, `Scrollbar.on` |
+| `disabled` | `bool` | refuses all interaction |
 
 Plus the [common properties](index.md#common-properties).
 
