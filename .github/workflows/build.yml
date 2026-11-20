@@ -148,6 +148,8 @@ jobs:
             enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
             preset: coverage
             coverage-flag: macos
+            cov-profdata: xcrun llvm-profdata
+            cov-cov: xcrun llvm-cov
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
@@ -182,12 +184,20 @@ jobs:
             enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
             preset: coverage
             coverage-flag: windows
+            cov-c: clang-cl
+            cov-cxx: clang-cl
+            cov-profdata: llvm-profdata
+            cov-cov: llvm-cov
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
               # the preset launches the compiler through ccache, which the runner image does not ship
               choco install ccache --no-progress -y
+              # clang-cl and the llvm tools ship together with the image's LLVM install
+              llvm_bin="/c/Program Files/LLVM/bin"
+              [ -x "$llvm_bin/clang-cl.exe" ] || { echo "clang-cl missing from $llvm_bin" >&2; exit 1; }
+              echo "$llvm_bin" >> "$GITHUB_PATH"
           - name: linux-release
             os: ubuntu-24.04
             enable: true
@@ -205,8 +215,12 @@ jobs:
             enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
             preset: coverage
             coverage-flag: linux
+            cov-c: clang-18
+            cov-cxx: clang++-18
+            cov-profdata: llvm-profdata-18
+            cov-cov: llvm-cov-18
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
+            setup: sudo apt-get update && sudo apt-get install -y ccache clang-18 llvm-18 libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3
@@ -292,7 +306,13 @@ jobs:
       - name: configure
         id: configure
         if: matrix.enable
-        run: cmake --preset ${{ matrix.preset }} ${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }}
+        run: |
+          extra="${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }}"
+          # the coverage matrix pins clang because the profile format and tools must match the compiler
+          if [ -n "${{ matrix.cov-cxx }}" ]; then
+            extra="$extra -DCMAKE_C_COMPILER=${{ matrix.cov-c }} -DCMAKE_CXX_COMPILER=${{ matrix.cov-cxx }}"
+          fi
+          cmake --preset ${{ matrix.preset }} $extra
 
       - name: build
         if: matrix.enable
@@ -445,16 +465,49 @@ jobs:
       - name: lcov coverage report
         if: matrix.enable && matrix.preset == 'coverage'
         run: |
-          xcrun llvm-profdata merge -sparse coverage-*.profraw -o coverage.profdata
-          objects=(./.build-coverage/tests/albor-tests)
-          for binary in ./.build-coverage/tests/albor-generated-font-checks ./.build-coverage/tests/albor-render-blend2d-auto-checks ./.build-coverage/tests/albor-render-albor-auto-checks ./.build-coverage/tests/albor-automation-host-tests; do
-            if [ -f "$binary" ]; then
-              objects+=("-object" "$binary")
+          ${{ matrix.cov-profdata }} merge -sparse coverage-*.profraw -o coverage.profdata
+          objects=()
+          for name in albor-tests albor-generated-font-checks albor-render-blend2d-auto-checks albor-render-albor-auto-checks albor-automation-host-tests; do
+            path="./.build-coverage/tests/$name"
+            if [ ! -f "$path" ] && [ -f "$path.exe" ]; then
+              path="$path.exe"
+            fi
+            if [ -f "$path" ]; then
+              if [ ${#objects[@]} -eq 0 ]; then
+                objects+=("$path")
+              else
+                objects+=("-object" "$path")
+              fi
             fi
           done
-          xcrun llvm-cov export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' "${objects[@]}" > coverage.lcov
-          # the export carries absolute source paths, and the coverage api matches on repository relative ones
-          sed -i.bak "s|^SF:$PWD/|SF:|" coverage.lcov && rm -f coverage.lcov.bak
+          ${{ matrix.cov-cov }} export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' "${objects[@]}" > coverage.lcov
+          # the export carries absolute source paths, which the coverage api needs relative to the repository root
+          python_bin=python3
+          command -v python3 >/dev/null 2>&1 || python_bin=python
+          "$python_bin" - <<'PY'
+          import os
+          import re
+          root = os.getcwd().replace('\\', '/')
+          roots = [root]
+          # git bash renders a windows drive as /d/..., while clang-cl reports D:/...
+          drive = re.match(r'^/([A-Za-z])/(.*)$', root)
+          if drive:
+              roots.append(drive.group(1).upper() + ':/' + drive.group(2))
+          roots.sort(key=len, reverse=True)
+          lines = []
+          with open('coverage.lcov', encoding='utf-8') as report:
+              for line in report:
+                  if line.startswith('SF:'):
+                      path = line[3:].strip().replace('\\', '/')
+                      for candidate in roots:
+                          if path.startswith(candidate + '/'):
+                              path = path[len(candidate) + 1:]
+                              break
+                      line = 'SF:' + path + '\n'
+                  lines.append(line)
+          with open('coverage.lcov', 'w', encoding='utf-8') as report:
+              report.writelines(lines)
+          PY
 
       - name: upload coverage to codecov
         if: matrix.enable && matrix.preset == 'coverage'
