@@ -15,12 +15,18 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
+#include "accessibility_corpus.h"
+
 #include "albor/accessibility/accessibility_adapter.h"
 #include "albor/accessibility/accessibility_platform.win32.h"
+#include "albor/runtime/binding_engine.h"
 #include "albor/semantics/semantic_provider.h"
+#include "albor/ui/semantic_tree_builder.h"
+#include "tools/alloc-probe/alloc_probe.h"
 
 using namespace albor;
 
@@ -873,4 +879,144 @@ TEST(Win32AccessibilityRole, AnImageAnnouncesItsControlTypeNameAndEnabledState) 
     ASSERT_EQ(enabled.vt, VT_BOOL);
     EXPECT_EQ(enabled.boolVal, VARIANT_FALSE);
     VariantClear(&enabled);
+}
+
+TEST(Win32AccessibilityRole, ARadioGroupExposesItsSelection) {
+    // arrange a radio group with two choices, the first selected (§10.1)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    std::size_t group = tree.add(SemanticNode{SemanticRole::RadioGroup});
+    std::size_t first = tree.add(SemanticNode{SemanticRole::RadioButton}, group);
+    std::size_t second = tree.add(SemanticNode{SemanticRole::RadioButton}, group);
+    tree.mutable_at(group)->set_name("Mode");
+    tree.mutable_at(first)->set_name("One");
+    tree.mutable_at(second)->set_name("Two");
+    tree.mutable_at(first)->set_selected(true);
+    tree.mutable_at(first)->set_check(CheckState::Checked);
+    // the second choice records the activate action, which selecting it runs (§10.1)
+    bool activated = false;
+    (void)tree.mutable_at(second)->add_action("activate", [&activated] { activated = true; });
+    // act
+    fixture.adapter().publish(tree);
+    // assert the group exposes the selection pattern, which is the container a reader reads the choice from (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced_group;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced_group.GetAddressOf()));
+    ASSERT_NE(announced_group.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> group_simple = WindowFixture::simple_of(announced_group.Get());
+    ASSERT_NE(group_simple.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(group_simple->GetPatternProvider(UIA_SelectionPatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<ISelectionProvider> selection;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&selection));
+    // assert the group keeps one choice and always keeps one, which the single selection pattern states (§10.2)
+    BOOL multiple = TRUE;
+    ASSERT_HRESULT_SUCCEEDED(selection->get_CanSelectMultiple(&multiple));
+    EXPECT_FALSE(multiple);
+    BOOL required = FALSE;
+    ASSERT_HRESULT_SUCCEEDED(selection->get_IsSelectionRequired(&required));
+    EXPECT_TRUE(required);
+    // assert the selection names the chosen choice, which is the one a reader announces (§10.2)
+    SAFEARRAY* chosen = nullptr;
+    ASSERT_HRESULT_SUCCEEDED(selection->GetSelection(&chosen));
+    ASSERT_NE(chosen, nullptr);
+    LONG count = -1;
+    ASSERT_HRESULT_SUCCEEDED(SafeArrayGetUBound(chosen, 1, &count));
+    EXPECT_EQ(count, 0L);
+    IRawElementProviderSimple* element = nullptr;
+    LONG index = 0;
+    ASSERT_HRESULT_SUCCEEDED(SafeArrayGetElement(chosen, &index, &element));
+    ASSERT_NE(element, nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> chosen_simple;
+    chosen_simple.Attach(element);
+    VARIANT name{};
+    ASSERT_HRESULT_SUCCEEDED(chosen_simple->GetPropertyValue(UIA_NamePropertyId, &name));
+    ASSERT_EQ(name.vt, VT_BSTR);
+    EXPECT_STREQ(name.bstrVal, L"One");
+    VariantClear(&name);
+    SafeArrayDestroy(chosen);
+    // assert a repeated read of the selection retains nothing, which a polling reader repeats (§10.2)
+    probe::set_counting(true);
+    probe::reset();
+    SAFEARRAY* repeated = nullptr;
+    const HRESULT repeated_result = selection->GetSelection(&repeated);
+    if (SUCCEEDED(repeated_result) && repeated != nullptr)
+        SafeArrayDestroy(repeated);
+    const std::size_t leaked = probe::live();
+    probe::set_counting(false);
+    EXPECT_HRESULT_SUCCEEDED(repeated_result);
+    EXPECT_NE(repeated, nullptr);
+    EXPECT_EQ(leaked, 0U);
+    // act the second choice is selected through its own item pattern, which is the only portable route (§10.1)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced_first;
+    ASSERT_HRESULT_SUCCEEDED(announced_group->Navigate(NavigateDirection_FirstChild, announced_first.GetAddressOf()));
+    ASSERT_NE(announced_first.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced_second;
+    ASSERT_HRESULT_SUCCEEDED(announced_first->Navigate(NavigateDirection_NextSibling, announced_second.GetAddressOf()));
+    ASSERT_NE(announced_second.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> second_simple = WindowFixture::simple_of(announced_second.Get());
+    ASSERT_NE(second_simple.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IUnknown> item_pattern;
+    ASSERT_HRESULT_SUCCEEDED(second_simple->GetPatternProvider(UIA_SelectionItemPatternId, item_pattern.GetAddressOf()));
+    ASSERT_NE(item_pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<ISelectionItemProvider> item;
+    ASSERT_HRESULT_SUCCEEDED(item_pattern.As(&item));
+    ASSERT_HRESULT_SUCCEEDED(item->Select());
+    // assert the choice's activate action ran, because a radio selection is an activation (§10.1)
+    EXPECT_TRUE(activated);
+}
+
+TEST(Win32AccessibilityRole, TheWidgetCorpusAnnouncesEveryNodeEveryAdapterCarries) {
+    // arrange the shared corpus, which every platform adapter announces through its own api (§13.2, BDG-10)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    BindingEngine engine;
+    AccessibilityCorpus corpus(&engine, nullptr);
+    const SemanticTree tree = build_semantic_tree(corpus);
+    ASSERT_FALSE(tree.empty());
+    // act
+    fixture.adapter().publish(tree);
+    // assert the announced hierarchy is the published tree, which is the conformance the corpus proves (§13.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    std::vector<Microsoft::WRL::ComPtr<IRawElementProviderFragment>> pending;
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced_root;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced_root.GetAddressOf()));
+    ASSERT_NE(announced_root.Get(), nullptr);
+    pending.push_back(announced_root);
+    std::size_t position = 0;
+    while (!pending.empty()) {
+        Microsoft::WRL::ComPtr<IRawElementProviderFragment> fragment = pending.back();
+        pending.pop_back();
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(fragment.Get());
+        ASSERT_NE(simple.Get(), nullptr);
+        // the announced node is the tree node at this position, because both walks are the same depth first order (§10.1)
+        ASSERT_LT(position, tree.size());
+        const SemanticNode* node = tree.at(position);
+        ASSERT_NE(node, nullptr);
+        // a named node announces its name, which is what a reader speaks (§10.1, §10.2)
+        if (!node->name().empty()) {
+            VARIANT name{};
+            ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_NamePropertyId, &name));
+            EXPECT_EQ(name.vt, VT_BSTR);
+            EXPECT_STREQ(name.bstrVal, std::wstring(node->name().begin(), node->name().end()).c_str());
+            VariantClear(&name);
+        }
+        position++;
+        // the children are pushed in reverse, so the walk visits them in tree order (§10.1)
+        std::vector<Microsoft::WRL::ComPtr<IRawElementProviderFragment>> children;
+        Microsoft::WRL::ComPtr<IRawElementProviderFragment> child;
+        HRESULT next = fragment->Navigate(NavigateDirection_FirstChild, child.GetAddressOf());
+        while (SUCCEEDED(next) && child.Get() != nullptr) {
+            children.push_back(child);
+            child.Reset();
+            next = children.back()->Navigate(NavigateDirection_NextSibling, child.GetAddressOf());
+        }
+        for (auto entry = children.rbegin(); entry != children.rend(); ++entry)
+            pending.push_back(*entry);
+    }
+    EXPECT_EQ(position, tree.size());
 }

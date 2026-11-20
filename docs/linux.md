@@ -324,12 +324,14 @@ substitute: it lets X11 applications run on a Wayland host, which is the opposit
   the roots actually changed. A client request is queued on the dispatch thread and run by the next publish,
   so application code never runs off the UI thread. Role, role name, name, description, interfaces, bounds,
   state, action, range, text, editable text and radio-group selection are exposed, and the adapter is
-  platform neutral above that surface, so X11 applications are served by the same bridge. The gaps are shared with macOS and Windows: only structure is announced, so
-  state, name, selection and focus changes raise no event; a list and a tab view do not expose container
-  selection yet; and an index-based object path can go stale after a republish. On Linux alone the extents
-  are the published logical bounds rather than screen coordinates, because the adapter never learns where
-  its window sits. A request that arrives after the last publish waits for the next frame, because publish is
-  the marshalling point the automation transport uses too. `dbus-1` is a build-time dependency.
+  platform neutral above that surface, so X11 applications are served by the same bridge. A write or an
+  action reply reports that the request was accepted and queued for the next publish, which is when
+  application code runs it; a node that changes its mind by then refuses silently, because AT-SPI carries no
+  deferred answer. The gaps are shared with macOS and Windows: only structure is announced, so state, name,
+  selection and focus changes raise no event; a list and a tab view do not expose container selection yet;
+  and an index-based object path can go stale after a republish. On Linux alone the extents are the published
+  logical bounds rather than screen coordinates, because the adapter never learns where its window sits.
+  `dbus-1` is a build-time dependency.
 - **X11** is the Tier 2 adapter, built from `albor/platform/linux/x11/`.
 - A headless Weston has no seat, so clipboard readiness, real input devices and a
   compositor-driven popup dismissal need a desktop session; the suite covers activation's

@@ -1,0 +1,136 @@
+// the semantic tree conformance corpus, which every accessibility adapter announces through its native api (§13.2, BDG-10)
+
+// the corpus holds one control of every role the semantic tree carries, so an adapter cannot announce a subset (§10.1, §13.2)
+component AccessibilityCorpus {
+    inout property<string> name: "Albor";
+    inout property<float> level: 0.5;
+    inout property<bool> armed: false;
+
+    Column {
+        spacing: 4px;
+
+        Button {
+            id: corpus_button;
+            text: "Activate";
+        }
+
+        CheckBox {
+            id: corpus_check;
+            checked: armed;
+        }
+
+        Slider {
+            id: corpus_slider;
+            value: level;
+            min: 0.0;
+            max: 1.0;
+        }
+
+        TextField {
+            id: corpus_field;
+            value: name;
+        }
+
+        ProgressBar {
+            id: corpus_progress;
+            value: level;
+        }
+
+        RadioGroup {
+            id: corpus_group;
+            selected: 1;
+            vertical: false;
+
+            RadioButton {
+                id: corpus_choice_one;
+                value: 0;
+                label: "One";
+            }
+
+            RadioButton {
+                id: corpus_choice_two;
+                value: 1;
+                label: "Two";
+            }
+        }
+
+        NumericStepper {
+            id: corpus_stepper;
+            value: 5.0;
+            min: 0.0;
+            max: 10.0;
+            step: 1.0;
+        }
+
+        ComboBox {
+            id: corpus_combo;
+            items: ["One", "Two"];
+            selected: 0;
+            label: "Choice";
+        }
+
+        ListBox {
+            id: corpus_list;
+            viewport_width: 160px;
+            viewport_height: 80px;
+            row_height: 20px;
+        }
+
+        MenuBar {
+            MenuItem {
+                id: corpus_menu;
+                text: "Save";
+            }
+        }
+
+        TabView {
+            id: corpus_tabs;
+            selected: 0;
+
+            Tab {
+                id: corpus_page_one;
+                label: "First";
+                Label { text: "first page"; }
+            }
+
+            Tab {
+                id: corpus_page_two;
+                label: "Second";
+                Label { text: "second page"; }
+            }
+        }
+
+        Label {
+            id: corpus_label;
+            text: "Static text";
+        }
+
+        Image {
+            id: corpus_image;
+            source: @image("icon.png");
+            description: "Company logo";
+            width: 16px;
+            height: 16px;
+        }
+
+        Canvas {
+            id: corpus_canvas;
+            width: 40px;
+            height: 20px;
+        }
+
+        ScrollView {
+            id: corpus_scroll;
+            viewport_width: 120px;
+            viewport_height: 40px;
+
+            Label { text: "scrolled"; }
+        }
+
+        Panel {
+            id: corpus_panel;
+
+            Label { text: "panel"; }
+        }
+    }
+}

@@ -91,21 +91,53 @@ namespace
         return children;
     }
 
+    // collect the nodes without a parent, which are the roots the window announces (§10.2)
+    std::vector<std::size_t> root_indices(const albor::SemanticTree& tree) {
+        std::vector<std::size_t> roots;
+        for (std::size_t index = 0; index < tree.size(); index++)
+            if (tree.parent_of(index) == albor::SemanticTree::NO_PARENT)
+                roots.push_back(index);
+        return roots;
+    }
+
+    // hand out the elements a node selected among its children, which a selection container announces (§10.2)
+    NSArray* selected_child_elements_of(const std::vector<Published>& published, const albor::SemanticTree& tree, std::size_t index) {
+        // the chosen children are collected in tree order, which is the order a reader announces them (§10.2)
+        NSMutableArray* children = [NSMutableArray array];
+        // the flat tree carries the shape in its parent links, so every child is scanned (§10.1)
+        for (std::size_t child : tree.children_of(index)) {
+            // a child that was not published carries no element and no state, which the quiet default skips (§10.2)
+            if (child >= published.size())
+                continue;
+            // only a child the tree marked selected belongs to the selection, which the container reports (§10.1)
+            if (published[child].node.selected())
+                [children addObject:published[child].element];
+        }
+        return children;
+    }
+
 } // namespace
 
 // the bridge an element asks for its children, which is how a hierarchy is answered (§10.2)
 @protocol AlborAccessibilityOwner <NSObject>
 // hand out the elements published as the children of one, which is what the protocol asks for (§10.2)
 - (NSArray*)child_elements_of_index:(std::size_t)index;
+// hand out the elements one node selected among its children, which a selection container announces (§10.2)
+- (NSArray*)selected_child_elements_of_index:(std::size_t)index;
 @end
 
 // the work that answers a child query, which the bridge installs as a block (§10.2)
 typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
 
+// the work that answers a selection query, which the bridge installs as a block (§10.2)
+typedef NSArray* (^AlborAccessibilitySelectedChildren)(std::size_t);
+
 // the object that conforms to the protocol on the bridge's behalf, which objective c requires (§10.2)
 @interface AlborAccessibilityBridge : NSObject <AlborAccessibilityOwner>
 // the work that answers a child query, which the bridge installs once (§10.2)
 @property(nonatomic, copy) AlborAccessibilityChildren children_provider;
+// the work that answers a selection query, which the bridge installs once (§10.2)
+@property(nonatomic, copy) AlborAccessibilitySelectedChildren selected_children_provider;
 @end
 
 @implementation AlborAccessibilityBridge
@@ -113,6 +145,12 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
 - (NSArray*)child_elements_of_index:(std::size_t)index {
     // a bridge with no work has no children, which is the quiet default (§10.2)
     return self.children_provider == nil ? nil : self.children_provider(index);
+}
+
+// override: the answer is the installed work, which is the only place the selection lives (§10.2)
+- (NSArray*)selected_child_elements_of_index:(std::size_t)index {
+    // a bridge with no work has no selection, which the quiet default states (§10.2)
+    return self.selected_children_provider == nil ? nil : self.selected_children_provider(index);
 }
 @end
 
@@ -311,6 +349,17 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     // the owner walks the tree, which is the only place the hierarchy is recorded (§10.2)
     return [self.owner child_elements_of_index:published->index];
 }
+
+// override: the chosen children come from the published tree, which is where the selection lives (§10.2)
+- (NSArray*)accessibilitySelectedChildren {
+    // the publication this element carries the index its chosen children are found by (§10.2)
+    const Published* published = static_cast<const Published*>(self.publication);
+    // only a radio group announces a selection of children, which the other roles leave to their own items (§10.1)
+    if (published == nullptr || self.owner == nil || published->node.role() != albor::SemanticRole::RadioGroup)
+        return nil;
+    // the owner walks the tree, which is the only place the selection is recorded (§10.2)
+    return [self.owner selected_child_elements_of_index:published->index];
+}
 @end
 
 namespace albor::accessibility::platform
@@ -329,6 +378,10 @@ namespace albor::accessibility::platform
                 m_owner.children_provider = ^NSArray*(std::size_t index) {
                   return child_elements_of(m_published, m_tree, index);
                 };
+                // the bridge is told how to answer a selection query, or every group reports no selection (§10.2)
+                m_owner.selected_children_provider = ^NSArray*(std::size_t index) {
+                  return selected_child_elements_of(m_published, m_tree, index);
+                };
             }
 
             void attach_window(NativeWindowHandle window) override {
@@ -339,6 +392,9 @@ namespace albor::accessibility::platform
             }
 
             void publish(const SemanticTree& tree) override {
+                // the publication being replaced decides whether the structure changed, which a client re-reads (§10.2)
+                const std::size_t previous_count = m_tree.size();
+                const std::vector<std::size_t> previous_roots = root_indices(m_tree);
                 // the previous publication is dropped, because assistive technology reads one tree at a time (§10.2)
                 clear();
                 // the tree is kept whole, because the parent links are what build the hierarchy (§10.2)
@@ -359,7 +415,7 @@ namespace albor::accessibility::platform
                 // the count is what a coverage test asserts on (§10.2)
                 m_count = m_published.size();
                 // the tree is handed to the window, which is how assistive technology reaches it at all (§10.2)
-                attach_to_window();
+                attach_to_window(m_tree.size() != previous_count || root_indices(m_tree) != previous_roots);
             }
 
             void detach_window() override {
@@ -407,7 +463,7 @@ namespace albor::accessibility::platform
             }
 
             // hand the published root to the window, which is what makes the tree reachable (§10.2)
-            void attach_to_window() {
+            void attach_to_window(bool announce) {
                 // a bridge with no window publishes into nothing, which is the quiet default (§10.2)
                 NSView* view = content_view();
                 if (view == nil)
@@ -416,10 +472,16 @@ namespace albor::accessibility::platform
                 const std::size_t root = root_index();
                 if (root == SemanticTree::NO_PARENT || root >= m_published.size()) {
                     view.accessibilityChildren = @[];
+                    // a structure that changed tells the view, which a reader re-reads the children from (§10.2)
+                    if (announce)
+                        NSAccessibilityPostNotification(view, NSAccessibilityLayoutChangedNotification);
                     return;
                 }
                 // the content view announces the published root, so the reader walks the tree from there (§10.2)
                 view.accessibilityChildren = @[ m_published[root].element ];
+                // a structure that changed tells the view, which a reader re-reads the children from (§10.2)
+                if (announce)
+                    NSAccessibilityPostNotification(view, NSAccessibilityLayoutChangedNotification);
             }
 
             // take the tree back out of the window, which a rebuild and a detach both need (§10.2)
