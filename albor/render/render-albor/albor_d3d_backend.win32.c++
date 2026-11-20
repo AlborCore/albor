@@ -40,10 +40,6 @@ namespace albor::render
 {
     namespace
     {
-// the sdk's uuid macro expands at every use in this unit, so the suppression spans the unit (§5.3)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wlanguage-extension-token"
-
         // com pointers release their interface on every exit, so no early return leaves a device behind (§6.3)
         using Microsoft::WRL::ComPtr;
 
@@ -1738,6 +1734,4 @@ namespace albor::render
             return nullptr;
         return surface;
     }
-// the diagnostic state returns to what this translation unit had before the suppression (§5.3)
-#pragma clang diagnostic pop
 } // namespace albor::render

@@ -1,15 +1,11 @@
 #include "albor/text/text-harfbuzz/harfbuzz_typeface_resolver.h"
 
-// the sdk exchange macros carry language extension tokens, so the diagnostic is silenced from here on
-#pragma clang diagnostic ignored "-Wlanguage-extension-token"
-
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <dwrite.h>
 #include <windows.h>
 
 #include <string>
-#include <string_view>
 
 #include "albor/platform/windows/text_encoding.h"
 

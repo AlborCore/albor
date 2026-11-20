@@ -37,6 +37,7 @@ jobs:
             enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
+            extra-configure: ''
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
@@ -50,19 +51,21 @@ jobs:
             enable: true
             preset: release
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
+            extra-configure: -DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
               # the preset launches the compiler through ccache, which the runner image does not ship
-              choco install ccache --no-progress -y
+              bash build/install-ccache.sh
           - name: linux-release
             os: ubuntu-24.04
             enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
+            extra-configure: -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
             # wayland-protocols and libdecor are vendored, so the cache job installs the frame's system libraries instead (AD-16)
             # the vulkan loader and lavapipe carry the gpu backend, which the cache job builds
-            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers weston pkg-config libgl1-mesa-dri libegl1
+            setup: sudo apt-get update && sudo apt-get install -y ccache clang-18 llvm-18 libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3
@@ -130,7 +133,7 @@ jobs:
 
       - name: configure
         if: matrix.enable
-        run: cmake --preset ${{ matrix.preset }} ${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }}
+        run: cmake --preset ${{ matrix.preset }} ${{ matrix.extra-configure }}
 
       - name: build
         if: matrix.enable

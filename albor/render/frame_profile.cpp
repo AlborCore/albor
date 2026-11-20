@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <mutex>
+#include <optional>
+#include <string>
+
+#include "albor/core/env.h"
 
 namespace albor
 {
@@ -140,12 +143,12 @@ namespace albor
 
         // read the environment once, because the gate is what keeps a normal run silent (§6.1)
         [[nodiscard]] bool read_enabled() {
-            const char* value = std::getenv("ALBOR_PROFILE");
+            const std::optional<std::string> value = albor::core::get_environment_variable("ALBOR_PROFILE");
             // an unset or empty variable leaves the profile off, which is what a normal run carries
-            if (value == nullptr || value[0] == '\0')
+            if (!value.has_value() || value->empty())
                 return false;
             // a leading zero is the explicit off, so a script can export the variable without profiling
-            return value[0] != '0';
+            return value->front() != '0';
         }
 
         // the process wide state, which the ui thread and the render thread both record into (§6.1)

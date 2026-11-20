@@ -1,0 +1,440 @@
+name: build linux
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-pr:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    outputs:
+      has_pr: ${{ steps.check.outputs.has_pr }}
+    steps:
+      - uses: ./.github/actions/check-pr
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  shaders-linux:
+    name: shaders (linux)
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: toolchain
+        run: |
+          sudo apt-get update && sudo apt-get install -y glslang-tools python3
+      - name: shader
+        run: bash build/shaders.sh --vulkan
+
+  build-linux:
+    name: build (${{ matrix.preset }})
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      code-quality: write
+      id-token: write
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: release
+            enable: true
+          - preset: debug
+            enable: true
+          - preset: coverage
+            enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage-%p.profraw
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: platform setup
+        if: matrix.enable
+        run: sudo apt-get update && sudo apt-get install -y ccache clang-18 llvm-18 libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
+
+      - name: vulkan driver
+        if: matrix.enable
+        run: |
+          # mesa 25 names the lavapipe icd lvp_icd.json, older releases name it lvp_icd.x86_64.json (AD-22)
+          icd=""
+          for candidate in /usr/share/vulkan/icd.d/lvp_icd*.json; do
+            if [ -f "$candidate" ]; then
+              icd="$candidate"
+              break
+            fi
+          done
+          # a step that runs without a driver must fail here rather than skip every vulkan test (§6.3)
+          if [ -z "$icd" ]; then
+            echo "no lavapipe icd under /usr/share/vulkan/icd.d" >&2
+            exit 1
+          fi
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+
+      - name: toolchain, vcpkg, caches, configure and build
+        if: matrix.enable
+        uses: ./.github/actions/build-common
+        with:
+          preset: ${{ matrix.preset }}
+          vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
+          platform: Linux
+          extra-configure: -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
+
+      - name: unit tests
+        if: matrix.enable
+        working-directory: .build-${{ matrix.preset }}/tests
+        run: ./albor-tests && ./albor-generated-font-checks
+
+      - name: linux wayland tests
+        if: matrix.enable
+        working-directory: .build-${{ matrix.preset }}/tests
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-0 --idle-time=0 > "$RUNNER_TEMP/weston.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+            cat "$RUNNER_TEMP/weston.log"
+            exit 1
+          fi
+          export WAYLAND_DISPLAY=wayland-0
+          ./albor-linux-tests --gtest_filter='-X11Platform.*'
+
+      - name: linux wayland tests at scale 2
+        if: matrix.enable
+        working-directory: .build-${{ matrix.preset }}/tests
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg-scale"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-scale --scale=2 --idle-time=0 > "$RUNNER_TEMP/weston-scale.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S "$XDG_RUNTIME_DIR/wayland-scale" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/wayland-scale" ]; then
+            cat "$RUNNER_TEMP/weston-scale.log"
+            exit 1
+          fi
+          export WAYLAND_DISPLAY=wayland-scale
+          export ALBOR_EXPECT_SCALE=2
+          ./albor-linux-tests --gtest_filter='-X11Platform.*'
+
+      - name: linux x11 tests
+        if: matrix.enable
+        working-directory: .build-${{ matrix.preset }}/tests
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 > "$RUNNER_TEMP/xvfb.log" 2>&1 &
+          xvfb_pid=$!
+          trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S /tmp/.X11-unix/X99 ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          export DISPLAY=:99
+          unset WAYLAND_DISPLAY
+          unset XDG_SESSION_TYPE
+          ./albor-linux-tests --gtest_filter='X11Platform.*:AlborVulkanWindowChecks.*'
+
+      - name: linux example smoke on wayland
+        if: matrix.enable
+        working-directory: .build-${{ matrix.preset }}
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg-example"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-example --idle-time=0 > "$RUNNER_TEMP/weston-example.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S "$XDG_RUNTIME_DIR/wayland-example" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          export WAYLAND_DISPLAY=wayland-example
+          set +e
+          timeout 5 ./examples/hello-world/hello-world-albor
+          status=$?
+          set -e
+          # the example runs until it is closed, so a timeout is the pass and any other exit is a failure
+          test "$status" -eq 124
+
+      - name: linux example smoke on x11
+        if: matrix.enable
+        working-directory: .build-${{ matrix.preset }}
+        run: |
+          Xvfb :98 -screen 0 1280x1024x24 > "$RUNNER_TEMP/xvfb-example.log" 2>&1 &
+          xvfb_pid=$!
+          trap 'kill "$xvfb_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S /tmp/.X11-unix/X98 ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          export DISPLAY=:98
+          unset WAYLAND_DISPLAY
+          unset XDG_SESSION_TYPE
+          set +e
+          timeout 5 ./examples/hello-world/hello-world-albor
+          status=$?
+          set -e
+          # the example runs until it is closed, so a timeout is the pass and any other exit is a failure
+          test "$status" -eq 124
+
+      - name: lcov coverage report
+        if: matrix.enable && matrix.preset == 'coverage'
+        run: |
+          llvm-profdata-18 merge -sparse coverage-*.profraw -o coverage.profdata
+          objects=()
+          # only the binaries that ran under coverage are passed, so the profile matches the objects
+          for name in albor-tests albor-generated-font-checks albor-linux-tests; do
+            path="./.build-coverage/tests/$name"
+            if [ ! -f "$path" ] && [ -f "$path.exe" ]; then
+              path="$path.exe"
+            fi
+            if [ -f "$path" ]; then
+              if [ ${#objects[@]} -eq 0 ]; then
+                objects+=("$path")
+              else
+                objects+=("-object" "$path")
+              fi
+            fi
+          done
+          # a merged profile can warn about a few counter mismatches while still exporting a correct report
+          llvm-cov-18 export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' "${objects[@]}" > coverage.lcov 2> >(grep -v 'functions have mismatched data' >&2)
+          # the export carries absolute source paths, which the coverage api needs relative to the repository root
+          python_bin=python3
+          command -v python3 >/dev/null 2>&1 || python_bin=python
+          "$python_bin" - <<'PY'
+          import os
+          root = os.getcwd().replace('\\', '/')
+          lines = []
+          with open('coverage.lcov', encoding='utf-8') as report:
+              for line in report:
+                  if line.startswith('SF:'):
+                      path = line[3:].strip().replace('\\', '/')
+                      if path.startswith(root + '/'):
+                          path = path[len(root) + 1:]
+                      line = 'SF:' + path + '\n'
+                  lines.append(line)
+          with open('coverage.lcov', 'w', encoding='utf-8') as report:
+              report.writelines(lines)
+          PY
+
+      - name: build scope
+        if: matrix.enable && matrix.preset == 'debug'
+        run: bash build/check-build-scope.sh
+
+      - name: node
+        if: matrix.enable && matrix.preset == 'debug'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/albor-vscode/package-lock.json
+
+      - name: language client smoke test
+        if: matrix.enable && matrix.preset == 'debug'
+        working-directory: tools/albor-vscode
+        env:
+          ALBOR_LSP: ${{ github.workspace }}/.build-${{ matrix.preset }}/tools/albor-lsp/albor-lsp
+        run: |
+          npm ci
+          npm test
+
+      - name: upload coverage to codecov
+        if: matrix.enable && matrix.preset == 'coverage'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.lcov
+          disable_search: true
+          flags: linux
+          name: linux-coverage
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  # the rhel/alma 9 baseline runs in its own container, because its glibc and libstdc++ floor is what the job proves (§5.3, AD-16)
+  # kept disabled until the Linux host can run the full vcpkg build and the platform suite
+  linux-floor:
+    name: build (linux-alma9-release)
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    container: almalinux:9
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - name: container prerequisites
+        run: dnf install -y git tar gzip
+
+      - uses: actions/checkout@v7
+
+      - name: platform setup
+        run: |
+          dnf install -y 'dnf-command(config-manager)'
+          dnf config-manager --set-enabled crb
+          dnf install -y epel-release
+          dnf install -y ccache gcc-c++ ninja-build pkgconf-pkg-config libpng-devel wayland-devel libxkbcommon-devel pango-devel cairo-devel dbus-devel mesa-libEGL mesa-dri-drivers weston
+          ccache --max-size 2G
+
+      - name: pinned cmake
+        uses: lukka/get-cmake@v4.4.4
+        with:
+          cmakeVersion: 4.4.4
+          ninjaVersion: 1.13.2
+
+      - name: pinned vcpkg
+        uses: lukka/run-vcpkg@v11.6
+        with:
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
+          vcpkgGitCommitId: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
+          vcpkgJsonGlob: vcpkg.json
+          doNotCache: true
+
+      - name: toolchain fingerprint
+        id: toolchain
+        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: restore - vcpkg cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-linux-alma9-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          restore-keys: |
+            vcpkg-linux-alma9-
+            vcpkg-Linux-
+
+      - name: restore - ccache directory
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-linux-alma9-release-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-alma9-release-
+
+      - name: configure
+        run: cmake --preset release
+
+      - name: build
+        run: cmake --build --preset release --parallel 4
+
+      - name: unit tests
+        working-directory: .build-release/tests
+        run: ./albor-tests && ./albor-generated-font-checks
+
+      - name: linux wayland tests
+        working-directory: .build-release/tests
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-0 --idle-time=0 > "$RUNNER_TEMP/weston.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/wayland-0" ]; then
+            cat "$RUNNER_TEMP/weston.log"
+            exit 1
+          fi
+          export WAYLAND_DISPLAY=wayland-0
+          ./albor-linux-tests
+
+      - name: linux wayland tests at scale 2
+        working-directory: .build-release/tests
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg-scale"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-scale --scale=2 --idle-time=0 > "$RUNNER_TEMP/weston-scale.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 50); do
+            if [ -S "$XDG_RUNTIME_DIR/wayland-scale" ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          if [ ! -S "$XDG_RUNTIME_DIR/wayland-scale" ]; then
+            cat "$RUNNER_TEMP/weston-scale.log"
+            exit 1
+          fi
+          export WAYLAND_DISPLAY=wayland-scale
+          export ALBOR_EXPECT_SCALE=2
+          ./albor-linux-tests
+
+      - name: symbol floor
+        run: bash build/check-linux-floor.sh .build-release
+
+      - name: save - vcpkg cache
+        if: success()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-linux-alma9-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+
+      - name: save - ccache directory
+        if: success()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-linux-alma9-release-${{ github.sha }}

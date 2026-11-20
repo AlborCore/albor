@@ -1,6 +1,7 @@
 #include "albor/application/file_dialog.h"
 
 #include "albor/platform/windows/file_dialog.win32.h"
+#include "albor/platform/windows/text_encoding.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -63,6 +64,15 @@ namespace albor::windows
             // the conversion fills the buffer the caller sized (§5.3)
             MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), units);
             return result;
+        }
+
+        // narrow the utf16 the shell carries into the utf8 the seam records (§5.3)
+        std::string narrow(std::wstring_view text) {
+            // an empty text narrows to nothing, because the converter has no units to read (§5.3)
+            if (text.empty())
+                return {};
+            // the shared converter writes real utf8, which a unit by unit cast would not (§5.3)
+            return albor::windows::utf8_from_units(text.data(), static_cast<int>(text.size()));
         }
 
         // the configuration the last seam applied, which the platform suite reads back (§5.3)
@@ -129,8 +139,8 @@ namespace albor::windows
             // every filter is spelled as the shell pattern it becomes (§5.3)
             for (std::size_t index = 0; index < storage.names.size(); index++) {
                 // the narrow spelling is what a test compares, which keeps the api utf8 (§5.3)
-                const std::string name(storage.names[index].begin(), storage.names[index].end());
-                const std::string pattern(storage.patterns[index].begin(), storage.patterns[index].end());
+                const std::string name = narrow(storage.names[index]);
+                const std::string pattern = narrow(storage.patterns[index]);
                 g_last_configuration.filters.push_back(name + ":" + pattern);
             }
             // an empty title keeps the system default, which a dialog names itself (§5.3)

@@ -17,7 +17,6 @@ The remaining differences are shared or process gaps rather than Windows impleme
 - Modality is enforced by the application on both platforms; the gate drops input before dispatch, so no
   platform adapter has to disable an owner window.
 - macOS has no equivalent of the Windows clipboard/IME/DPI/event-loop integration suite yet.
-- Windows has no code-coverage job comparable to `macos-coverage`.
 - `IValueProvider::SetValue` accepts a text write, because a `SemanticNode` now publishes a value
   action beside its range action; the same write reaches both platforms.
 - Windows maps a radio group to a group without a selection provider, while macOS exposes the group
@@ -295,6 +294,13 @@ The artifact jobs use explicit images and toolchains rather than floating `*-lat
 | macOS | 13.3 | `macos-15` | `Xcode_16.4.app`, `MACOSX_DEPLOYMENT_TARGET=13.3` |
 | Windows | Windows 10 1809 (build 17763, LTSC 2019) | `windows-2022` | VS 2022 17.14, MSVC 14.44.35211, Windows SDK 10.0.22621.0 |
 
+The workflow pins the MSVC **toolset** (`14.44`) and SDK through `msvc-dev-cmd`, not the Visual
+Studio minor version: 17.14 is the matching release on the `windows-2022` image, so it follows
+from the toolset pin rather than being pinned independently. The build tools are CMake 4.4.4,
+Ninja 1.13.2 and the `8c5c88430ac864cf4fe8de4be61f69f003d23ffe` vcpkg revision with
+`VCPKG_ABI_POLICY=pinned-toolchain-v2` and `--x-abi-tools-use-exact-versions`; the full
+per-platform pins are in [Status and platforms](docs/status.md#ci-build-tools).
+
 The Windows build declares the target floor in every translation unit (`WINVER=0x0A00`,
 `_WIN32_WINNT=0x0A00`, `NTDDI_VERSION=0x0A000006`), so the SDK headers refuse an API newer
 than Windows 10 1809. A consumer needs the **Microsoft Visual C++ 2015-2022 Redistributable**,
@@ -344,10 +350,11 @@ The debug counts include the Dev/Test-only suites, while the release counts excl
 release totals are lower on both platforms. The per-platform debug totals differ by the platform-conditional
 suites each host carries; the pushed CI run is the authoritative result for both configurations.
 
-A Windows coverage job was evaluated and not added. It would need a Windows-native instrumentation toolchain
-(`clang-cl` plus `llvm-cov`, or OpenCppCoverage), and the footprint/allocation probes are sensitive to
-instrumentation. The existing `windows-debug` and `windows-release` jobs cover both configurations; a coverage
-job remains a tracked enhancement rather than a parity requirement.
+Windows now carries a coverage job next to `macos-coverage`, still built with MSVC. Because MSVC has no
+source-based coverage, the job runs the instrumented suite under OpenCppCoverage and uploads a Cobertura
+report under the `windows` Codecov flag; the clang jobs export lcov instead. The footprint/allocation probes
+remain sensitive to instrumentation, so the coverage suite is a measurement job rather than the authority
+for allocation behavior; `windows-debug` and `windows-release` keep that role.
 
 ## 7. Test-case summary
 
@@ -461,6 +468,6 @@ job remains a tracked enhancement rather than a parity requirement.
 ## 9. Remaining priorities
 
 1. **Add macOS equivalents** of the Windows clipboard, IME, DPI and event-loop integration tests.
-2. **Add a Windows coverage job** once a Windows instrumentation toolchain and exclusion policy are chosen.
+2. **Confirm the Windows coverage flag** reports against the Codecov baseline after the first merged coverage run.
 3. **Validate the UIA bridge with a third-party assistive-technology client** on an interactive Windows desktop; the
    role and UI Automation client tests cover the hierarchy and patterns, but not a screen reader's navigation.

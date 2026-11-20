@@ -15,6 +15,8 @@
 
 #include <dbus/dbus.h>
 
+#include "albor/core/env.h"
+
 namespace albor::wayland
 {
     // the portal state, defined here so that no dbus type reaches the header (§3.5, AD-05)
@@ -88,9 +90,9 @@ namespace albor::wayland
         // read the bus address the session resolves to, which an unset variable leaves empty (§5.3)
         std::string session_address() {
             // the environment names the bus a desktop session exports (§5.3)
-            const char* address = std::getenv("DBUS_SESSION_BUS_ADDRESS");
+            const std::optional<std::string> address = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
             // an unset address leaves libdbus to resolve the session bus itself (§5.3)
-            return address != nullptr ? address : "";
+            return address.value_or("");
         }
 
         // hold the clients already built, keyed by the bus address they connected to (§5.3)

@@ -1,11 +1,11 @@
 #include <unistd.h>
 
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
 #include "albor/automation/host/host_paths.h"
+#include "albor/core/env.h"
 
 namespace albor::automation
 {
@@ -22,8 +22,8 @@ namespace albor::automation
         if (!std::getline(name, identity.process) || identity.process.empty())
             identity.process = "albor";
         // the runtime directory is per user and already private, which is what the XDG contract means (§10.3, AD-10)
-        if (const char* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime != nullptr && *runtime != '\0')
-            identity.base = runtime;
+        if (const std::optional<std::string> runtime = albor::core::get_environment_variable("XDG_RUNTIME_DIR"); runtime.has_value() && !runtime->empty())
+            identity.base = *runtime;
         else
             identity.base = "/tmp";
         // the identity is returned whole, because the portable side owns the layout (§10.3)

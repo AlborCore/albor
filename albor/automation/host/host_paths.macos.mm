@@ -1,10 +1,11 @@
 #include <unistd.h>
 
-#include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 #include "albor/automation/host/host_paths.h"
+#include "albor/core/env.h"
 
 namespace albor::automation
 {
@@ -18,8 +19,8 @@ namespace albor::automation
         // the process name is what a client shows, and every process has one on macos (§10.3)
         identity.process = ::getprogname() != nullptr ? ::getprogname() : "albor";
         // the temporary root is what the platform gives this session, which is already user private (§10.3, AD-10)
-        if (const char* temporary = std::getenv("TMPDIR"); temporary != nullptr && *temporary != '\0')
-            identity.base = temporary;
+        if (const std::optional<std::string> temporary = albor::core::get_environment_variable("TMPDIR"); temporary.has_value() && !temporary->empty())
+            identity.base = *temporary;
         else
             identity.base = "/tmp";
         // the identity is returned whole, because the portable side owns the layout (§10.3)

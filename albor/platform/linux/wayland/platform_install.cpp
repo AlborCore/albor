@@ -1,6 +1,7 @@
-#include <cstdlib>
-#include <string_view>
+#include <optional>
+#include <string>
 
+#include "albor/core/env.h"
 #include "albor/platform/linux/wayland/clipboard.h"
 #include "albor/platform/linux/wayland/event_loop.h"
 #include "albor/platform/linux/wayland/file_dialog.h"
@@ -12,12 +13,12 @@ namespace
     {
         PlatformAutoInstall() {
             // the environment names the wayland session, which an x11 host leaves absent
-            const char* wayland_display = std::getenv("WAYLAND_DISPLAY");
-            const char* session_type = std::getenv("XDG_SESSION_TYPE");
-            const bool wayland_session = wayland_display != nullptr || (session_type != nullptr && std::string_view(session_type) == "wayland");
+            const std::optional<std::string> wayland_display = albor::core::get_environment_variable("WAYLAND_DISPLAY");
+            const std::optional<std::string> session_type = albor::core::get_environment_variable("XDG_SESSION_TYPE");
+            const bool wayland_session = wayland_display.has_value() || (session_type.has_value() && *session_type == "wayland");
             // a host with no display keeps the wayland adapter, which is the only linux adapter that answered there
-            const char* display = std::getenv("DISPLAY");
-            if (!wayland_session && display != nullptr && *display != '\0')
+            const std::optional<std::string> display = albor::core::get_environment_variable("DISPLAY");
+            if (!wayland_session && display.has_value() && !display->empty())
                 return;
             // the clipboard surface is installed first, because it names no shell object the loop needs (§3.5)
             albor::wayland::install_wayland_clipboard();

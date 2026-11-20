@@ -1,0 +1,183 @@
+name: build macos
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-pr:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    outputs:
+      has_pr: ${{ steps.check.outputs.has_pr }}
+    steps:
+      - uses: ./.github/actions/check-pr
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  shaders-macos:
+    name: shaders (macos)
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: macos-15
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: toolchain
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_16.4.app
+          xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+      - name: shader
+        run: bash build/shaders.sh
+
+  build-macos:
+    name: build (${{ matrix.preset }})
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: macos-15
+    permissions:
+      contents: read
+      pull-requests: read
+      code-quality: write
+      id-token: write
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: release
+            enable: true
+          - preset: debug
+            enable: true
+          - preset: coverage
+            enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      MACOSX_DEPLOYMENT_TARGET: 13.3
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage-%p.profraw
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: platform setup
+        if: matrix.enable
+        run: |
+          mkdir -p .vcpkg-cache
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+          ccache --max-size 2G
+          sudo xcode-select --switch /Applications/Xcode_16.4.app
+
+      - name: toolchain, vcpkg, caches, configure and build
+        if: matrix.enable
+        uses: ./.github/actions/build-common
+        with:
+          preset: ${{ matrix.preset }}
+          vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
+          platform: macOS
+
+      - name: unit tests
+        if: matrix.enable
+        working-directory: .build-${{ matrix.preset }}/tests
+        run: ./albor-tests && ./albor-generated-font-checks
+
+      - name: lcov coverage report
+        if: matrix.enable && matrix.preset == 'coverage'
+        run: |
+          xcrun llvm-profdata merge -sparse coverage-*.profraw -o coverage.profdata
+          objects=()
+          for name in albor-tests albor-generated-font-checks albor-render-blend2d-auto-checks albor-render-albor-auto-checks albor-automation-host-tests; do
+            path="./.build-coverage/tests/$name"
+            if [ ! -f "$path" ] && [ -f "$path.exe" ]; then
+              path="$path.exe"
+            fi
+            if [ -f "$path" ]; then
+              if [ ${#objects[@]} -eq 0 ]; then
+                objects+=("$path")
+              else
+                objects+=("-object" "$path")
+              fi
+            fi
+          done
+          xcrun llvm-cov export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' "${objects[@]}" > coverage.lcov
+          # the export carries absolute source paths, which the coverage api needs relative to the repository root
+          python_bin=python3
+          command -v python3 >/dev/null 2>&1 || python_bin=python
+          "$python_bin" - <<'PY'
+          import os
+          root = os.getcwd().replace('\\', '/')
+          lines = []
+          with open('coverage.lcov', encoding='utf-8') as report:
+              for line in report:
+                  if line.startswith('SF:'):
+                      path = line[3:].strip().replace('\\', '/')
+                      if path.startswith(root + '/'):
+                          path = path[len(root) + 1:]
+                      line = 'SF:' + path + '\n'
+                  lines.append(line)
+          with open('coverage.lcov', 'w', encoding='utf-8') as report:
+              report.writelines(lines)
+          PY
+
+      - name: build scope
+        if: matrix.enable && matrix.preset == 'debug'
+        run: bash build/check-build-scope.sh
+
+      - name: node
+        if: matrix.enable && matrix.preset == 'debug'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/albor-vscode/package-lock.json
+
+      - name: language client smoke test
+        if: matrix.enable && matrix.preset == 'debug'
+        working-directory: tools/albor-vscode
+        env:
+          ALBOR_LSP: ${{ github.workspace }}/.build-${{ matrix.preset }}/tools/albor-lsp/albor-lsp
+        run: |
+          npm ci
+          npm test
+
+      - name: font selection check
+        if: matrix.enable
+        env:
+          ALBOR_BUILD_DIR: .build-${{ matrix.preset }}
+        run: bash build/check-font-selection.sh
+
+      - name: upload coverage to codecov
+        if: matrix.enable && matrix.preset == 'coverage'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.lcov
+          disable_search: true
+          flags: macos
+          name: macos-coverage
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

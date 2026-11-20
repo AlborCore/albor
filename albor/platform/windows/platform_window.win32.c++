@@ -371,7 +371,7 @@ namespace albor
         }
 
         // the press the dismissal swallowed is forwarded, because the click still reaches what the user clicked (§5.1)
-        void forward_press(const POINT& screen, UINT code, WPARAM wparam, LPARAM lparam) {
+        void forward_press(const POINT& screen, UINT code, WPARAM wparam) {
             // the window the press names sits under the screen point, which the capture had held (§5.1)
             const HWND target = WindowFromPoint(screen);
             // a lookup that named nothing has no receiver, which is the quiet drop (§5.1)
@@ -399,7 +399,7 @@ namespace albor
         }
 
         // forward a click on the trigger instead of dismissing, so the trigger can toggle its own surface (§5.1)
-        bool forward_anchor_press(Win32WindowState* state, HWND popup, const POINT& screen, UINT code, WPARAM wparam, LPARAM lparam) {
+        bool forward_anchor_press(Win32WindowState* state, HWND popup, const POINT& screen, UINT code, WPARAM wparam) {
             // only a shown popup with a matching anchor takes this path (§5.1)
             if (!state->popup || !state->visible || !point_in_anchor(state, screen))
                 return false;
@@ -407,7 +407,7 @@ namespace albor
             if (GetCapture() == popup)
                 ReleaseCapture();
             // the press is posted to the trigger, which is the control that owns the open list (§5.1)
-            forward_press(screen, code, wparam, lparam);
+            forward_press(screen, code, wparam);
             return true;
         }
 
@@ -501,12 +501,12 @@ namespace albor
                     POINT screen{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
                     ClientToScreen(window, &screen);
                     // a click on the trigger belongs to the control, which toggles the popup itself (§5.1)
-                    if (forward_anchor_press(state, window, screen, code, wparam, lparam))
+                    if (forward_anchor_press(state, window, screen, code, wparam))
                         return 0;
                     // the popups the click missed are dismissed, which is what every monitor of the reference takes (§5.1)
                     dismiss_registered_popups();
                     // the press is forwarded, because the click still reaches whatever the user actually clicked (§5.1)
-                    forward_press(screen, code, wparam, lparam);
+                    forward_press(screen, code, wparam);
                     return 0;
                 }
                 // the capture keeps a drag alive outside the window, which a press started inside continues (§8.3)
@@ -535,7 +535,7 @@ namespace albor
                     // the popups the click missed are dismissed, which is what every monitor of the reference takes (§5.1)
                     dismiss_registered_popups();
                     // the press is forwarded, because the click still reaches whatever the user actually clicked (§5.1)
-                    forward_press(screen, code, wparam, lparam);
+                    forward_press(screen, code, wparam);
                     return 0;
                 }
                 // a middle press drags like the primary one, while a secondary press only asks for the menu (§8.3)
@@ -605,7 +605,7 @@ namespace albor
                     // the popups the click missed are dismissed, which is what every monitor of the reference takes (§5.1)
                     dismiss_registered_popups();
                     // the press is forwarded, because the click still reaches whatever the user actually clicked (§5.1)
-                    forward_press(screen, code, wparam, lparam);
+                    forward_press(screen, code, wparam);
                     return 0;
                 }
                 Event message;
