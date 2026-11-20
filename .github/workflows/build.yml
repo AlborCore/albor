@@ -330,8 +330,37 @@ jobs:
         working-directory: .build-coverage/tests
         run: |
           root="${GITHUB_WORKSPACE//\\//}"
-          OpenCppCoverage --sources "$root/albor" --export_type="cobertura:$root/coverage.xml" --working_dir . -- ./albor-tests.exe
-          ./albor-generated-font-checks.exe
+          # the font suite exports a binary report first, so both suites can share one cobertura file
+          OpenCppCoverage --sources "$root/albor" --export_type="binary:$root/coverage-fonts.cov" --working_dir . -- ./albor-generated-font-checks.exe
+          # the main suite imports that report, which puts both runs under the windows flag
+          OpenCppCoverage --sources "$root/albor" --input_coverage="$root/coverage-fonts.cov" --export_type="cobertura:$root/coverage.xml" --working_dir . -- ./albor-tests.exe
+
+      - name: normalize windows coverage paths
+        if: matrix.enable && runner.os == 'Windows' && matrix.preset == 'coverage'
+        run: |
+          # pdb paths in the report are absolute, which the flag's albor/ filter cannot match
+          python_bin=python3
+          command -v python3 >/dev/null 2>&1 || python_bin=python
+          "$python_bin" - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          root = os.getcwd().replace('\\', '/').rstrip('/')
+          tree = ET.parse('coverage.xml')
+          report = tree.getroot()
+          sources = report.find('sources')
+          if sources is not None:
+              for source in list(sources):
+                  source.text = '.'
+          for node in report.iter('class'):
+              name = node.get('filename')
+              if not name:
+                  continue
+              value = name.replace('\\', '/')
+              if value.lower().startswith(root.lower()):
+                  value = value[len(root):]
+              node.set('filename', value.lstrip('/'))
+          tree.write('coverage.xml', encoding='utf-8', xml_declaration=True)
+          PY
 
       - name: node
         if: matrix.enable && matrix.preset == 'debug'

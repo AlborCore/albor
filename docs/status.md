@@ -9,7 +9,7 @@ the architecture specification `albor-design-v4.md`.
 | platform | runtime floor | build baseline | state |
 | --- | --- | --- | --- |
 | macOS (AppKit, Metal), Intel and Apple silicon | macOS 13.3 | `macos-15`, Xcode 16.4 | implemented — the primary platform |
-| Windows (Win32, Direct3D) | Windows 10 1809 (build 17763, LTSC 2019); VC++ 2015-2022 redistributable | `windows-2022`, VS 2022 17.14 / MSVC 14.44, Windows SDK 10.0.22621.0 | implemented and built in CI |
+| Windows (Win32, Direct3D) | Windows 10 1809 (build 17763, LTSC 2019); VC++ 2015-2022 redistributable | `windows-2022`, MSVC 14.44 toolset (VS 2022 17.14 image release), Windows SDK 10.0.22621.0 | implemented and built in CI |
 | Linux Wayland (Vulkan GPU, Blend2D CPU) and X11 | RHEL/Alma 9+ (glibc 2.34, GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21) | `ubuntu-24.04` current; `almalinux:9` baseline | implemented — Wayland is Tier 1 and X11 is Tier 2; the Linux CI jobs are enabled with lavapipe |
 | headless | — | — | implemented — the test and CI surface |
 
@@ -19,6 +19,25 @@ the macOS build stamps the 13.3 deployment floor into the shaders and the packag
 Linux artifacts are checked against the glibc and libstdc++ floor with
 `build/check-linux-floor.sh`; [Linux](linux.md) carries the baseline. The Windows and macOS
 pins are recorded in the parity ledger (`macos-windows.md` §6).
+
+## CI build tools
+
+The workflow pins the build tools rather than taking them from the runner image. These are the
+versions CI actually uses; the floors a consumer needs are in
+[Getting started](getting-started.md#requirements) and
+[Consuming Albor](consuming.md#requirements-and-deployment).
+
+| tool | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| CMake | 4.4.4 | 4.4.4 | 4.4.4 |
+| Ninja | 1.13.2 | 1.13.2 | 1.13.2 |
+| vcpkg revision | `866e9e258a76437074a5cf02d4c2d71b53bff2f8` | `8c5c88430ac864cf4fe8de4be61f69f003d23ffe` | `866e9e258a76437074a5cf02d4c2d71b53bff2f8` |
+| ABI policy | `pinned-toolchain-v2` | `pinned-toolchain-v2` with `--x-abi-tools-use-exact-versions` | `pinned-toolchain-v2` |
+| compiler | Xcode 16.4 (Apple Clang) | MSVC 14.44 toolset, SDK 10.0.22621.0 | image GCC for debug and release, clang-18 for coverage |
+
+The Windows job pins the MSVC **toolset** and SDK through `msvc-dev-cmd`, not the Visual Studio
+minor version: the 17.14 release named above and in the parity ledger is the matching release on
+the `windows-2022` image, so it follows from the toolset pin rather than being pinned on its own.
 
 An application names a window and a component. A normal application links `albor`
 (GPU renderer) or `albor-blend2d` (portable CPU renderer); the platform and text engine

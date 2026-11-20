@@ -294,6 +294,13 @@ The artifact jobs use explicit images and toolchains rather than floating `*-lat
 | macOS | 13.3 | `macos-15` | `Xcode_16.4.app`, `MACOSX_DEPLOYMENT_TARGET=13.3` |
 | Windows | Windows 10 1809 (build 17763, LTSC 2019) | `windows-2022` | VS 2022 17.14, MSVC 14.44.35211, Windows SDK 10.0.22621.0 |
 
+The workflow pins the MSVC **toolset** (`14.44`) and SDK through `msvc-dev-cmd`, not the Visual
+Studio minor version: 17.14 is the matching release on the `windows-2022` image, so it follows
+from the toolset pin rather than being pinned independently. The build tools are CMake 4.4.4,
+Ninja 1.13.2 and the `8c5c88430ac864cf4fe8de4be61f69f003d23ffe` vcpkg revision with
+`VCPKG_ABI_POLICY=pinned-toolchain-v2` and `--x-abi-tools-use-exact-versions`; the full
+per-platform pins are in [Status and platforms](docs/status.md#ci-build-tools).
+
 The Windows build declares the target floor in every translation unit (`WINVER=0x0A00`,
 `_WIN32_WINNT=0x0A00`, `NTDDI_VERSION=0x0A000006`), so the SDK headers refuse an API newer
 than Windows 10 1809. A consumer needs the **Microsoft Visual C++ 2015-2022 Redistributable**,

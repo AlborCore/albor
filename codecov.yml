@@ -23,7 +23,6 @@ coverage:
           - windows
         target: auto
         threshold: 1%
-        informational: true
       linux:
         flags:
           - linux

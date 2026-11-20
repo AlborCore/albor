@@ -303,15 +303,21 @@ design (AD-04, AD-10). See [Tooling](tooling.md#hot-reload) and
 ## Requirements and deployment
 
 - C++20 toolchain.
-- CMake 3.28 or newer, with Ninja.
+- CMake 3.28 or newer, with Ninja. CI pins CMake 4.4.4 and Ninja 1.13.2; the floor is lower
+  so a consumer can build on an older toolchain.
 - vcpkg in manifest mode. In the package route the port declares the dependency closure
   itself; in the source route the dependencies are pinned by the framework's `vcpkg.json`,
-  or by the consumer's own manifest naming the same packages.
+  or by the consumer's own manifest naming the same packages. CI also pins the vcpkg tool
+  revision and an ABI policy per platform, recorded in
+  [Status and platforms](status.md#ci-build-tools); the Windows configure adds
+  `--x-abi-tools-use-exact-versions` so a cached tool cannot drift from that revision.
 - macOS 13.3 or newer for the macOS targets; Windows 10 1809 or newer and the
   Microsoft Visual C++ 2015-2022 Redistributable for the Windows targets; RHEL/Alma 9 or
   newer (glibc 2.34, GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21) for the Linux targets. The build images
   and toolchains behind those floors are pinned in CI and recorded in
-  [Status and platforms](status.md) and `macos-windows.md` §6.
+  [Status and platforms](status.md) and `macos-windows.md` §6. On Windows the workflow pins the
+  MSVC toolset (14.44) and SDK (10.0.22621.0); the Visual Studio 17.14 release named there is the
+  matching image release, not an independently pinned input.
 - On Linux, the Wayland, xkbcommon and Pango/Cairo/D-Bus development packages. libdecor and
   the Wayland protocol XMLs are vendored into the framework, so no libdecor package, plugin
   directory or `wayland-protocols` package is needed. [Linux](linux.md) lists the packages

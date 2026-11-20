@@ -4,9 +4,12 @@
 
 - **C++20** toolchain
 - **CMake** ≥ 3.28 and **Ninja** — the presets pin Ninja as the generator, so a build directory
-  configured with another one has to be configured fresh
+  configured with another one has to be configured fresh. CI pins CMake 4.4.4 and Ninja 1.13.2;
+  the floor is lower so a consumer can build on an older toolchain
 - **[vcpkg](https://vcpkg.io)** in manifest mode — dependencies are pinned in `vcpkg.json`
-  and are fetched on the first configure. The build declares the floor to the install itself,
+  and are fetched on the first configure. CI also pins the vcpkg tool revision and an ABI policy
+  per platform, recorded in [Status and platforms](status.md#ci-build-tools). The build declares
+  the floor to the install itself,
   so the ports are stamped with the same 13.3 the framework is tested at; a port built for a
   newer floor links with a warning and may call an API the minimum system lacks
 - A supported platform at or above its runtime floor:
