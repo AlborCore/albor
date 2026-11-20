@@ -168,7 +168,7 @@ jobs:
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
               # the preset launches the compiler through ccache, which the runner image does not ship
-              choco install ccache --no-progress -y
+              bash build/install-ccache.sh
           - name: windows-debug
             os: windows-2022
             enable: true
@@ -178,14 +178,14 @@ jobs:
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
               # the preset launches the compiler through ccache, which the runner image does not ship
-              choco install ccache --no-progress -y
+              bash build/install-ccache.sh
           - name: windows-coverage
             os: windows-2022
             enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
             preset: coverage
             coverage-flag: windows
-            cov-c: clang-cl
-            cov-cxx: clang-cl
+            cov-c: C:/Program Files/LLVM/bin/clang-cl.exe
+            cov-cxx: C:/Program Files/LLVM/bin/clang-cl.exe
             cov-profdata: llvm-profdata
             cov-cov: llvm-cov
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
@@ -193,11 +193,11 @@ jobs:
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
               # the preset launches the compiler through ccache, which the runner image does not ship
-              choco install ccache --no-progress -y
+              bash build/install-ccache.sh
               # clang-cl and the llvm tools ship together with the image's LLVM install
               llvm_bin="/c/Program Files/LLVM/bin"
               [ -x "$llvm_bin/clang-cl.exe" ] || { echo "clang-cl missing from $llvm_bin" >&2; exit 1; }
-              echo "$llvm_bin" >> "$GITHUB_PATH"
+              echo 'C:\Program Files\LLVM\bin' >> "$GITHUB_PATH"
           - name: linux-release
             os: ubuntu-24.04
             enable: true
@@ -307,12 +307,15 @@ jobs:
         id: configure
         if: matrix.enable
         run: |
-          extra="${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }}"
+          extra=()
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            extra+=(-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions)
+          fi
           # the coverage matrix pins clang because the profile format and tools must match the compiler
           if [ -n "${{ matrix.cov-cxx }}" ]; then
-            extra="$extra -DCMAKE_C_COMPILER=${{ matrix.cov-c }} -DCMAKE_CXX_COMPILER=${{ matrix.cov-cxx }}"
+            extra+=(-DCMAKE_C_COMPILER="${{ matrix.cov-c }}" -DCMAKE_CXX_COMPILER="${{ matrix.cov-cxx }}")
           fi
-          cmake --preset ${{ matrix.preset }} $extra
+          cmake --preset ${{ matrix.preset }} "${extra[@]}"
 
       - name: build
         if: matrix.enable
