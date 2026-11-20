@@ -295,6 +295,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage.lcov
+          disable_search: true
           flags: linux
           name: linux-coverage
           token: ${{ secrets.CODECOV_TOKEN }}

@@ -122,6 +122,8 @@ jobs:
             OpenCppCoverage --sources "$sources" --export_type="binary:$root\\coverage-fonts.cov" --working_dir . -- ./albor-generated-font-checks.exe
             # the main suite imports that report, which puts both runs under the windows flag
             OpenCppCoverage --sources "$sources" --input_coverage="$root\\coverage-fonts.cov" --export_type="cobertura:$root\\coverage.xml" --working_dir . -- ./albor-tests.exe
+            # the binary report is merged, so only the cobertura file remains for the upload
+            rm -f "$(cygpath -u "$root\\coverage-fonts.cov")"
           else
             ./albor-tests && ./albor-generated-font-checks
           fi
@@ -185,6 +187,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
+          disable_search: true
           flags: windows
           name: windows-coverage
           token: ${{ secrets.CODECOV_TOKEN }}

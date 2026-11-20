@@ -176,6 +176,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage.lcov
+          disable_search: true
           flags: macos
           name: macos-coverage
           token: ${{ secrets.CODECOV_TOKEN }}

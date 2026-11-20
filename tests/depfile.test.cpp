@@ -23,7 +23,9 @@ TEST(DepfileChecks, EscapesMakeSyntaxAndKeepsUtf8) {
 
 TEST(DepfileChecks, EscapesBackslashRunsAroundMakeSyntax) {
     // arrange a host where a backslash is a file character, because windows reads it as a separator (§14.2)
-    if (std::filesystem::path::preferred_separator != '/')
+    auto separator = std::filesystem::path::preferred_separator;
+    // a runtime read keeps the skip out of the compiler's constant folding, which stays warning free (§14.2)
+    if (separator != '/')
         GTEST_SKIP();
     // arrange a backslash that precedes a word, a space or a hash (§14.2)
     const std::filesystem::path before_word = "/tmp/a\\d.ui";
