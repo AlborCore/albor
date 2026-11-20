@@ -139,12 +139,25 @@ if(ALBOR_COVERAGE)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "ALBOR_COVERAGE requires clang; configure the coverage preset with clang++ or clang-cl")
     endif()
-    # clang-cl needs its driver prefix for the gcc-style coverage flags
-    if(MSVC)
+    if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+        # clang-cl needs its driver prefix for the gcc-style coverage flags
         add_compile_options(/clang:-fprofile-instr-generate /clang:-fcoverage-mapping)
-        add_link_options(/clang:-fprofile-instr-generate)
+        # cmake links clang-cl through lld-link, which needs the resource dir for the dependent profile runtime
+        get_filename_component(_clang_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        get_filename_component(_clang_root "${_clang_bin}" DIRECTORY)
+        # clang-cl reports an msvc-compatible version to cmake, so the resource dir comes from the driver's own output
+        execute_process(COMMAND "${CMAKE_CXX_COMPILER}" --version OUTPUT_VARIABLE _clang_version_output ERROR_QUIET)
+        string(REGEX MATCH "clang version ([0-9]+)" _clang_match "${_clang_version_output}")
+        file(GLOB _profile_libs "${_clang_root}/lib/clang/${CMAKE_MATCH_1}.*/lib/windows/clang_rt.profile-x86_64.lib")
+        if(NOT _profile_libs)
+            message(FATAL_ERROR "clang profile runtime not found under ${_clang_root}/lib/clang")
+        endif()
+        list(GET _profile_libs 0 _profile_lib)
+        get_filename_component(_profile_dir "${_profile_lib}" DIRECTORY)
+        link_directories("${_profile_dir}")
     else()
         add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+        # the driver adds the profile runtime at link time
         add_link_options(-fprofile-instr-generate)
     endif()
 endif()
