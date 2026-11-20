@@ -43,6 +43,7 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | System appearance | AppKit appearance | Registry-based appearance | Parity |
 | Automation local transport | Unix domain socket | Named pipe, tested | Parity |
 | Accessibility | NSAccessibility bridge, 20 tests | UI Automation bridge, 21 role tests + 1 client test | Parity |
+| Accessibility description | `accessibilityHelp` from `SemanticNode::description` | `UIA_HelpTextPropertyId` from the same field | Parity |
 | Native file dialogs | `NSOpenPanel`/`NSSavePanel` as sheets | `IFileOpenDialog`/`IFileSaveDialog` owned by the parent | Parity, with filters unioned on macOS |
 
 A window size now means the content area on both platforms. `MacosPlatformWindow::set_size` uses
@@ -448,6 +449,14 @@ job remains a tracked enhancement rather than a parity requirement.
   primary control; `ThemeBuilder` gives the derived baseline a field well, its focus line and the shared
   outline edge. The presets are gated by token rather than by platform, so no Windows source is involved
   and the Windows build proves the same code.
+- Added node-level tooltips. Every `UiNode` carries hover text or a rich builder, the `.ui` common property
+  exposes the string form on every element, and a per-window `TooltipController` arms at 500 ms, re-arms an
+  adjacent target at 50 ms, and dismisses on press, wheel, key, pointer exit and window deactivation. The
+  bubble is an inert in-tree overlay that flips above the target and clamps inside the view, so no native
+  popup window is created and the headless suite drives the same presentation. The semantic tree now carries
+  a description: both platform bridges map it to `accessibilityHelp` and `UIA_HelpTextPropertyId`, and the
+  mirrored accessibility suites assert the property. The macOS and Windows sources differ only in the bridge
+  attribute name, so the Windows build is the CI authority for that leg.
 
 ## 9. Remaining priorities
 

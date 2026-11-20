@@ -35,6 +35,8 @@ namespace
             SemanticNode node{m_role};
             // the name is what a reader speaks, so it belongs on the node (§10.1)
             node.set_name(m_name);
+            // the description is the hover text a reader announces beside the name (§8.3, §10.1)
+            node.set_description(m_description);
             return node;
         }
 
@@ -60,6 +62,9 @@ namespace
 
         // the name this provider publishes, which a reader speaks (§10.1)
         std::string m_name = "Log";
+
+        // the description this provider publishes, which a reader announces beside the name (§10.1)
+        std::string m_description;
     };
 
     // a window the bridge publishes into, which the suite owns and releases (§5.2)
@@ -150,6 +155,32 @@ TEST(Win32AccessibilityRole, TheAnnouncedRootCarriesTheSemanticRole) {
     ASSERT_EQ(control_type.vt, VT_I4);
     EXPECT_EQ(control_type.lVal, UIA_PaneControlTypeId);
     VariantClear(&control_type);
+}
+
+TEST(Win32AccessibilityRole, TheAnnouncedRootCarriesItsDescriptionAsHelpText) {
+    // arrange a root whose description is the hover text a tooltip supplies (§8.3, §10.1)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    ViewportProvider provider;
+    provider.m_name = "Save";
+    provider.m_description = "Saves the current document";
+    SemanticTree tree;
+    tree.build_from(provider);
+    // act
+    fixture.adapter().publish(tree);
+    // assert the root announces the description as its help text, which a reader speaks beside the name (§10.1, §10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    VARIANT help{};
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_HelpTextPropertyId, &help));
+    ASSERT_EQ(help.vt, VT_BSTR);
+    EXPECT_STREQ(help.bstrVal, L"Saves the current document");
+    VariantClear(&help);
 }
 
 TEST(Win32AccessibilityRole, TheAnnouncedTreeCarriesEveryChild) {

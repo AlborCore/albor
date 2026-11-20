@@ -99,6 +99,36 @@ TEST(SemanticNode, AnAccessibleNameIsStoredAsWritten) {
     EXPECT_EQ(node.name(), "Increment");
 }
 
+TEST(SemanticNode, ANewNodeHasNoAccessibleDescription) {
+    // arrange, act
+    const SemanticNode node(SemanticRole::Button);
+    // assert
+    EXPECT_TRUE(node.description().empty());
+}
+
+TEST(SemanticNode, AnAccessibleDescriptionIsStoredAsWritten) {
+    // arrange
+    SemanticNode node(SemanticRole::Button);
+    // act
+    node.set_description("Adds one to the value");
+    // assert
+    EXPECT_EQ(node.description(), "Adds one to the value");
+}
+
+TEST(SemanticNode, ADescriptionIsPartOfTheComparison) {
+    // arrange two nodes that agree on everything but the description (§10.1)
+    SemanticNode described{SemanticRole::Button};
+    SemanticNode other{SemanticRole::Button};
+    // act
+    described.set_description("Adds one to the value");
+    // assert the description is observable, so a publication sees the change (§10.1, §10.2)
+    EXPECT_NE(described, other);
+    // act
+    other.set_description("Adds one to the value");
+    // assert two nodes with the same description compare equal (§10.1)
+    EXPECT_EQ(described, other);
+}
+
 TEST(SemanticNode, ANewNodeIsNotDisabled) {
     // arrange, act
     const SemanticNode node(SemanticRole::Button);

@@ -1211,6 +1211,56 @@ its gutter, `ThemeBuilder` gives the derived baseline a well and its outline edg
 default role empty, so a derived default control falls back to the accent plate every derived
 button carries, and `Theme::pro_dark` keeps its field on the surface and its neutral faces.
 
+### 8.5 Tooltips
+
+A tooltip is node state, not a widget. Every `UiNode` carries hover text and an optional builder for
+rich content, so a standard widget, a layout container and a hand-written component all accept one.
+
+```cpp
+namespace albor {
+
+// one node's tooltip, which the window presents on hover (§8.3)
+class UiNode
+{
+public:
+    using TooltipBuilder = std::function<std::unique_ptr<UiNode>()>;
+
+    void set_tooltip(std::string tooltip);
+    [[nodiscard]] const std::string& tooltip() const;
+    [[nodiscard]] bool has_tooltip() const;
+
+    void set_tooltip_builder(TooltipBuilder builder);
+    [[nodiscard]] std::unique_ptr<UiNode> build_tooltip() const;
+};
+
+}
+```
+
+The `.ui` language exposes the string form as a common element property, so every element type
+accepts `tooltip: "..."`; the builder is C++ only.
+
+**Hover resolution.** The window resolves the innermost node under the pointer, then walks to the
+nearest ancestor that carries a tooltip. A leaf with its own tooltip wins; a container's tooltip
+covers an unadorned descendant.
+
+**Lifecycle.** One `TooltipController` per main window owns the state machine: `Hidden`, `Arming`,
+`Visible` and `Warmup`. A cold target arms for 500 ms; once a tooltip has been shown, an adjacent
+target arms for 50 ms and the warm state survives a 250 ms grace after the pointer leaves. A shown
+tooltip dismisses itself after 10 s. A pointer press, wheel, key (Escape included), pointer exit and
+window deactivation dismiss it at once, and a dismissed target stays dismissed until the pointer
+leaves it or names another node. The controller is advanced from the frame tick, so it owns no timer.
+
+**Presentation.** The tooltip is an in-tree overlay at the root, placed in root coordinates: below
+and centred on the target, flipped above when the bottom clips, and clamped inside the view. It is
+inert (`hit_test` is false), so it never keeps itself open. A `TooltipStyle` carries the plate,
+hairline, ink, shadow, padding, gap and maximum width; `tooltip_style(theme)` resolves it from the
+active theme and `MainWindowConfig::tooltip_style` installs it.
+
+**Semantics.** The accessible name is the tooltip when the node has no other name (an icon-only
+control); otherwise the tooltip is the accessible description. `SemanticNode::description` carries
+it, and the platform bridges expose it as `accessibilityHelp` on macOS and
+`UIA_HelpTextPropertyId` on Windows.
+
 ---
 
 ## 9. Text, Typography, and Internationalization

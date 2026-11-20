@@ -57,6 +57,8 @@ namespace
             SemanticNode node{SemanticRole::Label};
             // the name is set but the id deliberately is not, because an unnamed node is unaddressable (AD-11)
             node.set_name("anonymous");
+            // the description is the hover text a tooltip supplies, which the dump carries beside the name (§8.3, §10.1)
+            node.set_description("has no author id");
             return node;
         }
 
@@ -393,6 +395,16 @@ TEST(SemanticCommands, ANodeWithNoAuthorIdIsDumpedButNotAddressable) {
     const AutomationResult result = fixture.run("semantic.tree");
     // assert an unidentified node still reaches a screen reader, reported with a dash (§18.1, AD-11)
     EXPECT_NE(result.payload.find("label - anonymous"), std::string::npos);
+}
+
+TEST(SemanticCommands, ADescriptionIsDumpedBesideTheName) {
+    // arrange
+    Fixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.tree");
+    // assert the hover text a tooltip supplies reaches the client as the description (§8.3, §10.1)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find("label - anonymous description=has no author id"), std::string::npos);
 }
 
 TEST(SemanticCommands, FindingByAnAuthorIdAnswersTheRoleAndName) {

@@ -197,8 +197,8 @@ namespace albor
         // the name is the label, then the tooltip, then the author id, then the role word (§10.1, AD-11)
         if (!m_label.empty())
             node.set_name(m_label);
-        else if (!m_tooltip.empty())
-            node.set_name(m_tooltip);
+        else if (!tooltip().empty())
+            node.set_name(tooltip());
         else if (!identity().explicit_id.empty())
             node.set_name(identity().explicit_id);
         else
@@ -239,18 +239,13 @@ namespace albor
     }
 
     void Button::set_tooltip(std::string tooltip) {
-        // an unchanged tooltip changes nothing, because the control looks and reads the same (§6.1)
-        if (m_tooltip == tooltip)
-            return;
-        // the tooltip is stored first, so the next frame reads the new name (§10.1)
-        m_tooltip = std::move(tooltip);
-        // a tooltip is visual text, so the control asks for a frame even before hover painting lands (§6.1)
-        invalidate();
+        // the base node owns the hover text, because every element carries one (§8.3)
+        UiNode::set_tooltip(std::move(tooltip));
     }
 
     const std::string& Button::tooltip() const {
-        // the tooltip is what an icon-only control announces when it has no caption (§10.1)
-        return m_tooltip;
+        // the base node answers, so an icon-only control reads the same text a container does (§8.3)
+        return UiNode::tooltip();
     }
 
     void Button::set_icon(std::shared_ptr<const ImageResource> icon) {

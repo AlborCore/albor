@@ -4144,6 +4144,7 @@ component Host {
         Twin {
             visible_: shown;
             visible: shown;
+            tooltip: "Twin tip";
         }
     }
 }
@@ -4156,6 +4157,8 @@ component Host {
     EXPECT_TRUE(contains(cpp.content, "Property<bool> m_sink_1_visible__;"));
     EXPECT_TRUE(contains(cpp.content, "->set_visible(value)"));
     EXPECT_TRUE(contains(cpp.content, "->set_visible_(value)"));
+    // assert the tooltip instance assignment reaches the expanded component root (§8.3)
+    EXPECT_TRUE(contains(cpp.content, "->set_tooltip(std::string(\"Twin tip\"))"));
 }
 
 TEST(Codegen, ASignalParameterNamedRawKeepsTheContextDistinct) {
@@ -4602,6 +4605,7 @@ component C {
         border_width: 2px;
         border_color: #445566;
         drop_shadow: Shadow { color: #00000040, offset: Point { x: 0px, y: 2px }, blur: 4px };
+        tooltip: "Styled node";
     }
 }
 )";
@@ -4616,6 +4620,30 @@ component C {
     EXPECT_TRUE(contains(cpp.content, "->set_border_color("));
     EXPECT_TRUE(contains(cpp.content, "->set_drop_shadow(Shadow{"));
     EXPECT_TRUE(contains(cpp.content, ".offset = Point{"));
+    EXPECT_TRUE(contains(cpp.content, "->set_tooltip(std::string(\"Styled node\"))"));
+}
+
+TEST(Codegen, ACommonTooltipReachesAContainerAndItsChild) {
+    // arrange a container and a child that both carry hover text, which every element accepts (§8.3)
+    const std::string_view source = R"(
+component C {
+    Column {
+        tooltip: "The whole row";
+        Label {
+            text: "Name";
+            tooltip: "The row name";
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert both common tooltips reach their own node setters (§8.3, §11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "->set_tooltip(std::string(\"The whole row\"))"));
+    EXPECT_TRUE(contains(cpp.content, "->set_tooltip(std::string(\"The row name\"))"));
 }
 
 TEST(Codegen, ButtonIconPropertiesReachTheButton) {

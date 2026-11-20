@@ -891,3 +891,30 @@ TEST(PreviewHostChecks, ATabViewShowsTheSelectedPageAndItsLabels) {
     EXPECT_EQ(tabs->tab_at(0)->title()->child_count(), 1u);
     EXPECT_EQ(tabs->tab_at(1)->title(), nullptr);
 }
+
+TEST(PreviewHostChecks, ACommonTooltipReachesAContainerAndItsChild) {
+    // arrange a container and a child that carry hover text, which every element accepts (§8.3)
+    const char* source = R"UI(component Panel {
+    Column {
+        id: row;
+        tooltip: "Transient files";
+        Label {
+            id: name;
+            text: "netlist.sch";
+            tooltip: "The sheet name";
+        }
+    }
+})UI";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(source, engine, std::filesystem::temp_directory_path() / "albor-preview-tooltip" / "panel.ui");
+    // assert the preview applied both common tooltips to their own nodes (§8.3, §12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    UiNode* row = find_first(*result.root, [](UiNode& node) { return node.identity().explicit_id == "row"; });
+    UiNode* name = find_first(*result.root, [](UiNode& node) { return node.identity().explicit_id == "name"; });
+    ASSERT_NE(row, nullptr);
+    ASSERT_NE(name, nullptr);
+    EXPECT_EQ(row->tooltip(), "Transient files");
+    EXPECT_EQ(name->tooltip(), "The sheet name");
+}

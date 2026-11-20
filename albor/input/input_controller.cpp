@@ -15,6 +15,9 @@ namespace albor
     }
 
     void InputController::release_subtree(UiNode* node) {
+        // a window level presentation is told first, while the subtree is alive and still carries its state (§8.3)
+        if (m_subtree_released)
+            m_subtree_released(node);
         // a leaving subtree drops the caret it held, because a hidden control must not keep receiving keys (§8.3)
         UiNode* focused = m_focus.focused();
         if (focused != nullptr) {
@@ -65,6 +68,11 @@ namespace albor
     UiNode* InputController::root() const {
         // the tree is the one the controller was pointed at (§8.3)
         return m_root;
+    }
+
+    void InputController::set_subtree_released_handler(std::function<void(UiNode*)> handler) {
+        // the handler is replaced rather than chained, because one window watches its own presentation (§8.3)
+        m_subtree_released = std::move(handler);
     }
 
     UiNode* InputController::hovered() const {

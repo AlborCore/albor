@@ -269,6 +269,7 @@ namespace albor::compiler
             CheckedComponent out;
             // the name, the imports and the span come straight from the declaration (§11.1)
             out.name = component.name;
+            out.name_span = component.name_span;
             out.imports = component.imports;
             out.span = component.span;
             // the declared names start empty, because they are collected as the declarations resolve (§11.1)
@@ -569,6 +570,7 @@ namespace albor::compiler
             CheckedFunction function;
             // the name and the span come straight from the declaration (§11.1)
             function.name = declaration.name;
+            function.name_span = declaration.name_span;
             function.span = declaration.span;
             // the parameters are resolved in written order, because the arguments must match them (§11.1)
             for (const FunctionParameter& parameter : declaration.parameters) {
@@ -712,6 +714,7 @@ namespace albor::compiler
             CheckedGlobal global;
             // the name and the span come straight from the declaration (§11.1)
             global.name = declaration.name;
+            global.name_span = declaration.name_span;
             global.span = declaration.span;
             // the declared type resolves against the catalog, which is where a native type comes from (§11.2, AD-17)
             const ValueType resolved = resolve_type_name(declaration.type, m_catalog);
@@ -769,6 +772,7 @@ namespace albor::compiler
             CheckedProperty property;
             // the name, the direction and the span come straight from the declaration (§11.1)
             property.name = declaration.name;
+            property.name_span = declaration.name_span;
             property.direction = declaration.direction;
             property.span = declaration.span;
             // the written type resolves against the catalog, which is where a native type comes from (§11.2, AD-17)
@@ -811,6 +815,7 @@ namespace albor::compiler
             CheckedSignal signal;
             // the name and the span come straight from the declaration (§11.1)
             signal.name = declaration.name;
+            signal.name_span = declaration.name_span;
             signal.span = declaration.span;
             // each parameter type resolves the same way a property type does (§11.1)
             for (std::size_t index = 0; index < declaration.parameter_types.size(); index++) {
@@ -823,6 +828,8 @@ namespace albor::compiler
                 signal.parameter_types.push_back(resolved);
                 // the name is kept beside the type, because a handler body reads the raised value by it (§11.1)
                 signal.parameter_names.push_back(index < declaration.parameter_names.size() ? declaration.parameter_names[index] : std::string{});
+                // the name span follows the name, because a jump from a handler body lands on it (§12.2)
+                signal.parameter_name_spans.push_back(index < declaration.parameter_name_spans.size() ? declaration.parameter_name_spans[index] : SourceSpan{});
             }
             // a signal is kept, because a handler resolves against it (§11.1)
             out.signals.push_back(std::move(signal));
@@ -833,6 +840,7 @@ namespace albor::compiler
             CheckedCommand command;
             // the name and the span come straight from the declaration (§18)
             command.name = declaration.name;
+            command.name_span = declaration.name_span;
             command.span = declaration.span;
             // the label is the one every consumer shows, and the name stands in when none was written (§18)
             command.label = declaration.label.empty() ? declaration.name : declaration.label;

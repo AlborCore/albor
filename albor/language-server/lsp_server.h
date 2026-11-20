@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "albor/compiler/source_index.h"
 #include "albor/language-server/lsp_document.h"
 
 namespace albor::language_server
@@ -62,6 +63,9 @@ namespace albor::language_server
 
         // the files each open root read, which is what an imported change recompiles (§11.1, §12.2)
         std::map<std::string, std::vector<std::string>, std::less<>> m_root_dependencies;
+
+        // the editor index of each open root, which definition, outline and tokens answer from (§12.2)
+        std::map<std::string, compiler::SourceIndex, std::less<>> m_source_indexes;
 
         // how many diagnostics the last compile produced, which an agreement test reads (§16)
         std::size_t m_last_diagnostics = 0;

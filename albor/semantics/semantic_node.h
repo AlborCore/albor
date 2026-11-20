@@ -209,6 +209,12 @@ namespace albor
         // replace the accessible name (§10.1)
         void set_name(std::string name);
 
+        // hand out the accessible description, which a tooltip supplies and a reader speaks beside the name (§10.1, §8.3)
+        [[nodiscard]] const std::string& description() const;
+
+        // replace the accessible description, which is the hover text of a labelled control (§10.1, §8.3)
+        void set_description(std::string description);
+
         // hand out the states the node is in (§10.1)
         [[nodiscard]] const SemanticStates& states() const;
 
@@ -338,6 +344,9 @@ namespace albor
 
         // the accessible name a screen reader speaks (§10.1)
         std::string m_name;
+
+        // the accessible description a tooltip supplies, which reads beside the name (§10.1, §8.3)
+        std::string m_description;
 
         // the current states of the node, which a const write updates the way the range does (§10.1, §10.2)
         mutable SemanticStates m_states;

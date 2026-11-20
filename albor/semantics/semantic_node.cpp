@@ -35,6 +35,16 @@ namespace albor
         m_name = std::move(name);
     }
 
+    const std::string& SemanticNode::description() const {
+        // the description is read by the adapters, which announce it beside the name (§10.1, §10.2)
+        return m_description;
+    }
+
+    void SemanticNode::set_description(std::string description) {
+        // the description is stored as written, because a tooltip supplies the author's text (§10.1, §8.3)
+        m_description = std::move(description);
+    }
+
     const SemanticStates& SemanticNode::states() const {
         // the states are read by the adapters, which never mutate them directly (§10.1)
         return m_states;
@@ -293,7 +303,7 @@ namespace albor
     }
 
     bool operator==(const SemanticNode& lhs, const SemanticNode& rhs) {
-        // the comparison covers what an adapter observes, which is role, name, states and bounds (§10.1)
-        return lhs.m_role == rhs.m_role && lhs.m_name == rhs.m_name && lhs.m_states == rhs.m_states && lhs.m_bounds == rhs.m_bounds && lhs.m_has_range == rhs.m_has_range && (!lhs.m_has_range || lhs.m_range == rhs.m_range);
+        // the comparison covers what an adapter observes, which is role, name, description, states and bounds (§10.1)
+        return lhs.m_role == rhs.m_role && lhs.m_name == rhs.m_name && lhs.m_description == rhs.m_description && lhs.m_states == rhs.m_states && lhs.m_bounds == rhs.m_bounds && lhs.m_has_range == rhs.m_has_range && (!lhs.m_has_range || lhs.m_range == rhs.m_range);
     }
 } // namespace albor

@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "albor/core/paint.h"
+#include "albor/ui/tooltip.h"
 
 namespace albor
 {
@@ -25,5 +26,8 @@ namespace albor
 
         // the source that replaces the pipeline's own build, which an application that owns its scene installs (§6.1)
         SceneSource scene_source;
+
+        // the bubble a hover tooltip presents, which an application that installs a theme resolves (§8.3, §8.4)
+        TooltipStyle tooltip_style;
     };
 } // namespace albor

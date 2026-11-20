@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "albor/core/align.h"
@@ -39,6 +40,9 @@ namespace albor
         UiNode& operator=(const UiNode&) = delete;
         UiNode(UiNode&&) = delete;
         UiNode& operator=(UiNode&&) = delete;
+
+        // the builder that supplies rich tooltip content, which a node installs when text is not enough (§8.3)
+        using TooltipBuilder = std::function<std::unique_ptr<UiNode>()>;
 
         // hand out the parent, which is null for a root node
         [[nodiscard]] UiNode* parent() const;
@@ -108,6 +112,24 @@ namespace albor
 
         // run the context-menu handler when the point lands on the node, reporting whether one took it (§8.3)
         [[nodiscard]] bool request_context_menu(Point logical_point);
+
+        // hand out the hover text the node carries, which is empty when the author wrote none (§8.3)
+        [[nodiscard]] const std::string& tooltip() const;
+
+        // replace the hover text, which a tooltip controller reads at the next frame (§8.3)
+        void set_tooltip(std::string tooltip);
+
+        // report whether the node carries hover text or a builder, which the controller arms on (§8.3)
+        [[nodiscard]] bool has_tooltip() const;
+
+        // install the builder that supplies rich tooltip content, which wins over the text (§8.3)
+        void set_tooltip_builder(TooltipBuilder builder);
+
+        // report whether a rich builder is installed, which a test asserts on (§8.3)
+        [[nodiscard]] bool has_tooltip_builder() const;
+
+        // build the rich content, returning null when the node installed no builder (§8.3)
+        [[nodiscard]] std::unique_ptr<UiNode> build_tooltip() const;
 
         // hand out the bounds a parent arranged this node to (§8.2)
         [[nodiscard]] const Rect& bounds() const;
@@ -300,6 +322,12 @@ namespace albor
 
         // the work a context-menu request runs on this node, which carries the node-local point (§8.3)
         std::function<void(Point)> m_on_context_menu;
+
+        // the hover text the node carries, which a tooltip controller presents (§8.3)
+        std::string m_tooltip;
+
+        // the builder that supplies rich tooltip content, which wins over the text (§8.3)
+        TooltipBuilder m_tooltip_builder;
 
         // whether the node asked for a redraw since the last frame (§6.1)
         bool m_render_dirty = true;

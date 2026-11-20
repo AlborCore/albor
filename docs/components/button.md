@@ -9,7 +9,7 @@ to `action` makes the button follow that command's label, enablement and click t
 | --- | --- | --- |
 | `text` | `string` | the button caption; accepts `@tr` |
 | `text_align` | `align` | the horizontal placement of the caption (and icon group); defaults to centred |
-| `tooltip` | `string` | the accessible name of an icon-only button, which a future hover surface will paint; accepts `@tr` |
+| `tooltip` | `string` | the hover text the window presents; an icon-only button also announces it as its accessible name; accepts `@tr` |
 | `icon` | `image` | an optional retained icon drawn beside the caption |
 | `icon_size` | `float` | the square icon extent; defaults to 16 logical pixels |
 | `background` | `color` | the plate colour; defaults to the theme |
@@ -89,9 +89,10 @@ both edges.
 - A `disabled` button still occupies its measured size; it simply refuses interaction and,
   through a command, publishes that refusal to every other consumer.
 - An icon-only button uses its `tooltip` as the accessible name, then its author `id`, because a
-  screen reader has no caption to speak. An icon-plus-label button keeps the caption as its name.
-  A labelled button keeps its caption as the name, so its tooltip is retained but not announced. The
-  hover surface that paints the tooltip arrives later; the semantic name is authoritative now.
+  screen reader has no caption to speak. An icon-plus-label button keeps the caption as its name
+  and carries the tooltip as its accessible description, which assistive technology announces
+  beside the name. The window presents the tooltip on hover
+  ([Tooltips](../ui-language/tooltips.md)).
 - `text_align` is separate from `horizontal_align`: the former places the caption inside the
   plate; the latter places the plate inside its parent.
 - A button with no `icon` keeps the exact text-only measurement and paint path.

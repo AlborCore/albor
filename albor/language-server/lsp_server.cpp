@@ -10,6 +10,7 @@
 
 #include "albor/compiler/codegen/codegen.h"
 #include "albor/compiler/diagnostic.h"
+#include "albor/compiler/source_index.h"
 #include "albor/compiler/type_checker.h"
 #include "albor/compiler/ui_loader.h"
 #include "albor/compiler/value_type.h"
@@ -147,6 +148,9 @@ namespace albor::language_server
 
             // the root and every import in load order, which decides what a later change invalidates (§11.1, §12.2)
             std::vector<std::filesystem::path> dependencies;
+
+            // the editor index of the root, which is absent when no typed tree was produced (§12.2)
+            std::optional<compiler::SourceIndex> index;
         };
 
         // run the compiler over one document's text and every open import buffer (§16)
@@ -187,7 +191,12 @@ namespace albor::language_server
             const std::optional<compiler::CheckedFile> checked = loader.check(root, source_path.empty() ? compiler::RootNameCheck::Skipped : compiler::RootNameCheck::Required);
             // a root that could not be checked stops before generation, because there is no typed tree to generate (§11.3)
             if (!checked.has_value())
-                return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies()};
+                return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies(), .index = std::nullopt};
+            // the editor index is built from the same parse and checked tree the build uses (§12.2, §16)
+            std::optional<compiler::SourceIndex> index;
+            // the root tree is what the loader kept alive, and its absence means no index can name a declaration (§12.2)
+            if (const compiler::SourceFile* root_source = loader.root_source(); root_source != nullptr)
+                index = compiler::index_source(text, *root_source, *checked);
             // the generator runs too, because a diagnostic may come only from codegen (§11.3)
             compiler::CodeGenerator generator(diagnostics);
             // a document with a file path resolves its assets beside itself, which is what the build does (§12.2, §6.4)
@@ -199,7 +208,7 @@ namespace albor::language_server
                 (void)generator.generate(*checked);
             }
             // the diagnostics and files read are returned, which the editor and a later change need (§16, §12.2)
-            return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies()};
+            return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies(), .index = std::move(index)};
         }
 
         // encode a path as a file uri, which is how an editor routes a diagnostic for an imported file (§12.2)
@@ -263,6 +272,146 @@ namespace albor::language_server
             position.set("character", core::Json(static_cast<double>(location.column > 0 ? location.column - 1 : 0)));
             // the position is returned whole (§12.2)
             return position;
+        }
+
+        // report whether a span covers the cursor, which is what a definition request asks (§12.2)
+        bool span_contains(const compiler::SourceSpan& span, const compiler::SourceLocation& cursor) {
+            // a cursor before the first character is outside the span, because the span starts later (§12.2)
+            if (cursor.line < span.start.line || (cursor.line == span.start.line && cursor.column < span.start.column))
+                return false;
+            // a cursor at or after the exclusive end is outside the span, because the span has already ended (§12.2)
+            return cursor.line < span.end.line || (cursor.line == span.end.line && cursor.column < span.end.column);
+        }
+
+        // render the declaration the cursor names as the protocol's location, which an editor opens (§12.2)
+        core::Json definition_location(std::string_view document_uri, const compiler::SourceTarget& target) {
+            // the location is an object, because the protocol describes it that way (§12.2)
+            core::Json location;
+            // a declaration in the same file is addressed by the document's own uri (§12.2)
+            location.set("uri", core::Json(target.file.empty() ? std::string(document_uri) : file_uri(target.file)));
+            // the range is the declared name, which is where the cursor lands (§12.2)
+            core::Json range;
+            // the start is the first character of the name (§12.2)
+            range.set("start", position_value(target.span.start));
+            // the end is one past the declared name, which is the protocol's exclusive form (§12.2)
+            range.set("end", position_value(target.span.end));
+            // the range joins the location (§12.2)
+            location.set("range", std::move(range));
+            // the location is returned whole (§12.2)
+            return location;
+        }
+
+        // classify a declaration as the protocol's document symbol kind, which an outline icon shows (§12.2)
+        double document_symbol_kind(compiler::SourceSymbolKind kind) {
+            // the declaration kind decides, because an editor picks its icon from it (§12.2)
+            switch (kind) {
+            case compiler::SourceSymbolKind::Component:
+                return 5.0;
+            case compiler::SourceSymbolKind::Property:
+                return 7.0;
+            case compiler::SourceSymbolKind::Signal:
+                return 24.0;
+            case compiler::SourceSymbolKind::Command:
+            case compiler::SourceSymbolKind::Function:
+                return 12.0;
+            case compiler::SourceSymbolKind::Element:
+                return 19.0;
+            case compiler::SourceSymbolKind::Global:
+                return 13.0;
+            case compiler::SourceSymbolKind::Struct:
+                return 23.0;
+            case compiler::SourceSymbolKind::Enum:
+                return 10.0;
+            }
+            // a kind outside the declared set is a variable, because it names a value (§12.2)
+            return 13.0;
+        }
+
+        // render one declaration as the protocol's document symbol, which an outline nests (§12.2)
+        core::Json document_symbol(const compiler::SourceSymbol& symbol) {
+            // the symbol is an object, because the protocol describes it that way (§12.2)
+            core::Json entry;
+            // the name is what the outline shows (§12.2)
+            entry.set("name", core::Json(symbol.name));
+            // the kind is what an editor picks an icon from (§12.2)
+            entry.set("kind", core::Json(document_symbol_kind(symbol.kind)));
+            // the detail is shown beside the name when the declaration says something more (§12.2)
+            if (!symbol.detail.empty())
+                entry.set("detail", core::Json(symbol.detail));
+            // the range covers the whole declaration, which is what an outline folds (§12.2)
+            core::Json range;
+            // the start is where the declaration begins (§12.2)
+            range.set("start", position_value(symbol.span.start));
+            // the end is where the declaration ends (§12.2)
+            range.set("end", position_value(symbol.span.end));
+            // the range joins the entry (§12.2)
+            entry.set("range", std::move(range));
+            // the selection range is the declared name, which an outline highlights (§12.2)
+            core::Json selection;
+            // the start is the first character of the name (§12.2)
+            selection.set("start", position_value(symbol.name_span.start));
+            // the end is one past the name (§12.2)
+            selection.set("end", position_value(symbol.name_span.end));
+            // the selection joins the entry (§12.2)
+            entry.set("selectionRange", std::move(selection));
+            // the children are the declarations the symbol contains, which an outline nests (§12.2)
+            if (!symbol.children.empty()) {
+                // the rendered children accumulate in declaration order (§12.2)
+                std::vector<core::Json> children;
+                // each child is rendered by the same rule, because an outline nests to any depth (§12.2)
+                for (const compiler::SourceSymbol& child : symbol.children)
+                    children.push_back(document_symbol(child));
+                // the children join the entry, which is what makes the outline a tree (§12.2)
+                entry.set("children", core::Json(std::move(children)));
+            }
+            // the entry is returned whole (§12.2)
+            return entry;
+        }
+
+        // render the indexed tokens as the protocol's delta encoded stream, which an editor paints (§12.2)
+        core::Json semantic_tokens(const compiler::SourceIndex& index) {
+            // the data carries five numbers per token, in the order the protocol fixes (§12.2)
+            std::vector<core::Json> data;
+            // the previous token's line is what a delta is measured from (§12.2)
+            std::uint32_t previous_line = 0;
+            // the previous token's start is what a same line delta is measured from (§12.2)
+            std::uint32_t previous_start = 0;
+            // each token is encoded in source order, which the index already guarantees (§12.2)
+            for (const compiler::SourceToken& token : index.tokens) {
+                // the protocol counts lines from zero, and a compiler line below one clamps (§12.2)
+                const std::uint32_t line = token.span.start.line > 0 ? token.span.start.line - 1 : 0;
+                // the protocol counts characters from zero, and a compiler column below one clamps (§12.2)
+                const std::uint32_t start = token.span.start.column > 0 ? token.span.start.column - 1 : 0;
+                // the end is exclusive, which is what the protocol's length counts (§12.2)
+                const std::uint32_t end = token.span.end.column > 0 ? token.span.end.column - 1 : 0;
+                // a token that covers no characters cannot be painted, so it carries nothing (§12.2)
+                if (end <= start)
+                    continue;
+                // the line delta is what the protocol measures first (§12.2)
+                const std::uint32_t delta_line = line - previous_line;
+                // a token on the same line is measured from its predecessor, a new line starts at its column (§12.2)
+                const std::uint32_t delta_start = delta_line == 0 ? start - previous_start : start;
+                // the line delta is the first number (§12.2)
+                data.push_back(core::Json(static_cast<double>(delta_line)));
+                // the start delta is the second number (§12.2)
+                data.push_back(core::Json(static_cast<double>(delta_start)));
+                // the length is the third number (§12.2)
+                data.push_back(core::Json(static_cast<double>(end - start)));
+                // the token type is the legend index the server advertised (§12.2)
+                data.push_back(core::Json(static_cast<double>(static_cast<int>(token.kind))));
+                // no token carries a modifier, so the fifth number is zero (§12.2)
+                data.push_back(core::Json(0.0));
+                // the encoded token becomes the next token's origin (§12.2)
+                previous_line = line;
+                // the same holds for its start column (§12.2)
+                previous_start = start;
+            }
+            // the reply is an object, because the protocol describes it that way (§12.2)
+            core::Json result;
+            // the data is the whole of a full token reply (§12.2)
+            result.set("data", core::Json(std::move(data)));
+            // the reply is returned whole (§12.2)
+            return result;
         }
 
         // render diagnostics as the protocol's publish payload, which is what an editor consumes (§12.2, §16)
@@ -336,9 +485,14 @@ namespace albor::language_server
         // the root key is normalized, because the loader reports every path that way (§11.1)
         const std::string root_key = root_path(source_path).lexically_normal().generic_string();
         // the front end checks the root and every imported file, which is what carries cross-file diagnostics (§11.1)
-        const CompileResult result = compile_text(document->text(), m_documents, source_path);
+        CompileResult result = compile_text(document->text(), m_documents, source_path);
         // the count is kept, which is what an agreement test reads (§16)
         m_last_diagnostics = result.diagnostics.count();
+        // the index of the root replaces the previous run, so a jump never lands in stale source (§12.2)
+        if (result.index.has_value())
+            m_source_indexes[document_uri] = std::move(*result.index);
+        else
+            m_source_indexes.erase(document_uri);
         // the previous publications are what a clean import has to clear (§12.2, §16)
         std::vector<std::string> previous;
         if (const auto found = m_root_publications.find(document_uri); found != m_root_publications.end())
@@ -507,6 +661,24 @@ namespace albor::language_server
             capabilities.set("completionProvider", core::Json(std::map<std::string, core::Json, std::less<>>{}));
             // hover is offered on an element or property name (§12.2)
             capabilities.set("hoverProvider", core::Json(true));
+            // definition is offered on every written name the index resolved (§12.2)
+            capabilities.set("definitionProvider", core::Json(true));
+            // the document outline is offered, because the compiler already knows every declaration (§12.2)
+            capabilities.set("documentSymbolProvider", core::Json(true));
+            // the token legend fixes the order the server encodes, which an editor maps onto colours (§12.2)
+            core::Json legend;
+            // the token types are the closed set the index classifies (§12.2)
+            legend.set("tokenTypes", core::Json(std::vector<core::Json>{core::Json(std::string("keyword")), core::Json(std::string("type")), core::Json(std::string("property")), core::Json(std::string("event")), core::Json(std::string("function")), core::Json(std::string("variable"))}));
+            // no token carries a modifier, because the index classifies by kind alone (§12.2)
+            legend.set("tokenModifiers", core::Json(std::vector<core::Json>{}));
+            // the semantic token capability carries the legend and the full form (§12.2)
+            core::Json semantic;
+            // the legend is what an editor decodes the token numbers with (§12.2)
+            semantic.set("legend", std::move(legend));
+            // a full reply is what this server sends, because a document is recompiled whole (§12.2)
+            semantic.set("full", core::Json(true));
+            // the capability is what an editor looks for before asking (§12.2)
+            capabilities.set("semanticTokensProvider", std::move(semantic));
             // the capabilities join the result (§12.2)
             result.set("capabilities", std::move(capabilities));
             // the handshake answers as a reply, because an editor waits for it (§12.2)
@@ -624,6 +796,8 @@ namespace albor::language_server
                         }
                         // the buffer is forgotten, which is what a close means (§12.2)
                         m_documents.close(closed_uri);
+                        // the index is dropped with the buffer, because a closed file must not answer a request (§12.2)
+                        m_source_indexes.erase(closed_uri);
                         // the publications of the closed root are cleared unless another root still owns them (§12.2)
                         std::vector<Notification> publications;
                         close_root(closed_uri, publications);
@@ -644,6 +818,123 @@ namespace albor::language_server
             }
             // a close with no document names nothing, which produces no reply and no publication (§12.2)
             return Exchange{.reply = {}, .notifications = {}};
+        }
+
+        // a definition request answers with the declaration the cursor names, which the compile already indexed (§12.2)
+        if (method->as_string() == "textDocument/definition") {
+            // a document request carries parameters (§12.2)
+            if (params == nullptr || !params->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no document").to_string(), .notifications = {}};
+            // the document is named through a text document identifier (§12.2)
+            const core::Json* text_document = params->member("textDocument");
+            // a request with no document names nothing (§12.2)
+            if (text_document == nullptr || !text_document->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request names no document").to_string(), .notifications = {}};
+            // the uri names what to read (§12.2)
+            const std::optional<std::string> uri = string_member(*text_document, "uri");
+            // an absent uri names nothing (§12.2)
+            if (!uri)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the document has no uri").to_string(), .notifications = {}};
+            // a document that is not open has no index, because every answer comes from an editor buffer (§12.2)
+            if (m_documents.find(*uri) == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_REQUEST, "the document is not open: " + *uri).to_string(), .notifications = {}};
+            // the position is read, because a definition is asked at the cursor (§12.2)
+            const core::Json* position = params->member("position");
+            // a request with no position answers from nowhere, which is refused rather than guessed (§12.2)
+            if (position == nullptr || !position->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no position").to_string(), .notifications = {}};
+            // the line is required, because it is the row the cursor is on (§12.2)
+            const core::Json* line_value = position->member("line");
+            // the character is required, because it is the column within that row (§12.2)
+            const core::Json* character_value = position->member("character");
+            // a request missing either answers from nowhere, which is refused (§12.2)
+            if (line_value == nullptr || character_value == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the position is incomplete").to_string(), .notifications = {}};
+            // the index of the open document is what every declaration was recorded in (§12.2)
+            const auto found = m_source_indexes.find(*uri);
+            // a compile that produced no typed tree has no index, so the honest answer is null (§12.2)
+            if (found == m_source_indexes.end())
+                return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // the protocol counts from zero, while the compiler counts from one (§12.2)
+            const compiler::SourceLocation cursor{.line = static_cast<std::uint32_t>(std::max(0.0, line_value->as_number())) + 1, .column = static_cast<std::uint32_t>(std::max(0.0, character_value->as_number())) + 1};
+            // the use under the cursor is the one a jump follows (§12.2)
+            const compiler::SourceUse* named = nullptr;
+            // a cursor just past a name still names it, which is what a double click at the end does (§12.2)
+            const compiler::SourceUse* edge = nullptr;
+            // the uses are scanned in written order, because the first one covering the cursor is under it (§12.2)
+            for (const compiler::SourceUse& use : found->second.uses) {
+                // a span that covers the cursor is the exact answer (§12.2)
+                if (span_contains(use.span, cursor)) {
+                    named = &use;
+                    break;
+                }
+                // a span ending at the cursor is the fallback when the cursor sits just past the name (§12.2)
+                if (use.span.end == cursor)
+                    edge = &use;
+            }
+            // the exact use wins, and the edge fallback answers only when nothing contains the cursor (§12.2)
+            if (named == nullptr)
+                named = edge;
+            // a cursor on nothing, or a name the framework declares outside source, has no location to open (§12.2)
+            if (named == nullptr || !named->target.has_value())
+                return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // the declaration the name resolves to is what an editor opens (§12.2)
+            return Exchange{.reply = envelope(reply_id, definition_location(*uri, *named->target)).to_string(), .notifications = {}};
+        }
+
+        // an outline request answers from the declarations the compile already indexed (§12.2)
+        if (method->as_string() == "textDocument/documentSymbol") {
+            // a document request carries parameters (§12.2)
+            if (params == nullptr || !params->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no document").to_string(), .notifications = {}};
+            // the document is named through a text document identifier (§12.2)
+            const core::Json* text_document = params->member("textDocument");
+            // a request with no document names nothing (§12.2)
+            if (text_document == nullptr || !text_document->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request names no document").to_string(), .notifications = {}};
+            // the uri names what to read (§12.2)
+            const std::optional<std::string> uri = string_member(*text_document, "uri");
+            // an absent uri names nothing (§12.2)
+            if (!uri)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the document has no uri").to_string(), .notifications = {}};
+            // a document that is not open has no index, because every answer comes from an editor buffer (§12.2)
+            if (m_documents.find(*uri) == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_REQUEST, "the document is not open: " + *uri).to_string(), .notifications = {}};
+            // the rendered symbols accumulate in declaration order (§12.2)
+            std::vector<core::Json> symbols;
+            // a document whose compile produced no tree has an empty outline, which is the honest answer (§12.2)
+            if (const auto found = m_source_indexes.find(*uri); found != m_source_indexes.end()) {
+                // each top level declaration is one symbol, which its members nest below (§12.2)
+                for (const compiler::SourceSymbol& symbol : found->second.symbols)
+                    symbols.push_back(document_symbol(symbol));
+            }
+            // the outline is a list, which is what the protocol describes for document symbols (§12.2)
+            return Exchange{.reply = envelope(reply_id, core::Json(std::move(symbols))).to_string(), .notifications = {}};
+        }
+
+        // a semantic token request answers from the classified regions the compile already indexed (§12.2)
+        if (method->as_string() == "textDocument/semanticTokens/full") {
+            // a document request carries parameters (§12.2)
+            if (params == nullptr || !params->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no document").to_string(), .notifications = {}};
+            // the document is named through a text document identifier (§12.2)
+            const core::Json* text_document = params->member("textDocument");
+            // a request with no document names nothing (§12.2)
+            if (text_document == nullptr || !text_document->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request names no document").to_string(), .notifications = {}};
+            // the uri names what to read (§12.2)
+            const std::optional<std::string> uri = string_member(*text_document, "uri");
+            // an absent uri names nothing (§12.2)
+            if (!uri)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the document has no uri").to_string(), .notifications = {}};
+            // a document that is not open has no index, because every answer comes from an editor buffer (§12.2)
+            if (m_documents.find(*uri) == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_REQUEST, "the document is not open: " + *uri).to_string(), .notifications = {}};
+            // a document whose compile produced no tree has no tokens, which is the honest answer (§12.2)
+            if (const auto found = m_source_indexes.find(*uri); found != m_source_indexes.end())
+                return Exchange{.reply = envelope(reply_id, semantic_tokens(found->second)).to_string(), .notifications = {}};
+            // an empty reply is what the protocol spells for no tokens (§12.2)
+            return Exchange{.reply = envelope(reply_id, core::Json(std::map<std::string, core::Json, std::less<>>{{"data", core::Json(std::vector<core::Json>{})}})).to_string(), .notifications = {}};
         }
 
         // a request naming a document that is not open is refused, rather than answered from nothing (§12.2)
