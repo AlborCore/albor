@@ -2,12 +2,14 @@
 #include <cmath>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 
 #include <gtest/gtest.h>
 
 #include "albor/core/clipboard.h"
+#include "albor/core/env.h"
 #include "albor/platform/linux/common/input_normalization.h"
 #include "albor/platform/linux/wayland/event_loop.h"
 #include "albor/platform/linux/wayland/native_surface.linux.h"
@@ -77,8 +79,8 @@ namespace
 
 TEST(WaylandPlatform, RefusesAWindowWithoutACompositor) {
     // arrange a display name that cannot connect, which the adapter must refuse (§5.3)
-    const char* saved_display = std::getenv("WAYLAND_DISPLAY");
-    const std::string saved = saved_display != nullptr ? saved_display : "";
+    const std::optional<std::string> saved_display = albor::core::get_environment_variable("WAYLAND_DISPLAY");
+    const std::string saved = saved_display.value_or("");
     setenv("WAYLAND_DISPLAY", "/nonexistent-albor-wayland", 1);
     WindowOptions options;
     options.title = "albor-wayland-refusal";
@@ -211,8 +213,8 @@ TEST(WaylandPlatform, MetricsFollowTheCompositorScale) {
     EXPECT_FLOAT_EQ(metrics.pixel_size.width, metrics.logical_size.width * metrics.scale_factor);
     EXPECT_FLOAT_EQ(metrics.pixel_size.height, metrics.logical_size.height * metrics.scale_factor);
     // a run the compositor scaled expects the exact factor, which the headless runner passes in (§5.3)
-    if (const char* expected = std::getenv("ALBOR_EXPECT_SCALE"); expected != nullptr)
-        EXPECT_FLOAT_EQ(metrics.scale_factor, std::stof(expected));
+    if (const std::optional<std::string> expected = albor::core::get_environment_variable("ALBOR_EXPECT_SCALE"); expected.has_value())
+        EXPECT_FLOAT_EQ(metrics.scale_factor, std::stof(*expected));
     window->close();
 }
 
@@ -292,8 +294,8 @@ TEST(WaylandPlatform, FractionalScaleReportsThePhysicalExtent) {
     EXPECT_FLOAT_EQ(metrics.pixel_size.width, metrics.logical_size.width * metrics.scale_factor);
     EXPECT_FLOAT_EQ(metrics.pixel_size.height, metrics.logical_size.height * metrics.scale_factor);
     // a run that names the expected factor asserts it exactly, which the 1.25 and 1.5 runners pass in (AD-27)
-    if (const char* expected = std::getenv("ALBOR_EXPECT_SCALE"); expected != nullptr)
-        EXPECT_FLOAT_EQ(metrics.scale_factor, std::stof(expected));
+    if (const std::optional<std::string> expected = albor::core::get_environment_variable("ALBOR_EXPECT_SCALE"); expected.has_value())
+        EXPECT_FLOAT_EQ(metrics.scale_factor, std::stof(*expected));
     window->close();
 }
 

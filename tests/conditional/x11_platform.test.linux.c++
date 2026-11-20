@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 #include <xcb/xcb.h>
 
+#include "albor/core/env.h"
 #include "albor/core/geometry.h"
 #include "albor/platform/linux/x11/event_dispatch.linux.h"
 #include "albor/platform/linux/x11/native_surface.linux.h"
@@ -68,7 +69,7 @@ namespace
 
 TEST(X11Platform, CreatesShowsResizesAndClosesAWindow) {
     // arrange a display, which the x11 runner provides and a wayland session does not reach (§5.3)
-    if (std::getenv("DISPLAY") == nullptr || std::getenv("WAYLAND_DISPLAY") != nullptr)
+    if (!albor::core::get_environment_variable("DISPLAY").has_value() || albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value())
         GTEST_SKIP() << "no x11 display on this host";
     WindowOptions options;
     options.title = "albor-x11-window";
@@ -101,7 +102,7 @@ TEST(X11Platform, CreatesShowsResizesAndClosesAWindow) {
 
 TEST(X11Platform, ClosesOnTheWindowManagerDeleteProtocol) {
     // arrange a shown window and the delete atoms a window manager sends (§5.2)
-    if (std::getenv("DISPLAY") == nullptr || std::getenv("WAYLAND_DISPLAY") != nullptr)
+    if (!albor::core::get_environment_variable("DISPLAY").has_value() || albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value())
         GTEST_SKIP() << "no x11 display on this host";
     WindowOptions options;
     options.title = "albor-x11-close";
@@ -140,7 +141,7 @@ TEST(X11Platform, ClosesOnTheWindowManagerDeleteProtocol) {
 
 TEST(X11Platform, MapsKeysButtonsAndWheelFromXcbEvents) {
     // arrange a shown window and the raw events an x server sends (§8.3)
-    if (std::getenv("DISPLAY") == nullptr || std::getenv("WAYLAND_DISPLAY") != nullptr)
+    if (!albor::core::get_environment_variable("DISPLAY").has_value() || albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value())
         GTEST_SKIP() << "no x11 display on this host";
     WindowOptions options;
     options.title = "albor-x11-input";
@@ -199,7 +200,7 @@ TEST(X11Platform, MapsKeysButtonsAndWheelFromXcbEvents) {
 
 TEST(X11Platform, ReportsARequestedFrame) {
     // arrange a shown window
-    if (std::getenv("DISPLAY") == nullptr || std::getenv("WAYLAND_DISPLAY") != nullptr)
+    if (!albor::core::get_environment_variable("DISPLAY").has_value() || albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value())
         GTEST_SKIP() << "no x11 display on this host";
     WindowOptions options;
     options.title = "albor-x11-frame";
@@ -225,7 +226,7 @@ TEST(X11Platform, ReportsARequestedFrame) {
 
 TEST(X11Platform, MapsTheDeviceScaleOntoPixelsAndLogicalInput) {
     // arrange a hidpi session, which the adapter resolves once per window (AD-27)
-    if (std::getenv("DISPLAY") == nullptr || std::getenv("WAYLAND_DISPLAY") != nullptr)
+    if (!albor::core::get_environment_variable("DISPLAY").has_value() || albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value())
         GTEST_SKIP() << "no x11 display on this host";
     setenv("GDK_SCALE", "2", 1);
     WindowOptions options;
@@ -288,7 +289,7 @@ TEST(X11Platform, MapsTheDeviceScaleOntoPixelsAndLogicalInput) {
 
 TEST(X11Platform, CreatesAPopupAsAnUndecoratedTransientAtItsAnchor) {
     // arrange a shown owner, which the popup anchors to (§5.1)
-    if (std::getenv("DISPLAY") == nullptr || std::getenv("WAYLAND_DISPLAY") != nullptr)
+    if (!albor::core::get_environment_variable("DISPLAY").has_value() || albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value())
         GTEST_SKIP() << "no x11 display on this host";
     WindowOptions owner_options;
     owner_options.title = "albor-x11-popup-owner";
@@ -365,7 +366,7 @@ TEST(X11Platform, CreatesAPopupAsAnUndecoratedTransientAtItsAnchor) {
 
 TEST(X11Platform, SelectsTheAdapterFromTheEnvironment) {
     // arrange the x11 environment, which the loader names when no wayland session is present (§5.3, AD-22)
-    if (std::getenv("DISPLAY") == nullptr || std::getenv("WAYLAND_DISPLAY") != nullptr)
+    if (!albor::core::get_environment_variable("DISPLAY").has_value() || albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value())
         GTEST_SKIP() << "no x11 display on this host";
     WindowOptions options;
     options.title = "albor-x11-selection";

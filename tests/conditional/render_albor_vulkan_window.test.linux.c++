@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "albor/core/env.h"
 #include "albor/core/paint.h"
 #include "albor/render/draw_command.h"
 #include "albor/render/frame_scene.h"
@@ -18,8 +19,8 @@ using namespace albor::render;
 
 TEST(AlborVulkanWindowChecks, PresentsThroughTheNativeWindow) {
     // arrange a display, which an x11 and a wayland runner both provide (§5.3)
-    const bool wayland = std::getenv("WAYLAND_DISPLAY") != nullptr;
-    const bool x11 = std::getenv("DISPLAY") != nullptr;
+    const bool wayland = albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value();
+    const bool x11 = albor::core::get_environment_variable("DISPLAY").has_value();
     if (!wayland && !x11)
         GTEST_SKIP() << "no display on this host";
     WindowOptions options;
@@ -51,8 +52,8 @@ TEST(AlborVulkanWindowChecks, PresentsThroughTheNativeWindow) {
 
 TEST(AlborVulkanWindowChecks, PresentsAFrameStreamWithoutDrainingTheQueue) {
     // arrange a displayed window, which the backend presents a stream of frames through (§6.3)
-    const bool wayland = std::getenv("WAYLAND_DISPLAY") != nullptr;
-    const bool x11 = std::getenv("DISPLAY") != nullptr;
+    const bool wayland = albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value();
+    const bool x11 = albor::core::get_environment_variable("DISPLAY").has_value();
     if (!wayland && !x11)
         GTEST_SKIP() << "no display on this host";
     WindowOptions options;
@@ -84,8 +85,8 @@ TEST(AlborVulkanWindowChecks, PresentsAFrameStreamWithoutDrainingTheQueue) {
 
 TEST(AlborVulkanWindowChecks, SurvivesAWindowTornDownWhileTheSurfaceStands) {
     // arrange a window and a surface that already presented one frame (§6.3, §10.5)
-    const bool wayland = std::getenv("WAYLAND_DISPLAY") != nullptr;
-    const bool x11 = std::getenv("DISPLAY") != nullptr;
+    const bool wayland = albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value();
+    const bool x11 = albor::core::get_environment_variable("DISPLAY").has_value();
     if (!wayland && !x11)
         GTEST_SKIP() << "no display on this host";
     WindowOptions options;
@@ -113,8 +114,8 @@ TEST(AlborVulkanWindowChecks, SurvivesAWindowTornDownWhileTheSurfaceStands) {
 
 TEST(AlborVulkanWindowChecks, RecreatesTheSwapchainAcrossRapidResizes) {
     // arrange a displayed window with a surface at its own extent (§6.3)
-    const bool wayland = std::getenv("WAYLAND_DISPLAY") != nullptr;
-    const bool x11 = std::getenv("DISPLAY") != nullptr;
+    const bool wayland = albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value();
+    const bool x11 = albor::core::get_environment_variable("DISPLAY").has_value();
     if (!wayland && !x11)
         GTEST_SKIP() << "no display on this host";
     WindowOptions options;
@@ -143,8 +144,8 @@ TEST(AlborVulkanWindowChecks, RecreatesTheSwapchainAcrossRapidResizes) {
 
 TEST(AlborVulkanWindowChecks, PresentsTwoWindowsInterleaved) {
     // arrange two displayed windows, which the backend draws through separate surfaces (§6.3, AD-18b)
-    const bool wayland = std::getenv("WAYLAND_DISPLAY") != nullptr;
-    const bool x11 = std::getenv("DISPLAY") != nullptr;
+    const bool wayland = albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value();
+    const bool x11 = albor::core::get_environment_variable("DISPLAY").has_value();
     if (!wayland && !x11)
         GTEST_SKIP() << "no display on this host";
     WindowOptions first_options;
@@ -182,8 +183,8 @@ TEST(AlborVulkanWindowChecks, PresentsTwoWindowsInterleaved) {
 
 TEST(AlborVulkanWindowChecks, PresentsThroughAWindowShownAfterTheSurfaceExists) {
     // arrange a window that stays off screen while its renderer claims the surface (§5.1, §6.3)
-    const bool wayland = std::getenv("WAYLAND_DISPLAY") != nullptr;
-    const bool x11 = std::getenv("DISPLAY") != nullptr;
+    const bool wayland = albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value();
+    const bool x11 = albor::core::get_environment_variable("DISPLAY").has_value();
     if (!wayland && !x11)
         GTEST_SKIP() << "no display on this host";
     WindowOptions options;
@@ -212,8 +213,8 @@ TEST(AlborVulkanWindowChecks, PresentsThroughAWindowShownAfterTheSurfaceExists) 
 
 TEST(AlborVulkanWindowChecks, PresentsThroughAPopupShownHiddenAndShownAgain) {
     // arrange a window that owns a transient surface, which is the popup a menu opens (§5.1)
-    const bool wayland = std::getenv("WAYLAND_DISPLAY") != nullptr;
-    const bool x11 = std::getenv("DISPLAY") != nullptr;
+    const bool wayland = albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value();
+    const bool x11 = albor::core::get_environment_variable("DISPLAY").has_value();
     if (!wayland && !x11)
         GTEST_SKIP() << "no display on this host";
     WindowOptions owner_options;

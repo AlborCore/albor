@@ -1,6 +1,7 @@
-#include <cstdlib>
-#include <string_view>
+#include <optional>
+#include <string>
 
+#include "albor/core/env.h"
 #include "albor/platform/linux/x11/event_loop.h"
 
 namespace
@@ -10,12 +11,12 @@ namespace
     {
         PlatformAutoInstall() {
             // the wayland session keeps its own adapter, which the umbrella links beside this one
-            const char* wayland_display = std::getenv("WAYLAND_DISPLAY");
-            const char* session_type = std::getenv("XDG_SESSION_TYPE");
-            const bool wayland_session = wayland_display != nullptr || (session_type != nullptr && std::string_view(session_type) == "wayland");
-            const char* display = std::getenv("DISPLAY");
+            const std::optional<std::string> wayland_display = albor::core::get_environment_variable("WAYLAND_DISPLAY");
+            const std::optional<std::string> session_type = albor::core::get_environment_variable("XDG_SESSION_TYPE");
+            const bool wayland_session = wayland_display.has_value() || (session_type.has_value() && *session_type == "wayland");
+            const std::optional<std::string> display = albor::core::get_environment_variable("DISPLAY");
             // an x11 host is the one with a display and no wayland session, which the factories install on
-            if (wayland_session || display == nullptr || *display == '\0')
+            if (wayland_session || !display.has_value() || display->empty())
                 return;
             albor::x11::install_x11_platform();
         }

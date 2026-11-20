@@ -23,6 +23,7 @@
 
 #include "albor/application/file_dialog.h"
 #include "albor/core/color_scheme.h"
+#include "albor/core/env.h"
 #include "albor/platform/linux/wayland/platform_window.h"
 #include "albor/platform/linux/wayland/portal.h"
 #include "albor/window/platform_window.h"
@@ -964,8 +965,8 @@ TEST(PortalFileDialog, AnOpenPanelCarriesTheRequestedOptions) {
     if (!portal.ready())
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     // the environment names the private bus, which the client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the installed backend is the portal one, which the platform installer registered at load (§5.3)
     ASSERT_TRUE(platform_file_dialog_factory());
@@ -1001,8 +1002,8 @@ TEST(PortalFileDialog, ASavePanelCarriesTheProposedName) {
     if (!portal.ready())
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     // the environment names the private bus, which the client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the installed backend is the portal one, which the platform installer registered at load (§5.3)
     ASSERT_TRUE(platform_file_dialog_factory());
@@ -1037,8 +1038,8 @@ TEST(PortalFileDialog, ACancelledPanelReportsNoPath) {
     if (!portal.ready())
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     // the environment names the private bus, which the client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the installed backend is the portal one, which the platform installer registered at load (§5.3)
     ASSERT_TRUE(platform_file_dialog_factory());
@@ -1065,8 +1066,8 @@ TEST(PortalFileDialog, AnEmptyResultIsNotAPath) {
     if (!portal.ready())
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     // the environment names the private bus, which the client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the installed backend is the portal one, which the platform installer registered at load (§5.3)
     ASSERT_TRUE(platform_file_dialog_factory());
@@ -1092,8 +1093,8 @@ TEST(PortalFileDialog, APathWithSpacesDecodesFromItsUri) {
     if (!portal.ready())
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     // the environment names the private bus, which the client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the installed backend is the portal one, which the platform installer registered at load (§5.3)
     ASSERT_TRUE(platform_file_dialog_factory());
@@ -1120,8 +1121,8 @@ TEST(PortalFileDialog, AParentedPanelCarriesTheExportedWindow) {
     if (!portal.ready())
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     // the environment names the private bus, which the client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the window the panel is owned by is a real wayland toplevel (§5.1)
     WindowOptions window_options;
@@ -1157,8 +1158,8 @@ TEST(PortalFileDialog, AParentedPanelCarriesTheExportedWindow) {
 
 TEST(PortalFileDialog, AHostWithoutAPortalRefuses) {
     // arrange an address no bus listens on, which reports the portal unavailable (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-albor-portal-bus", 1);
     const std::shared_ptr<PortalClient> portal = PortalClient::shared();
     // assert the portal reports itself unavailable, which a host without one does (§5.3)
@@ -1188,8 +1189,8 @@ TEST(PortalFileDialog, ABusWithoutAPortalRefusesThePanel) {
     if (!portal.ready())
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     // the environment names the private bus, which the client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the bus is reached, so the client is available and the portal decides the request (§5.3)
     const std::shared_ptr<PortalClient> client = PortalClient::shared();
@@ -1218,8 +1219,8 @@ TEST(PortalFileDialog, APortalThatNamesItsOwnHandleStillAnswers) {
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     portal.ignore_handle_token();
     // the environment names the private bus, which the client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the installed backend is the portal one, which the platform installer registered at load (§5.3)
     ASSERT_TRUE(platform_file_dialog_factory());
@@ -1247,8 +1248,8 @@ TEST(PortalFileDialog, ALostBusEndsThePanel) {
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     portal.stop_bus_with_next_panel();
     // the environment names the private bus, which the client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the installed backend is the portal one, which the platform installer registered at load (§5.3)
     ASSERT_TRUE(platform_file_dialog_factory());
@@ -1281,8 +1282,8 @@ TEST(PortalAppearance, APortalWithOnlyTheOldReadReportsTheScheme) {
     portal.refuse_read_one();
     portal.set_color_scheme(2);
     // the environment names the private bus, which the window's client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the window is a real wayland toplevel, which follows the desktop's scheme (§5.1)
     WindowOptions window_options;
@@ -1310,8 +1311,8 @@ TEST(PortalAppearance, AChangeDuringAPanelReachesTheListener) {
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     portal.set_color_scheme(2);
     // the environment names the private bus, which the window's client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the window is a real wayland toplevel, which follows the desktop's scheme (§5.1)
     WindowOptions window_options;
@@ -1353,8 +1354,8 @@ TEST(PortalAppearance, TheWindowReportsThePortalColourScheme) {
         GTEST_SKIP() << "dbus-daemon is not available, so the portal suite cannot run";
     portal.set_color_scheme(2);
     // the environment names the private bus, which the window's client connects to (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", portal.address().c_str(), 1);
     // the window is a real wayland toplevel, which follows the desktop's scheme (§5.1)
     WindowOptions window_options;
@@ -1391,8 +1392,8 @@ TEST(PortalAppearance, TheWindowReportsThePortalColourScheme) {
 
 TEST(PortalAppearance, AWindowWithoutAPortalReportsTheDarkDefault) {
     // arrange an address no bus listens on, which leaves the portal unavailable (§5.3)
-    const char* previous = std::getenv("DBUS_SESSION_BUS_ADDRESS");
-    const std::string saved = previous != nullptr ? previous : "";
+    const std::optional<std::string> previous = albor::core::get_environment_variable("DBUS_SESSION_BUS_ADDRESS");
+    const std::string saved = previous.value_or("");
     setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-albor-portal-bus", 1);
     // the window is a real wayland toplevel, which reports the portable default (§5.1)
     WindowOptions window_options;

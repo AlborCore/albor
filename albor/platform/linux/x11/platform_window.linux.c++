@@ -7,6 +7,8 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -14,6 +16,7 @@
 #include <xcb/xcb.h>
 #include <xkbcommon/xkbcommon.h>
 
+#include "albor/core/env.h"
 #include "albor/platform/linux/common/input_normalization.h"
 #include "albor/platform/linux/x11/connection.linux.h"
 #include "albor/platform/linux/x11/native_surface.linux.h"
@@ -211,9 +214,9 @@ namespace albor::x11
         // resolve the device scale from the session, which every metric the window publishes multiplies by (AD-27)
         [[nodiscard]] float resolve_scale(xcb_connection_t* connection, const xcb_screen_t* screen) {
             // an explicit scale wins, which a session sets when it overrides the dpi (AD-27)
-            const char* gdk_scale = std::getenv("GDK_SCALE");
-            if (gdk_scale != nullptr) {
-                const float parsed = std::strtof(gdk_scale, nullptr);
+            const std::optional<std::string> gdk_scale = albor::core::get_environment_variable("GDK_SCALE");
+            if (gdk_scale.has_value()) {
+                const float parsed = std::strtof(gdk_scale->c_str(), nullptr);
                 if (parsed >= 1.0f && parsed <= 4.0f)
                     return parsed;
             }

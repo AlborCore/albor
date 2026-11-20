@@ -1,6 +1,7 @@
 #include "albor/widgets/text_field.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <utility>
 
 #include "albor/animation/animation_engine.h"
@@ -2276,13 +2277,17 @@ namespace albor
             lines.push_back(m_layout.run->lines()[index]);
         // the tail rows keep their shape, but their byte offsets and baselines move into the old run (§9.1)
         const float baseline_shift = last.origin.y - tail.run->lines().front().origin.y;
+        // a cluster is a 32 bit byte offset on every platform, so the line offset narrows once here (§9.1)
+        const std::uint32_t cluster_shift = static_cast<std::uint32_t>(last.start_byte);
+        // the tail lines are adjusted to continue from the last line of the existing layout (§9.1)
         for (ShapedRun::Line line : tail.run->lines()) {
             line.start_byte += last.start_byte;
             line.end_byte += last.start_byte;
             line.origin.y += baseline_shift;
             // the glyph clusters are byte offsets too, so they shift with the line they belong to (§9.1)
             for (ShapedGlyph& glyph : line.glyphs)
-                glyph.cluster += last.start_byte;
+                glyph.cluster += cluster_shift;
+            // append line
             lines.push_back(std::move(line));
         }
         // the widest row is what the composed run reports, which the full measure would have found too (§9.1)
