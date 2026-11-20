@@ -115,11 +115,13 @@ jobs:
         run: |
           # coverage wraps both suites so one report measures the same binaries as the other platforms
           if [ "${{ matrix.preset }}" = "coverage" ]; then
-            root="${GITHUB_WORKSPACE//\\//}"
+            # the coverage tool requires windows separators, so cygpath keeps every path in that form
+            root="$(cygpath -w "$GITHUB_WORKSPACE")"
+            sources="$root\\albor"
             # the font suite exports a binary report first, so both suites can share one cobertura file
-            OpenCppCoverage --sources "$root/albor" --export_type="binary:$root/coverage-fonts.cov" --working_dir . -- ./albor-generated-font-checks.exe
+            OpenCppCoverage --sources "$sources" --export_type="binary:$root\\coverage-fonts.cov" --working_dir . -- ./albor-generated-font-checks.exe
             # the main suite imports that report, which puts both runs under the windows flag
-            OpenCppCoverage --sources "$root/albor" --input_coverage="$root/coverage-fonts.cov" --export_type="cobertura:$root/coverage.xml" --working_dir . -- ./albor-tests.exe
+            OpenCppCoverage --sources "$sources" --input_coverage="$root\\coverage-fonts.cov" --export_type="cobertura:$root\\coverage.xml" --working_dir . -- ./albor-tests.exe
           else
             ./albor-tests && ./albor-generated-font-checks
           fi
