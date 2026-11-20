@@ -343,11 +343,11 @@ The debug counts include the Dev/Test-only suites, while the release counts excl
 release totals are lower on both platforms. The per-platform debug totals differ by the platform-conditional
 suites each host carries; the pushed CI run is the authoritative result for both configurations.
 
-Windows now carries a coverage job next to `macos-coverage`. It pins the image's `clang-cl` and `llvm-cov`
-and uploads under the `windows` Codecov flag, so the source-based profile format matches the compiler on
-both platforms. The footprint/allocation probes remain sensitive to instrumentation, so the coverage suite
-is a measurement job rather than the authority for allocation behavior; `windows-debug` and `windows-release`
-keep that role.
+Windows now carries a coverage job next to `macos-coverage`, still built with MSVC. Because MSVC has no
+source-based coverage, the job runs the instrumented suite under OpenCppCoverage and uploads a Cobertura
+report under the `windows` Codecov flag; the clang jobs export lcov instead. The footprint/allocation probes
+remain sensitive to instrumentation, so the coverage suite is a measurement job rather than the authority
+for allocation behavior; `windows-debug` and `windows-release` keep that role.
 
 ## 7. Test-case summary
 

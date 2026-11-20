@@ -148,6 +148,7 @@ jobs:
             enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
             preset: coverage
             coverage-flag: macos
+            coverage-file: coverage.lcov
             cov-profdata: xcrun llvm-profdata
             cov-cov: xcrun llvm-cov
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
@@ -184,20 +185,13 @@ jobs:
             enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
             preset: coverage
             coverage-flag: windows
-            cov-c: C:/Program Files/LLVM/bin/clang-cl.exe
-            cov-cxx: C:/Program Files/LLVM/bin/clang-cl.exe
-            cov-profdata: llvm-profdata
-            cov-cov: llvm-cov
+            coverage-file: coverage.xml
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
-              # the preset launches the compiler through ccache, which the runner image does not ship
-              bash build/install-ccache.sh
-              # clang-cl and the llvm tools ship together with the image's LLVM install
-              llvm_bin="/c/Program Files/LLVM/bin"
-              [ -x "$llvm_bin/clang-cl.exe" ] || { echo "clang-cl missing from $llvm_bin" >&2; exit 1; }
-              echo 'C:\Program Files\LLVM\bin' >> "$GITHUB_PATH"
+              # msvc has no source-based coverage, so this job also installs the pdb-based collector
+              bash build/install-ccache.sh --coverage
           - name: linux-release
             os: ubuntu-24.04
             enable: true
@@ -215,6 +209,7 @@ jobs:
             enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
             preset: coverage
             coverage-flag: linux
+            coverage-file: coverage.lcov
             cov-c: clang-18
             cov-cxx: clang++-18
             cov-profdata: llvm-profdata-18
@@ -311,7 +306,7 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then
             extra+=(-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions)
           fi
-          # the coverage matrix pins clang because the profile format and tools must match the compiler
+          # the llvm coverage jobs pin clang because the profile format and tools must match the compiler
           if [ -n "${{ matrix.cov-cxx }}" ]; then
             extra+=(-DCMAKE_C_COMPILER="${{ matrix.cov-c }}" -DCMAKE_CXX_COMPILER="${{ matrix.cov-cxx }}")
           fi
@@ -326,9 +321,17 @@ jobs:
         run: bash build/check-build-scope.sh
 
       - name: unit tests
-        if: matrix.enable
+        if: matrix.enable && !(runner.os == 'Windows' && matrix.preset == 'coverage')
         working-directory: .build-${{ matrix.preset }}/tests
         run: ./albor-tests && ./albor-generated-font-checks
+
+      - name: unit tests (windows coverage)
+        if: matrix.enable && runner.os == 'Windows' && matrix.preset == 'coverage'
+        working-directory: .build-coverage/tests
+        run: |
+          root="${GITHUB_WORKSPACE//\\//}"
+          OpenCppCoverage --sources "$root/albor" --export_type="cobertura:$root/coverage.xml" --working_dir . -- ./albor-tests.exe
+          ./albor-generated-font-checks.exe
 
       - name: node
         if: matrix.enable && matrix.preset == 'debug'
@@ -466,7 +469,7 @@ jobs:
           test "$status" -eq 124
 
       - name: lcov coverage report
-        if: matrix.enable && matrix.preset == 'coverage'
+        if: matrix.enable && matrix.preset == 'coverage' && runner.os != 'Windows'
         run: |
           ${{ matrix.cov-profdata }} merge -sparse coverage-*.profraw -o coverage.profdata
           objects=()
@@ -489,23 +492,14 @@ jobs:
           command -v python3 >/dev/null 2>&1 || python_bin=python
           "$python_bin" - <<'PY'
           import os
-          import re
           root = os.getcwd().replace('\\', '/')
-          roots = [root]
-          # git bash renders a windows drive as /d/..., while clang-cl reports D:/...
-          drive = re.match(r'^/([A-Za-z])/(.*)$', root)
-          if drive:
-              roots.append(drive.group(1).upper() + ':/' + drive.group(2))
-          roots.sort(key=len, reverse=True)
           lines = []
           with open('coverage.lcov', encoding='utf-8') as report:
               for line in report:
                   if line.startswith('SF:'):
                       path = line[3:].strip().replace('\\', '/')
-                      for candidate in roots:
-                          if path.startswith(candidate + '/'):
-                              path = path[len(candidate) + 1:]
-                              break
+                      if path.startswith(root + '/'):
+                          path = path[len(root) + 1:]
                       line = 'SF:' + path + '\n'
                   lines.append(line)
           with open('coverage.lcov', 'w', encoding='utf-8') as report:
@@ -516,7 +510,7 @@ jobs:
         if: matrix.enable && matrix.preset == 'coverage'
         uses: codecov/codecov-action@v5
         with:
-          files: coverage.lcov
+          files: ${{ matrix.coverage-file }}
           flags: ${{ matrix.coverage-flag }}
           name: ${{ matrix.name }}
           token: ${{ secrets.CODECOV_TOKEN }}
