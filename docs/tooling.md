@@ -139,6 +139,16 @@ local declaration shadows an imported or manifest name of the same spelling. An 
 kind completes its declared properties and its `on_` signals, and hover names the component, the
 property with its type, or the signal.
 
+References, prepare-rename and rename answer from the same index. A name is matched by declaration
+identity — its file and name span — never by spelling, so references cross the import graph into
+imported files and into any open importer, and a property or signal declared in an imported file is
+renamed together with every importer's assignment and handler. Only a source declaration is
+renameable: a builtin widget, property or signal has none, and an `id:` value is identity rather
+than a reference (AD-11). A component the file exports is named after its file stem, so rename
+refuses it and a base is renamed instead. A duplicated declaration, or a new name that would
+duplicate a member, shadow a common property or collide with a catalog type, is refused before any
+edit is returned.
+
 `tools/albor-vscode` is the VS Code client. It registers `.ui` as the `albor` language and
 launches `albor-lsp` over stdio with the server's full document sync, so diagnostics,
 completion and hover work without a custom client. `albor.lsp.executable` names the binary

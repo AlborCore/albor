@@ -35,6 +35,22 @@ namespace albor::language_server
         std::vector<Notification> notifications;
     };
 
+    // one file of a root's compiled graph, which references and rename read (§12.2)
+    struct IndexedSource
+    {
+        // the identity of the file, which is its path or the uri of an unsaved buffer (§12.2)
+        std::string key;
+
+        // the uri an editor addresses the file by, which is its open buffer or its saved file (§12.2)
+        std::string uri;
+
+        // the component the file exports, which its stem names (§11.1, §14.2)
+        std::string exported_component;
+
+        // the declarations and uses the compile resolved (§12.2)
+        compiler::SourceIndex index;
+    };
+
     // the language server, which answers an editor using the same compiler the build runs (§12.2, §16)
     class LspServer
     {
@@ -82,8 +98,8 @@ namespace albor::language_server
         // the files each open root read, which is what an imported change recompiles (§11.1, §12.2)
         std::map<std::string, std::vector<std::string>, std::less<>> m_root_dependencies;
 
-        // the editor index of each open root, which definition, outline and tokens answer from (§12.2)
-        std::map<std::string, compiler::SourceIndex, std::less<>> m_source_indexes;
+        // the files each open root checked, root first, which references and rename read (§11.1, §12.2)
+        std::map<std::string, std::vector<IndexedSource>, std::less<>> m_sources;
 
         // how many diagnostics the last compile produced, which an agreement test reads (§16)
         std::size_t m_last_diagnostics = 0;

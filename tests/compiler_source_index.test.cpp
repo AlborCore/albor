@@ -304,3 +304,21 @@ TEST(SourceIndex, TheFiveCategoriesCoverTheWrittenNames) {
     ASSERT_NE(binding_token, nullptr);
     EXPECT_EQ(binding_token->kind, SourceTokenKind::Variable);
 }
+
+TEST(SourceIndex, ABaseComponentIsAnElementUse) {
+    // arrange a derived component that names its base, which is a written component name (§11.1)
+    const SourceIndex index = index_of("component Base { Column { @children } } component Panel : Base { Column {} }");
+    // act the base clause is a use like an instance, because the derived body fills the base (§11.1)
+    const SourceUse* base = use_named(index, "Base");
+    // assert the base clause was indexed, because a rename and a reference read it (§12.2)
+    ASSERT_NE(base, nullptr);
+    EXPECT_EQ(base->kind, SourceUseKind::Element);
+    // assert the target is the base declaration in this file, which is the component symbol's name (§12.2)
+    ASSERT_TRUE(base->target.has_value());
+    EXPECT_TRUE(base->target->file.empty());
+    EXPECT_EQ(base->target->span, index.symbols.at(0).name_span);
+    // assert the base name is painted as a type, because it names a component rather than a value (§12.2)
+    const SourceToken* token = token_at(index, base->span);
+    ASSERT_NE(token, nullptr);
+    EXPECT_EQ(token->kind, SourceTokenKind::Type);
+}

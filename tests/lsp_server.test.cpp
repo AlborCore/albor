@@ -1190,6 +1190,30 @@ TEST(LspNavigationChecks, InitializeAdvertisesDefinitionOutlineAndTokens) {
     EXPECT_EQ(full->as_bool(), true);
 }
 
+TEST(LspNavigationChecks, InitializeAdvertisesReferencesAndRename) {
+    // arrange
+    LspServer server;
+    // act
+    const Exchange exchange = server.handle_line(R"({"jsonrpc":"2.0","id":2,"method":"initialize","params":{}})");
+    // assert the handshake answered as a reply, because an editor waits for it (§12.2)
+    ASSERT_TRUE(exchange.reply.has_value());
+    const core::Json reply = core::Json::parse(*exchange.reply).value_or(core::Json());
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* capabilities = result->member("capabilities");
+    ASSERT_NE(capabilities, nullptr);
+    // assert references are offered, because the index resolves every written name (§12.2)
+    const core::Json* references = capabilities->member("referencesProvider");
+    ASSERT_NE(references, nullptr);
+    EXPECT_EQ(references->as_bool(), true);
+    // assert rename is offered with its prepare request, because validation precedes the edit (§12.2)
+    const core::Json* rename = capabilities->member("renameProvider");
+    ASSERT_NE(rename, nullptr);
+    const core::Json* prepare = rename->member("prepareProvider");
+    ASSERT_NE(prepare, nullptr);
+    EXPECT_EQ(prepare->as_bool(), true);
+}
+
 TEST(LspNavigationChecks, DefinitionOnAnElementOpensTheComponentDeclaration) {
     // arrange a file that declares a component and instantiates it, which is the same file jump (§12.2)
     const std::string source = "component Card { Column {} } component Panel { Column { Card {} } }";
@@ -1977,4 +2001,628 @@ TEST(LspManifestChecks, ARecordAndAComponentResolveFromSeparateManifests) {
     // assert the compiler resolves the same pair, because the editor and the build agree (§16)
     EXPECT_TRUE(compiler_diagnostics(text, {component_manifest, record_manifest}).empty());
     std::filesystem::remove_all(root, ignored);
+}
+
+namespace
+{
+    // ask for references at a position, which is what an editor does when a person asks where a name is used (§12.2)
+    core::Json references_at(LspServer& server, int line, int character, const std::string& uri, bool include_declaration = true) {
+        // the request names the open document, the cursor and whether the declaration is included (§12.2)
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "},\"context\":{\"includeDeclaration\":" + std::string(include_declaration ? "true" : "false") + "}}}";
+        // the request is handled, which is the whole of the exchange (§12.2)
+        const Exchange exchange = server.handle_line(request);
+        // a reply is always produced for a request (§12.2)
+        EXPECT_TRUE(exchange.reply.has_value());
+        // the reply is parsed, because a test asserts on the locations (§12.2)
+        const std::optional<core::Json> parsed = core::Json::parse(*exchange.reply);
+        // a reply that does not parse is a defect (§12.2)
+        EXPECT_TRUE(parsed.has_value());
+        // the result is a location list or null, which the protocol allows (§12.2)
+        const core::Json* result = parsed->member("result");
+        // a reply with no result reads as null, which the caller asserts on (§12.2)
+        return result == nullptr ? core::Json() : *result;
+    }
+
+    // ask what a rename would replace, which an editor calls before it opens the rename box (§12.2)
+    core::Json prepare_rename_at(LspServer& server, int line, int character, const std::string& uri) {
+        // the request names the open document and the cursor (§12.2)
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"textDocument/prepareRename\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
+        // the request is handled, which is the whole of the exchange (§12.2)
+        const Exchange exchange = server.handle_line(request);
+        // a reply is always produced for a request (§12.2)
+        EXPECT_TRUE(exchange.reply.has_value());
+        // the reply is parsed, because a test asserts on the range (§12.2)
+        const std::optional<core::Json> parsed = core::Json::parse(*exchange.reply);
+        // a reply that does not parse is a defect (§12.2)
+        EXPECT_TRUE(parsed.has_value());
+        // the result is a range and a placeholder or null, which the protocol allows (§12.2)
+        const core::Json* result = parsed->member("result");
+        // a reply with no result reads as null, which the caller asserts on (§12.2)
+        return result == nullptr ? core::Json() : *result;
+    }
+
+    // ask for a rename, which returns the whole reply because a refusal carries an error (§12.2)
+    core::Json rename_reply(LspServer& server, int line, int character, const std::string& new_name, const std::string& uri) {
+        // the request names the open document, the cursor and the name to write (§12.2)
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "},\"newName\":" + core::Json(new_name).to_string() + "}}";
+        // the request is handled, which is the whole of the exchange (§12.2)
+        const Exchange exchange = server.handle_line(request);
+        // a reply is always produced for a request (§12.2)
+        EXPECT_TRUE(exchange.reply.has_value());
+        // the reply is parsed, because a test reads either the edit or the refusal (§12.2)
+        const std::optional<core::Json> parsed = core::Json::parse(*exchange.reply);
+        // a reply that does not parse is a defect (§12.2)
+        EXPECT_TRUE(parsed.has_value());
+        // the whole reply is returned, because a refusal names its reason in an error (§12.2)
+        return parsed.value_or(core::Json());
+    }
+
+    // the zero based line an offset sits on, which the protocol counts from (§12.2)
+    int line_at(const std::string& text, std::size_t offset) {
+        // the newlines before the offset are what the line number counts (§12.2)
+        return static_cast<int>(std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(offset), '\n'));
+    }
+
+    // the zero based column an offset sits on, which the protocol counts from (§12.2)
+    int column_at(const std::string& text, std::size_t offset) {
+        // the last newline before the offset starts the line (§12.2)
+        const std::size_t line_start = text.rfind('\n', offset);
+        // an offset on the first line starts at the document start (§12.2)
+        const std::size_t start = line_start == std::string::npos ? 0 : line_start + 1;
+        // the column is the distance from the line start (§12.2)
+        return static_cast<int>(offset - start);
+    }
+} // namespace
+
+TEST(LspReferenceChecks, ReferencesFindEveryUseInTheFile) {
+    // arrange a property used twice, which is the local shape a references request answers (§12.2)
+    const std::string text = "component Panel {\n    in property<string> title: \"a\";\n    Column {\n        Label { text: title; }\n        Label { text: title; }\n    }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the request starts on the declaration, which is where the name is defined (§12.2)
+    const std::size_t declaration = text.find("title");
+    const core::Json with_declaration = references_at(server, line_at(text, declaration), column_at(text, declaration), uri);
+    // assert the declaration and both reads are answered (§12.2)
+    ASSERT_EQ(with_declaration.kind(), core::Json::Kind::Array);
+    EXPECT_EQ(with_declaration.as_array().size(), 3U);
+    // act the client asks for the uses alone, which is the protocol's other form (§12.2)
+    const core::Json uses_only = references_at(server, line_at(text, declaration), column_at(text, declaration), uri, false);
+    // assert the declaration is left out, because the client said so (§12.2)
+    ASSERT_EQ(uses_only.kind(), core::Json::Kind::Array);
+    EXPECT_EQ(uses_only.as_array().size(), 2U);
+}
+
+TEST(LspReferenceChecks, ReferencesCrossIntoAnImportedFile) {
+    // arrange a side panel that uses its own property, which an importer alone cannot see (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-references-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the assignment, whose declaration lives in the imported file (§12.2)
+    const std::size_t assignment = panel_text.find("title");
+    const core::Json result = references_at(server, line_at(panel_text, assignment), column_at(panel_text, assignment), panel_uri);
+    // assert the declaration, the imported read and the assignment are all answered (§12.2)
+    ASSERT_EQ(result.kind(), core::Json::Kind::Array);
+    ASSERT_EQ(result.as_array().size(), 3U);
+    std::size_t panel_sites = 0;
+    std::size_t side_sites = 0;
+    // each location is counted by the file it sits in, which is what crosses the import graph (§12.2)
+    for (const core::Json& location : result.as_array()) {
+        // the uri names the file the site is written in (§12.2)
+        const core::Json* uri = location.member("uri");
+        ASSERT_NE(uri, nullptr);
+        // the open importer and the imported file are the two files this fixture uses (§12.2)
+        if (uri->as_string() == panel_uri)
+            panel_sites++;
+        // the imported file carries the declaration and its own read (§12.2)
+        if (uri->as_string() == side_uri)
+            side_sites++;
+    }
+    // assert one site is in the open importer and two are in the imported file (§12.2)
+    EXPECT_EQ(panel_sites, 1U);
+    EXPECT_EQ(side_sites, 2U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspReferenceChecks, ReferencesIncludeAnOpenImporter) {
+    // arrange the same pair, both open, which is what a person sees while editing the imported file (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-references-importer";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, side_text, side_uri);
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the imported declaration, which only the importer's graph can see (§12.2)
+    const std::size_t declaration = side_text.find("title");
+    const core::Json result = references_at(server, line_at(side_text, declaration), column_at(side_text, declaration), side_uri);
+    // assert the declaration, the imported read and the importer's assignment are each answered once (§12.2)
+    ASSERT_EQ(result.kind(), core::Json::Kind::Array);
+    EXPECT_EQ(result.as_array().size(), 3U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspReferenceChecks, ReferencesOnABuiltinNameAnswerNothing) {
+    // arrange a builtin property, which the framework declares outside the file (§12.2)
+    const std::string text = "component Panel { Column { Label { text: \"hi\"; } } }";
+    LspServer server;
+    (void)did_open(server, text);
+    // act the request starts on the builtin name (§12.2)
+    const std::size_t builtin = text.find("text");
+    const core::Json result = references_at(server, 0, column_at(text, builtin), "file:///panel.ui");
+    // assert a name with no source declaration has nothing to reference (§12.2)
+    EXPECT_EQ(result.kind(), core::Json::Kind::Null);
+}
+
+TEST(LspRenameChecks, PrepareRenameReturnsTheRangeAndName) {
+    // arrange a property with one read, which are the two places a rename may start from (§12.2)
+    const std::string text = "component Panel {\n    in property<string> title: \"a\";\n    Column { Label { text: title; } }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the request starts on the declaration and then on the read (§12.2)
+    const std::size_t declaration = text.find("title");
+    const std::size_t use = text.find("title", declaration + 1);
+    const core::Json on_declaration = prepare_rename_at(server, line_at(text, declaration), column_at(text, declaration), uri);
+    const core::Json on_use = prepare_rename_at(server, line_at(text, use), column_at(text, use), uri);
+    // assert both name the property, which is what the rename box prefills (§12.2)
+    ASSERT_EQ(on_declaration.kind(), core::Json::Kind::Object);
+    ASSERT_EQ(on_use.kind(), core::Json::Kind::Object);
+    const core::Json* declaration_name = on_declaration.member("placeholder");
+    const core::Json* use_name = on_use.member("placeholder");
+    ASSERT_NE(declaration_name, nullptr);
+    ASSERT_NE(use_name, nullptr);
+    EXPECT_EQ(declaration_name->as_string(), "title");
+    EXPECT_EQ(use_name->as_string(), "title");
+    // assert each range starts where the cursor names the token (§12.2)
+    const core::Json* declaration_range = on_declaration.member("range");
+    const core::Json* use_range = on_use.member("range");
+    ASSERT_NE(declaration_range, nullptr);
+    ASSERT_NE(use_range, nullptr);
+    const core::Json* declaration_start = declaration_range->member("start");
+    const core::Json* use_start = use_range->member("start");
+    ASSERT_NE(declaration_start, nullptr);
+    ASSERT_NE(use_start, nullptr);
+    EXPECT_EQ(static_cast<int>(declaration_start->member("line")->as_number()), line_at(text, declaration));
+    EXPECT_EQ(static_cast<int>(use_start->member("line")->as_number()), line_at(text, use));
+}
+
+TEST(LspRenameChecks, RenameALocalPropertyRewritesDeclarationAndUses) {
+    // arrange a property with one read, which the rename must move together (§12.2)
+    const std::string text = "component Panel {\n    in property<string> title: \"a\";\n    Column { Label { text: title; } }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the request starts on the read and writes the new name (§12.2)
+    const std::size_t declaration = text.find("title");
+    const std::size_t use = text.find("title", declaration + 1);
+    const core::Json reply = rename_reply(server, line_at(text, use), column_at(text, use), "caption", uri);
+    // assert the edit was produced and names one document (§12.2)
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* changes = result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 1U);
+    const auto found = changes->as_object().find(uri);
+    ASSERT_NE(found, changes->as_object().end());
+    // assert the declaration and the read are both rewritten (§12.2)
+    ASSERT_EQ(found->second.as_array().size(), 2U);
+    // each edit writes the same name, because one declaration is renamed (§12.2)
+    for (const core::Json& edit : found->second.as_array()) {
+        // the text is what the editor writes in the range (§12.2)
+        const core::Json* new_text = edit.member("newText");
+        ASSERT_NE(new_text, nullptr);
+        EXPECT_EQ(new_text->as_string(), "caption");
+    }
+    // assert the first edit is the declaration, because the reply is sorted by position (§12.2)
+    const core::Json* first_range = found->second.as_array().at(0).member("range");
+    ASSERT_NE(first_range, nullptr);
+    EXPECT_EQ(static_cast<int>(first_range->member("start")->member("line")->as_number()), line_at(text, declaration));
+}
+
+TEST(LspRenameChecks, RenameAnImportedPropertyRewritesBothFiles) {
+    // arrange a side panel whose property the importer assigns, which the rename must move together (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-rename-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the importer's assignment (§12.2)
+    const std::size_t assignment = panel_text.find("title");
+    const core::Json reply = rename_reply(server, line_at(panel_text, assignment), column_at(panel_text, assignment), "caption", panel_uri);
+    // assert one workspace edit names both files, because the declaration lives in the import (§12.2)
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* changes = result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 2U);
+    const auto panel_changes = changes->as_object().find(panel_uri);
+    const auto side_changes = changes->as_object().find(side_uri);
+    ASSERT_NE(panel_changes, changes->as_object().end());
+    ASSERT_NE(side_changes, changes->as_object().end());
+    // assert the closed import is edited at its declaration and its own read (§12.2)
+    ASSERT_EQ(side_changes->second.as_array().size(), 2U);
+    // assert the importer is edited at its assignment (§12.2)
+    ASSERT_EQ(panel_changes->second.as_array().size(), 1U);
+    // each imported edit writes the same new name (§12.2)
+    for (const core::Json& edit : side_changes->second.as_array()) {
+        // the text is what the editor writes in the imported file (§12.2)
+        const core::Json* new_text = edit.member("newText");
+        ASSERT_NE(new_text, nullptr);
+        EXPECT_EQ(new_text->as_string(), "caption");
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspRenameChecks, RenameASignalKeepsTheHandlerPrefix) {
+    // arrange a side panel that raises a signal the importer attaches to and the component invokes (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-rename-signal";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    signal closed();\n    Column {\n        Button { on_clicked: { closed(); } }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { on_closed: { } }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the handler, which spells the signal with its prefix (§11.1)
+    const std::size_t handler = panel_text.find("on_closed");
+    const core::Json prepared = prepare_rename_at(server, line_at(panel_text, handler), column_at(panel_text, handler), panel_uri);
+    // assert the rename box prefills the bare signal name, because the prefix is not part of it (§11.1)
+    ASSERT_EQ(prepared.kind(), core::Json::Kind::Object);
+    ASSERT_NE(prepared.member("placeholder"), nullptr);
+    EXPECT_EQ(prepared.member("placeholder")->as_string(), "closed");
+    // act the rename writes the bare signal name, which every handler spells with its prefix (§11.1)
+    const core::Json reply = rename_reply(server, line_at(panel_text, handler), column_at(panel_text, handler), "dismissed", panel_uri);
+    // assert the handler keeps its prefix and the declaration and invocation take the bare name (§11.1)
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* changes = result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    const auto panel_changes = changes->as_object().find(panel_uri);
+    const auto side_changes = changes->as_object().find(side_uri);
+    ASSERT_NE(panel_changes, changes->as_object().end());
+    ASSERT_NE(side_changes, changes->as_object().end());
+    ASSERT_EQ(panel_changes->second.as_array().size(), 1U);
+    EXPECT_EQ(panel_changes->second.as_array().at(0).member("newText")->as_string(), "on_dismissed");
+    ASSERT_EQ(side_changes->second.as_array().size(), 2U);
+    // every imported edit writes the bare signal name, which the prefix is added to at the handler (§11.1)
+    for (const core::Json& edit : side_changes->second.as_array()) {
+        // the text is what the editor writes in the imported file (§12.2)
+        const core::Json* new_text = edit.member("newText");
+        ASSERT_NE(new_text, nullptr);
+        EXPECT_EQ(new_text->as_string(), "dismissed");
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspRenameChecks, RenameABaseComponentRewritesTheBaseAndInstances) {
+    // arrange a base used by a base clause and an instance, which are both written names (§11.1)
+    const std::string text = "component Holder {\n    in property<string> caption;\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        Holder { caption: \"x\"; }\n    }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the request starts on the base clause, which is the added form (§11.1)
+    const std::size_t declaration = text.find("Holder");
+    const std::size_t base = text.find("Holder", declaration + 1);
+    const core::Json references = references_at(server, line_at(text, base), column_at(text, base), uri);
+    // assert the declaration, the base clause and the instance are all answered (§12.2)
+    ASSERT_EQ(references.kind(), core::Json::Kind::Array);
+    EXPECT_EQ(references.as_array().size(), 3U);
+    // act the rename moves the base and its instance together (§11.1)
+    const core::Json reply = rename_reply(server, line_at(text, base), column_at(text, base), "Section", uri);
+    // assert every site is rewritten, because a component name is one declaration (§11.1)
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* changes = result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    const auto found = changes->as_object().find(uri);
+    ASSERT_NE(found, changes->as_object().end());
+    ASSERT_EQ(found->second.as_array().size(), 3U);
+    // each edit writes the new component name (§12.2)
+    for (const core::Json& edit : found->second.as_array()) {
+        // the text is what the editor writes in the range (§12.2)
+        const core::Json* new_text = edit.member("newText");
+        ASSERT_NE(new_text, nullptr);
+        EXPECT_EQ(new_text->as_string(), "Section");
+    }
+}
+
+TEST(LspRenameChecks, RenameRefusesTheExportedComponent) {
+    // arrange a saved root whose component is named after its file, which the build depends on (§11.1, §14.2)
+    const std::string text = "component Panel { Column {} }";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the editor asks to prepare a rename on the exported name (§12.2)
+    const std::size_t name = text.find("Panel");
+    const core::Json prepared = prepare_rename_at(server, 0, column_at(text, name), uri);
+    // assert the prepare request answers nothing, because renaming it would need the file renamed too (§11.1, §14.2)
+    EXPECT_EQ(prepared.kind(), core::Json::Kind::Null);
+    // act the client asks anyway, which the server refuses with its reason (§12.2)
+    const core::Json reply = rename_reply(server, 0, column_at(text, name), "Dialog", uri);
+    // assert the refusal names the file-stem rule (§11.1, §14.2)
+    const core::Json* error = reply.member("error");
+    ASSERT_NE(error, nullptr);
+    const core::Json* message = error->member("message");
+    ASSERT_NE(message, nullptr);
+    EXPECT_NE(message->as_string().find("named after its file"), std::string::npos);
+}
+
+TEST(LspRenameChecks, RenameRefusesABuiltinOrAnIdentity) {
+    // arrange a builtin property and an author id, which are the two names with no source declaration (§12.2, AD-11)
+    const std::string text = "component Panel {\n    Column {\n        Label { id: action; text: \"hi\"; }\n    }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the editor asks to prepare a rename on the builtin and on the identity (§12.2)
+    const std::size_t builtin = text.find("text");
+    const std::size_t identity = text.find("action");
+    const core::Json builtin_prepared = prepare_rename_at(server, line_at(text, builtin), column_at(text, builtin), uri);
+    const core::Json identity_prepared = prepare_rename_at(server, line_at(text, identity), column_at(text, identity), uri);
+    // assert neither name is a rename target, because neither is a source declaration (§12.2, AD-11)
+    EXPECT_EQ(builtin_prepared.kind(), core::Json::Kind::Null);
+    EXPECT_EQ(identity_prepared.kind(), core::Json::Kind::Null);
+    // act the client asks for the identity anyway, which must not become an implicit-key rename (§12.2, AD-11)
+    const core::Json reply = rename_reply(server, line_at(text, identity), column_at(text, identity), "other", uri);
+    // assert the refusal states that no declaration was named (§12.2)
+    const core::Json* error = reply.member("error");
+    ASSERT_NE(error, nullptr);
+    const core::Json* message = error->member("message");
+    ASSERT_NE(message, nullptr);
+    EXPECT_NE(message->as_string().find("no renameable declaration"), std::string::npos);
+}
+
+TEST(LspRenameChecks, RenameRefusesAnAmbiguousDeclaration) {
+    // arrange a property declared twice, which the compiler reports and no use can disambiguate (§11.1)
+    const std::string text = "component Panel {\n    in property<string> title: \"a\";\n    in property<string> title: \"b\";\n    Column {}\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the editor asks to prepare a rename on the first declaration (§12.2)
+    const std::size_t first = text.find("title");
+    const core::Json prepared = prepare_rename_at(server, line_at(text, first), column_at(text, first), uri);
+    // assert an ambiguous name prepares nothing, because one spelling resolves once (§11.1)
+    EXPECT_EQ(prepared.kind(), core::Json::Kind::Null);
+    // act the client asks anyway, which the server refuses rather than editing the first (§12.2)
+    const core::Json reply = rename_reply(server, line_at(text, first), column_at(text, first), "caption", uri);
+    // assert the refusal says the name is ambiguous (§11.1)
+    const core::Json* error = reply.member("error");
+    ASSERT_NE(error, nullptr);
+    const core::Json* message = error->member("message");
+    ASSERT_NE(message, nullptr);
+    EXPECT_NE(message->as_string().find("ambiguous"), std::string::npos);
+}
+
+TEST(LspRenameChecks, RenameRefusesACollidingName) {
+    // arrange a component with a second property and the common property set (§11.1, §8.2)
+    const std::string text = "component Panel {\n    in property<string> title;\n    in property<string> subtitle;\n    Column {}\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the rename targets another declared member, which would duplicate a slot (§11.1)
+    const std::size_t title = text.find("title");
+    const core::Json member = rename_reply(server, line_at(text, title), column_at(text, title), "subtitle", uri);
+    // assert the collision is refused rather than silently declaring two members (§11.1)
+    const core::Json* member_error = member.member("error");
+    ASSERT_NE(member_error, nullptr);
+    EXPECT_NE(member_error->member("message")->as_string().find("already a member"), std::string::npos);
+    // act the rename targets a common property, which the declaration would shadow (§11.1, §8.2)
+    const core::Json common = rename_reply(server, line_at(text, title), column_at(text, title), "tooltip", uri);
+    // assert the shadowing collision is refused too, because an existing spelling would resolve differently (§11.1)
+    const core::Json* common_error = common.member("error");
+    ASSERT_NE(common_error, nullptr);
+    EXPECT_NE(common_error->member("message")->as_string().find("common element property"), std::string::npos);
+}
+
+TEST(LspReferenceChecks, ASharedNameInAnotherDocumentIsNotAReference) {
+    // arrange two open documents that declare the same property name, which is not the same declaration (§12.2)
+    const std::string left_text = "component Left { in property<string> title; Column { Label { text: title; } } }";
+    const std::string right_text = "component Right { in property<string> title; Column { Label { text: title; } } }";
+    const std::string left_uri = "file:///left.ui";
+    const std::string right_uri = "file:///right.ui";
+    LspServer server;
+    (void)did_open(server, left_text, left_uri);
+    (void)did_open(server, right_text, right_uri);
+    // act the request starts on the left declaration, whose name is spelled the same in the right document (§12.2)
+    const std::size_t declaration = left_text.find("title");
+    const core::Json result = references_at(server, line_at(left_text, declaration), column_at(left_text, declaration), left_uri);
+    // assert the declaration and the left read are answered, and the right document is untouched (§12.2)
+    ASSERT_EQ(result.kind(), core::Json::Kind::Array);
+    ASSERT_EQ(result.as_array().size(), 2U);
+    // every location is in the document the request named, because a name alone is not identity (§12.2)
+    for (const core::Json& location : result.as_array()) {
+        // the uri names the file the site is written in (§12.2)
+        const core::Json* uri = location.member("uri");
+        ASSERT_NE(uri, nullptr);
+        EXPECT_EQ(uri->as_string(), left_uri);
+    }
+    // act the rename writes the left declaration only (§12.2)
+    const core::Json reply = rename_reply(server, line_at(left_text, declaration), column_at(left_text, declaration), "caption", left_uri);
+    // assert one document is edited, because the right one declares a different symbol (§12.2)
+    const core::Json* reply_result = reply.member("result");
+    ASSERT_NE(reply_result, nullptr);
+    const core::Json* changes = reply_result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 1U);
+    EXPECT_NE(changes->as_object().find(left_uri), changes->as_object().end());
+    EXPECT_EQ(changes->as_object().find(right_uri), changes->as_object().end());
+}
+
+TEST(LspReferenceChecks, AnUntitledBufferIsAnsweredUnderItsOwnUri) {
+    // arrange a side panel shared by a saved root and an untitled buffer, which both assign the same property (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-reference-untitled";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    // the untitled buffer imports the saved file by its absolute path, which is the only way it can share it (§11.1)
+    const std::string side_import = (root / "side_panel.ui").generic_string();
+    const std::string untitled_text = "import \"" + side_import + "\";\n\ncomponent Notes {\n    Column {\n        SidePanel { title: \"n\"; }\n    }\n}\n";
+    // the saved files are addressed by their file uris, which an editor routes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    // the untitled buffer has no path, so its editor uri is its whole identity (§12.2)
+    const std::string untitled_uri = "untitled:notes.ui";
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    (void)did_open(server, untitled_text, untitled_uri);
+    // act the request starts on the saved root's assignment, which is one of three uses of the property (§12.2)
+    const std::size_t assignment = panel_text.find("title");
+    const core::Json result = references_at(server, line_at(panel_text, assignment), column_at(panel_text, assignment), panel_uri);
+    // assert the declaration, the imported read and both assignments are each answered once (§12.2)
+    ASSERT_EQ(result.kind(), core::Json::Kind::Array);
+    ASSERT_EQ(result.as_array().size(), 4U);
+    std::size_t panel_sites = 0;
+    std::size_t side_sites = 0;
+    std::size_t untitled_sites = 0;
+    // each location belongs to the file it was written in, because a range is meaningless in another buffer (§12.2)
+    for (const core::Json& location : result.as_array()) {
+        // the uri names the file the site is written in (§12.2)
+        const core::Json* uri = location.member("uri");
+        ASSERT_NE(uri, nullptr);
+        // the three files are counted separately, because mixing them would put a range in the wrong document (§12.2)
+        if (uri->as_string() == panel_uri)
+            panel_sites++;
+        // the imported file carries the declaration and its own read (§12.2)
+        if (uri->as_string() == side_uri)
+            side_sites++;
+        // the untitled buffer carries its own assignment, which must keep its own uri (§12.2)
+        if (uri->as_string() == untitled_uri)
+            untitled_sites++;
+    }
+    // assert the untitled site is never reported under the asking document's uri (§12.2)
+    EXPECT_EQ(panel_sites, 1U);
+    EXPECT_EQ(side_sites, 2U);
+    EXPECT_EQ(untitled_sites, 1U);
+    // act the rename writes each file under its own uri, including the untitled buffer (§12.2)
+    const core::Json reply = rename_reply(server, line_at(panel_text, assignment), column_at(panel_text, assignment), "caption", panel_uri);
+    // assert three documents are edited, because three files write the property (§12.2)
+    const core::Json* reply_result = reply.member("result");
+    ASSERT_NE(reply_result, nullptr);
+    const core::Json* changes = reply_result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 3U);
+    const auto untitled_changes = changes->as_object().find(untitled_uri);
+    ASSERT_NE(untitled_changes, changes->as_object().end());
+    // assert the untitled buffer is edited once, in its own coordinates (§12.2)
+    EXPECT_EQ(untitled_changes->second.as_array().size(), 1U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspRenameChecks, RenameAnOpenImportedPropertyKeysItsOpenUri) {
+    // arrange the imported file open beside its importer, which is what a person sees while editing both (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-rename-open-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, side_text, side_uri);
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the importer's assignment (§12.2)
+    const std::size_t assignment = panel_text.find("title");
+    const core::Json reply = rename_reply(server, line_at(panel_text, assignment), column_at(panel_text, assignment), "caption", panel_uri);
+    // assert the imported file is keyed by the uri the editor opened, not a file uri beside it (§12.2)
+    const core::Json* reply_result = reply.member("result");
+    ASSERT_NE(reply_result, nullptr);
+    const core::Json* changes = reply_result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 2U);
+    EXPECT_NE(changes->as_object().find(side_uri), changes->as_object().end());
+    EXPECT_NE(changes->as_object().find(panel_uri), changes->as_object().end());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspRenameChecks, RenameRefusesADeclarationOutsideTheSymbolSet) {
+    // arrange a global, a function parameter and a repeat item, which name values rather than component members (§11.1)
+    const std::string text = "global limit: int = 3;\nfn clamp(value: int): int { return value; }\ncomponent Panel {\n    in property<vector<string>> rows: [\"a\"];\n    Column {\n        Repeat(row in rows) {\n            Label { text: row; }\n        }\n    }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the editor asks to prepare a rename on each name, which none of them declares a renameable surface (§12.2)
+    const std::size_t global = text.find("limit");
+    const std::size_t parameter = text.find("value");
+    const std::size_t parameter_read = text.find("value", parameter + 1);
+    const std::size_t repeat = text.find("Repeat(");
+    const std::size_t item = text.find("row", repeat);
+    const std::size_t item_read = text.find("row", text.find("Label", item));
+    // assert a value declaration and a binding never open a rename box, because only component symbols do (§12.2)
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, global), column_at(text, global), uri).kind(), core::Json::Kind::Null);
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, parameter), column_at(text, parameter), uri).kind(), core::Json::Kind::Null);
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, parameter_read), column_at(text, parameter_read), uri).kind(), core::Json::Kind::Null);
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, item), column_at(text, item), uri).kind(), core::Json::Kind::Null);
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, item_read), column_at(text, item_read), uri).kind(), core::Json::Kind::Null);
+    // act the client asks to rename the repeat read, which has no declaration the feature edits (§12.2)
+    const core::Json reply = rename_reply(server, line_at(text, item_read), column_at(text, item_read), "entry", uri);
+    // assert the refusal is stated rather than producing an edit (§12.2)
+    const core::Json* error = reply.member("error");
+    ASSERT_NE(error, nullptr);
+    EXPECT_NE(error->member("message")->as_string().find("no renameable declaration"), std::string::npos);
+}
+
+TEST(LspRenameChecks, RenameRefusesACatalogTypeOrADeclaredComponent) {
+    // arrange a base beside its export, which are the two names a component rename could collide with (§11.1)
+    const std::string text = "component Holder {\n    Column { @children }\n}\n\ncomponent Dashboard : Holder {\n    Column {}\n}\n";
+    const std::string uri = "file:///dashboard.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the rename targets a catalog type, which a declared name would shadow (§11.1)
+    const std::size_t holder = text.find("Holder");
+    const core::Json catalog = rename_reply(server, line_at(text, holder), column_at(text, holder), "Column", uri);
+    // assert the shadowing collision is refused before an edit is produced (§11.1)
+    const core::Json* catalog_error = catalog.member("error");
+    ASSERT_NE(catalog_error, nullptr);
+    EXPECT_NE(catalog_error->member("message")->as_string().find("builtin or manifest type"), std::string::npos);
+    // act the rename targets the file's other component, which would declare one name twice (§11.1)
+    const core::Json declared = rename_reply(server, line_at(text, holder), column_at(text, holder), "Dashboard", uri);
+    // assert the duplicate declaration is refused too (§11.1)
+    const core::Json* declared_error = declared.member("error");
+    ASSERT_NE(declared_error, nullptr);
+    EXPECT_NE(declared_error->member("message")->as_string().find("already declared in this file"), std::string::npos);
 }

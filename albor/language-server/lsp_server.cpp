@@ -224,11 +224,11 @@ namespace albor::language_server
             // the root and every import in load order, which decides what a later change invalidates (§11.1, §12.2)
             std::vector<std::filesystem::path> dependencies;
 
-            // the editor index of the root, which is absent when no typed tree was produced (§12.2)
-            std::optional<compiler::SourceIndex> index;
-
             // the components the root sees, which completion and hover resolve an instance against (§11.1, §12.2)
             ComponentSurface components;
+
+            // the files the compile indexed, root first, which references and rename read (§11.1, §12.2)
+            std::vector<IndexedSource> sources;
         };
 
         // the surface a checked file exposes to an editor, which is its own components and imports (§11.1, §12.2)
@@ -286,12 +286,28 @@ namespace albor::language_server
             const std::optional<compiler::CheckedFile> checked = loader.check(root, source_path.empty() ? compiler::RootNameCheck::Skipped : compiler::RootNameCheck::Required);
             // a root that could not be checked stops before generation, because there is no typed tree to generate (§11.3)
             if (!checked.has_value())
-                return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies(), .index = std::nullopt};
-            // the editor index is built from the same parse and checked tree the build uses (§12.2, §16)
-            std::optional<compiler::SourceIndex> index;
+                return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies(), .components = {}, .sources = {}};
+            // the indexed files start with the root, which an editor answers definitions and tokens from (§12.2)
+            std::vector<IndexedSource> sources;
             // the root tree is what the loader kept alive, and its absence means no index can name a declaration (§12.2)
-            if (const compiler::SourceFile* root_source = loader.root_source(); root_source != nullptr)
-                index = compiler::index_source(text, *root_source, *checked);
+            if (const compiler::SourceFile* root_source = loader.root_source(); root_source != nullptr) {
+                // an unsaved buffer names no path, so its key is filled from its uri once the root is stored (§12.2)
+                const std::string root_key = source_path.empty() ? std::string{} : normalized_root.generic_string();
+                // the root entry carries the export, which a component rename may not change (§11.1, §14.2)
+                sources.push_back(IndexedSource{.key = root_key, .uri = {}, .exported_component = checked->exported_component, .index = compiler::index_source(text, *root_source, *checked)});
+                // every import is indexed too, because references cross the import graph (§11.1, §12.2)
+                for (const compiler::LoadedFile& loaded : loader.loaded_files()) {
+                    // the root is already the first entry, so it is not indexed twice (§12.2)
+                    if (loaded.path.lexically_normal() == normalized_root)
+                        continue;
+                    // the import is indexed without its text, because only a root answers a token request (§12.2)
+                    compiler::SourceIndex imported = compiler::index_source({}, *loaded.source, *loaded.checked);
+                    // the token stream is dropped, because an import is indexed for its uses alone (§12.2)
+                    imported.tokens.clear();
+                    // the import joins the graph, which references and rename search (§12.2)
+                    sources.push_back(IndexedSource{.key = loaded.path.lexically_normal().generic_string(), .uri = {}, .exported_component = loaded.checked->exported_component, .index = std::move(imported)});
+                }
+            }
             // the generator runs too, because a diagnostic may come only from codegen (§11.3)
             compiler::CodeGenerator generator(diagnostics);
             // the catalog is handed over, because a native element constructs through its factory (§11.2, AD-17)
@@ -305,7 +321,7 @@ namespace albor::language_server
                 (void)generator.generate(*checked);
             }
             // the diagnostics and files read are returned, which the editor and a later change need (§16, §12.2)
-            return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies(), .index = std::move(index), .components = component_surface(*checked)};
+            return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies(), .components = component_surface(*checked), .sources = std::move(sources)};
         }
 
         // encode a path as a file uri, which is how an editor routes a diagnostic for an imported file (§12.2)
@@ -568,6 +584,358 @@ namespace albor::language_server
             // each notification keeps its order, because the root is published before its imports (§12.2)
             target.insert(target.end(), std::make_move_iterator(source.begin()), std::make_move_iterator(source.end()));
         }
+
+        // render one source span as the protocol range, which a location and an edit both carry (§12.2)
+        core::Json range_of(const compiler::SourceSpan& span) {
+            // the range is an object, because the protocol describes it that way (§12.2)
+            core::Json range;
+            // the start is the first character of the name (§12.2)
+            range.set("start", position_value(span.start));
+            // the end is one past the name, which is the protocol's exclusive form (§12.2)
+            range.set("end", position_value(span.end));
+            // the range is returned whole (§12.2)
+            return range;
+        }
+
+        // the use the cursor names, which a jump, a reference and a rename all start from (§12.2)
+        const compiler::SourceUse* use_at(const compiler::SourceIndex& index, const compiler::SourceLocation& cursor) {
+            // a cursor just past a name still names it, which is what a double click at the end does (§12.2)
+            const compiler::SourceUse* edge = nullptr;
+            // the uses are scanned in written order, because the first one covering the cursor is under it (§12.2)
+            for (const compiler::SourceUse& use : index.uses) {
+                // a span that covers the cursor is the exact answer (§12.2)
+                if (span_contains(use.span, cursor))
+                    return &use;
+                // a span ending at the cursor is the fallback when the cursor sits just past the name (§12.2)
+                if (use.span.end == cursor)
+                    edge = &use;
+            }
+            // the edge fallback answers only when nothing contains the cursor (§12.2)
+            return edge;
+        }
+
+        // the declaration name the cursor sits on, which a references request may start from (§12.2)
+        const compiler::SourceSymbol* symbol_at(const std::vector<compiler::SourceSymbol>& symbols, const compiler::SourceLocation& cursor) {
+            // every declaration is checked, because the cursor may name a top level or a nested symbol (§12.2)
+            for (const compiler::SourceSymbol& symbol : symbols) {
+                // the name is the only range a declaration answers from (§12.2)
+                if (span_contains(symbol.name_span, cursor))
+                    return &symbol;
+                // the children follow, because a member and an element sit below their component (§12.2)
+                if (const compiler::SourceSymbol* child = symbol_at(symbol.children, cursor); child != nullptr)
+                    return child;
+            }
+            // nothing at the cursor means the cursor names no declaration (§12.2)
+            return nullptr;
+        }
+
+        // the declaration a request names, which is its file key and the exact name span (§12.2)
+        struct DeclarationId
+        {
+            // the file key the declaration lives in, which is a path or an unsaved buffer's uri (§12.2)
+            std::string file;
+
+            // the region the declaration name occupies, which every use targets (§12.2)
+            compiler::SourceSpan span;
+        };
+
+        // the key a target names, which a same file target spells as empty (§12.2)
+        std::string target_key(const std::string& indexed_key, const compiler::SourceTarget& target) {
+            // a target in the indexed file is that file itself (§12.2)
+            return target.file.empty() ? indexed_key : target.file.lexically_normal().generic_string();
+        }
+
+        // the declaration the cursor names, which a use target or a declaration symbol provides (§12.2)
+        std::optional<DeclarationId> declaration_id_at(const compiler::SourceIndex& index, const std::string& key, const compiler::SourceLocation& cursor) {
+            // a written name is resolved through its target, which is the identity a rename follows (§12.2)
+            if (const compiler::SourceUse* use = use_at(index, cursor); use != nullptr && use->target.has_value())
+                return DeclarationId{.file = target_key(key, *use->target), .span = use->target->span};
+            // a declaration name is an identity on its own, and an element name is a use rather than a declaration (§12.2)
+            if (const compiler::SourceSymbol* symbol = symbol_at(index.symbols, cursor); symbol != nullptr && symbol->kind != compiler::SourceSymbolKind::Element && !symbol->name_span.empty())
+                return DeclarationId{.file = key, .span = symbol->name_span};
+            // nothing at the cursor names a declaration, so no answer is possible (§12.2)
+            return std::nullopt;
+        }
+
+        // find a declaration by its exact name span below one symbol list, which keeps the component it belongs to (§12.2)
+        const compiler::SourceSymbol* symbol_with_span(const std::vector<compiler::SourceSymbol>& symbols, const compiler::SourceSpan& span, const compiler::SourceSymbol** parent) {
+            // every declaration is checked, because the identity names one exact name span (§12.2)
+            for (const compiler::SourceSymbol& symbol : symbols) {
+                // the exact name span is the declaration the request names (§12.2)
+                if (symbol.name_span == span)
+                    return &symbol;
+                // the children follow, because a member sits below its component (§12.2)
+                if (const compiler::SourceSymbol* child = symbol_with_span(symbol.children, span, parent); child != nullptr) {
+                    // the enclosing declaration is the parent of the symbol the search found (§12.2)
+                    *parent = &symbol;
+                    return child;
+                }
+            }
+            // a span no declaration carries names nothing in this file (§12.2)
+            return nullptr;
+        }
+
+        // one declaration found in the graph, which validation reads before an edit (§12.2)
+        struct LocatedSymbol
+        {
+            // the indexed file the declaration lives in, which is the identity file (§12.2)
+            const IndexedSource* source = nullptr;
+
+            // the declaration itself, which carries its kind and name span (§12.2)
+            const compiler::SourceSymbol* symbol = nullptr;
+
+            // the component a member belongs to, which is null for a top level declaration (§12.2)
+            const compiler::SourceSymbol* parent = nullptr;
+        };
+
+        // find one declaration by identity, which validation reads before any edit (§12.2)
+        std::optional<LocatedSymbol> locate_symbol(const std::vector<const IndexedSource*>& sources, const DeclarationId& id) {
+            // every indexed view is searched, because a file imported by several roots appears once per graph (§12.2)
+            for (const IndexedSource* source : sources) {
+                // only the file the identity names can hold the declaration (§12.2)
+                if (source->key != id.file)
+                    continue;
+                // the declaration is looked up by its exact name span, with the declaration it belongs to (§12.2)
+                const compiler::SourceSymbol* parent = nullptr;
+                const compiler::SourceSymbol* symbol = symbol_with_span(source->index.symbols, id.span, &parent);
+                // a declaration the outline does not carry has no declaration surface (§12.2)
+                if (symbol == nullptr)
+                    continue;
+                // the located declaration carries its component, which a member's scope check reads (§12.2)
+                return LocatedSymbol{.source = source, .symbol = symbol, .parent = parent};
+            }
+            // a declaration no indexed file carries cannot be validated (§12.2)
+            return std::nullopt;
+        }
+
+        // the root entry of one open document, which its own declarations and uses are read from (§12.2)
+        const IndexedSource* root_source_of(const std::map<std::string, std::vector<IndexedSource>, std::less<>>& roots, std::string_view uri) {
+            // the root entry is absent when the compile produced no typed tree (§12.2)
+            const auto found = roots.find(uri);
+            // a document with no index answers nothing, which every caller reports as null (§12.2)
+            if (found == roots.end() || found->second.empty())
+                return nullptr;
+            // the first entry is the root, because the compile records it before its imports (§12.2)
+            return &found->second.front();
+        }
+
+        // every indexed file of every open root, which a references request searches (§12.2)
+        std::vector<const IndexedSource*> indexed_sources(const std::map<std::string, std::vector<IndexedSource>, std::less<>>& roots) {
+            // the files accumulate across roots, because an open importer contributes its own view (§12.2)
+            std::vector<const IndexedSource*> sources;
+            // each root contributes its graph, which is the root and every file it checked (§12.2)
+            for (const auto& entry : roots) {
+                // each file is referenced, because indexes are owned by the root's entry (§12.2)
+                for (const IndexedSource& file : entry.second)
+                    sources.push_back(&file);
+            }
+            // the files are returned in root order, which keeps a declaration lookup stable (§12.2)
+            return sources;
+        }
+
+        // one place a declaration is written, which a references reply lists and a rename edits (§12.2)
+        struct ReferenceSite
+        {
+            // the file key the site is written in, which is what dedupe compares (§12.2)
+            std::string key;
+
+            // the uri an editor addresses the file by, which the reply or the edit carries (§12.2)
+            std::string uri;
+
+            // the region the name occupies, which is what an editor highlights (§12.2)
+            compiler::SourceSpan span;
+
+            // whether the site spells a handler, which keeps the on_ prefix when renamed (§11.1)
+            bool handler = false;
+        };
+
+        // collect every written name of one declaration across the indexed files (§12.2)
+        std::vector<ReferenceSite> reference_sites(const std::vector<const IndexedSource*>& sources, const DeclarationId& id, bool include_declaration) {
+            // the sites accumulate in graph order, because the caller sorts them for the reply (§12.2)
+            std::vector<ReferenceSite> sites;
+            // the declaration itself is a site when the client asked for it (§12.2)
+            if (include_declaration) {
+                // the declaring file is one of the indexed views, because the identity came from one of them (§12.2)
+                for (const IndexedSource* source : sources) {
+                    // a different file is not where the declaration is written (§12.2)
+                    if (source->key != id.file)
+                        continue;
+                    // the declaration site carries the file's own uri, which is where the edit lands (§12.2)
+                    sites.push_back(ReferenceSite{.key = source->key, .uri = source->uri, .span = id.span, .handler = false});
+                    // one view of the file is enough, because the others carry the same declaration (§12.2)
+                    break;
+                }
+            }
+            // every use of every indexed file is compared against the identity (§12.2)
+            for (const IndexedSource* source : sources) {
+                // each written name is one candidate, because a use without a target is not this declaration (§12.2)
+                for (const compiler::SourceUse& use : source->index.uses) {
+                    // a use the checker left unresolved cannot name this declaration (§12.2)
+                    if (!use.target.has_value())
+                        continue;
+                    // the target is normalized to the file key it was written in (§12.2)
+                    const std::string key = target_key(source->key, *use.target);
+                    // a different declaration is a different site, so the scan continues (§12.2)
+                    if (key != id.file || use.target->span != id.span)
+                        continue;
+                    // the site carries the use's own file, because that is where an edit lands (§12.2)
+                    sites.push_back(ReferenceSite{.key = source->key, .uri = source->uri, .span = use.span, .handler = use.kind == compiler::SourceUseKind::Handler});
+                }
+            }
+            // the sites are returned whole, because dedupe and sorting are the caller's concern (§12.2)
+            return sites;
+        }
+
+        // drop the repeated sites a file indexed by several roots produces, so one region is answered once (§12.2)
+        std::vector<ReferenceSite> unique_sites(std::vector<ReferenceSite> sites) {
+            // the unique sites accumulate in the order the graphs produced them (§12.2)
+            std::vector<ReferenceSite> unique;
+            // each site is compared against the ones already kept, because the graph may hold a file twice (§12.2)
+            for (const ReferenceSite& site : sites) {
+                // a site already kept is the same region in the same file (§12.2)
+                const bool known = std::any_of(unique.begin(), unique.end(), [&site](const ReferenceSite& kept) { return kept.key == site.key && kept.span == site.span; });
+                // a repeated site adds nothing, so the next one follows (§12.2)
+                if (known)
+                    continue;
+                // a new region is kept, because it is one place the declaration is written (§12.2)
+                unique.push_back(site);
+            }
+            // the unique sites are what the reply renders (§12.2)
+            return unique;
+        }
+
+        // order the sites by file and position, which keeps a reply stable (§12.2)
+        void sort_sites(std::vector<ReferenceSite>& sites) {
+            // the files and positions decide in that order, because an editor reads top to bottom (§12.2)
+            std::sort(sites.begin(), sites.end(), [](const ReferenceSite& lhs, const ReferenceSite& rhs) {
+                // the file decides first, because a reply groups by document (§12.2)
+                if (lhs.key != rhs.key)
+                    return lhs.key < rhs.key;
+                // the line follows, because an editor reads top to bottom (§12.2)
+                if (lhs.span.start.line != rhs.span.start.line)
+                    return lhs.span.start.line < rhs.span.start.line;
+                // the column follows, because two sites on one line keep written order (§12.2)
+                return lhs.span.start.column < rhs.span.start.column;
+            });
+        }
+
+        // report whether a name may be written as an identifier, which a rename must produce (§11.1)
+        bool valid_identifier(std::string_view name) {
+            // an empty name writes nothing, so it is not an identifier (§11.1)
+            if (name.empty())
+                return false;
+            // each character decides, because an identifier is a letter or underscore then name characters (§11.1)
+            for (std::size_t index = 0; index < name.size(); index++) {
+                // the character is read once, because both the first and the later rule read it (§11.1)
+                const char c = name[index];
+                // a letter or an underscore is the only first character, because a digit cannot start a name (§11.1)
+                const bool start = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+                // a digit is allowed after the first character, because a name may continue with one (§11.1)
+                const bool part = start || (c >= '0' && c <= '9');
+                // a first character that is not a letter or underscore is refused (§11.1)
+                if (index == 0 && !start)
+                    return false;
+                // a later character outside the name set is refused, because the parser would split the name (§11.1)
+                if (index != 0 && !part)
+                    return false;
+            }
+            // a language keyword cannot be an identifier, because the parser consumes it as syntax (§11.1)
+            return !compiler::is_language_keyword(name);
+        }
+
+        // report whether a symbol kind is a component member, which shares one declared namespace (§11.1)
+        bool is_member_kind(compiler::SourceSymbolKind kind) {
+            // a property, a signal and a command are declared members of one component (§11.1, §18)
+            return kind == compiler::SourceSymbolKind::Property || kind == compiler::SourceSymbolKind::Signal || kind == compiler::SourceSymbolKind::Command;
+        }
+
+        // count the declarations of one name in one scope, which decides whether a rename is unambiguous (§11.1)
+        std::size_t declarations_named(const std::vector<compiler::SourceSymbol>& symbols, std::string_view name, bool components_only) {
+            // the count accumulates over the scope, because a duplicate makes the name ambiguous (§11.1)
+            std::size_t count = 0;
+            // each declaration is compared, because the scope holds the whole member set (§11.1)
+            for (const compiler::SourceSymbol& symbol : symbols) {
+                // a component scope counts only components, because it declares no members (§11.1)
+                if (components_only && symbol.kind != compiler::SourceSymbolKind::Component)
+                    continue;
+                // a member scope counts only members, because an element is not a declaration of this name (§11.1)
+                if (!components_only && !is_member_kind(symbol.kind))
+                    continue;
+                // the name decides, because one spelling is one declaration unless it is duplicated (§11.1)
+                if (std::string_view(symbol.name) == name)
+                    count++;
+            }
+            // the count is what validation reads (§11.1)
+            return count;
+        }
+
+        // report whether a common element property carries a name, which a property rename must not shadow (§8.2, §11.1)
+        bool is_common_property(std::string_view name) {
+            // every common property is compared, because the checker appends them to every type (§8.2)
+            for (const compiler::ElementProperty& property : compiler::common_element_properties()) {
+                // the name decides, because a declared property shadows one of the same name (§11.1)
+                if (std::string_view(property.name) == name)
+                    return true;
+            }
+            // a name outside the common set is free to declare (§11.1)
+            return false;
+        }
+
+        // why a declaration may not be renamed at all, which prepareRename and rename both read (§12.2)
+        std::optional<std::string> rename_target_refusal(const LocatedSymbol& located) {
+            // a declaration outside the issue's symbol set has no surface this feature edits (§12.2)
+            if (located.symbol->kind != compiler::SourceSymbolKind::Component && located.symbol->kind != compiler::SourceSymbolKind::Property && located.symbol->kind != compiler::SourceSymbolKind::Signal)
+                return "the symbol has no renameable declaration";
+            // a member needs its component, because the member scope is what a duplicate check reads (§11.1)
+            if (located.symbol->kind != compiler::SourceSymbolKind::Component && located.parent == nullptr)
+                return "the symbol has no renameable declaration";
+            // the exported component is named after the file, so renaming it would break the build (§11.1, §14.2)
+            if (located.symbol->kind == compiler::SourceSymbolKind::Component && located.source->exported_component == located.symbol->name)
+                return "the component is named after its file, so renaming it needs the file renamed too";
+            // a name declared twice is ambiguous, because a use resolves to the first declaration (§11.1)
+            const std::size_t duplicates = located.symbol->kind == compiler::SourceSymbolKind::Component ? declarations_named(located.source->index.symbols, located.symbol->name, true) : declarations_named(located.parent->children, located.symbol->name, false);
+            // a duplicate declaration has no single target, so the rename is refused (§11.1)
+            if (duplicates > 1)
+                return "'" + located.symbol->name + "' is declared more than once, so the rename is ambiguous";
+            // the declaration is renameable, because it is one source declaration of a supported kind (§12.2)
+            return std::nullopt;
+        }
+
+        // why one rename may not proceed, which validation decides before any edit is produced (§12.2)
+        std::optional<std::string> rename_refusal(const compiler::ElementCatalog& catalog, const LocatedSymbol& located, std::string_view new_name) {
+            // the declaration's own kind decides first, because a builtin or an identity has no surface (§12.2)
+            if (const std::optional<std::string> refusal = rename_target_refusal(located); refusal.has_value())
+                return refusal;
+            // a rename to the same spelling changes nothing, which is a valid no-op (§12.2)
+            if (new_name == located.symbol->name)
+                return std::nullopt;
+            // a component may not become a catalog type, because every existing spelling would resolve differently (§11.1)
+            if (located.symbol->kind == compiler::SourceSymbolKind::Component && catalog.find(new_name) != nullptr)
+                return "'" + std::string(new_name) + "' is a builtin or manifest type";
+            // a component may not duplicate a declaration in its file, because one name resolves once (§11.1)
+            if (located.symbol->kind == compiler::SourceSymbolKind::Component && declarations_named(located.source->index.symbols, new_name, true) > 0)
+                return "'" + std::string(new_name) + "' is already declared in this file";
+            // a member may not duplicate another member, because one name declares one slot (§11.1)
+            if (located.symbol->kind != compiler::SourceSymbolKind::Component && declarations_named(located.parent->children, new_name, false) > 0)
+                return "'" + std::string(new_name) + "' is already a member of this component";
+            // a property may not shadow a common one, because the rename would change an existing spelling (§11.1)
+            if (located.symbol->kind == compiler::SourceSymbolKind::Property && is_common_property(new_name))
+                return "'" + std::string(new_name) + "' is a common element property";
+            // the name is free, because nothing it could shadow or duplicate is visible here (§12.2)
+            return std::nullopt;
+        }
+
+        // render one edit, which is the range a rename replaces and the text it writes there (§12.2)
+        core::Json edit_of(const compiler::SourceSpan& span, std::string text) {
+            // the edit is an object, because the protocol describes it that way (§12.2)
+            core::Json edit;
+            // the range is the name the edit replaces (§12.2)
+            edit.set("range", range_of(span));
+            // the text is what the editor writes there (§12.2)
+            edit.set("newText", core::Json(std::move(text)));
+            // the edit is returned whole (§12.2)
+            return edit;
+        }
     } // namespace
 
     Exchange LspServer::compile_root(std::string_view uri) {
@@ -585,11 +953,18 @@ namespace albor::language_server
         CompileResult result = compile_text(document->text(), m_documents, source_path, m_catalog);
         // the count is kept, which is what an agreement test reads (§16)
         m_last_diagnostics = result.diagnostics.count();
-        // the index of the root replaces the previous run, so a jump never lands in stale source (§12.2)
-        if (result.index.has_value())
-            m_source_indexes[document_uri] = std::move(*result.index);
-        else
-            m_source_indexes.erase(document_uri);
+        // the graph is addressed by the editor, so each file carries the uri it is edited by (§12.2)
+        if (!result.sources.empty()) {
+            // the root is the open buffer, which a pathless buffer is identified by as well (§12.2)
+            result.sources.front().key = source_path.empty() ? document_uri : result.sources.front().key;
+            // the root is addressed by the editor's own uri, because that is where it was opened (§12.2)
+            result.sources.front().uri = document_uri;
+            // each import is addressed by its open buffer when it has one, and its saved file otherwise (§12.2)
+            for (std::size_t index = 1; index < result.sources.size(); index++)
+                result.sources[index].uri = uri_for_path(m_documents, std::filesystem::path(result.sources[index].key));
+        }
+        // the indexed graph replaces the previous run, so a jump or a reference never lands in stale source (§12.2)
+        m_sources[document_uri] = std::move(result.sources);
         // the surface replaces the previous run, so a removed component or import stops completing (§11.1, §12.2)
         m_component_surfaces[document_uri] = std::move(result.components);
         // the previous publications are what a clean import has to clear (§12.2, §16)
@@ -820,6 +1195,14 @@ namespace albor::language_server
             capabilities.set("hoverProvider", core::Json(true));
             // definition is offered on every written name the index resolved (§12.2)
             capabilities.set("definitionProvider", core::Json(true));
+            // references are offered on every declaration and use the index resolved (§12.2)
+            capabilities.set("referencesProvider", core::Json(true));
+            // rename is offered with its prepare request, which validates the symbol before editing (§12.2)
+            core::Json rename;
+            // the prepare request is what an editor calls before it opens the rename box (§12.2)
+            rename.set("prepareProvider", core::Json(true));
+            // the rename capability is what an editor looks for before asking (§12.2)
+            capabilities.set("renameProvider", std::move(rename));
             // the document outline is offered, because the compiler already knows every declaration (§12.2)
             capabilities.set("documentSymbolProvider", core::Json(true));
             // the token legend fixes the order the server encodes, which an editor maps onto colours (§12.2)
@@ -989,7 +1372,7 @@ namespace albor::language_server
                         // the buffer is forgotten, which is what a close means (§12.2)
                         m_documents.close(closed_uri);
                         // the index is dropped with the buffer, because a closed file must not answer a request (§12.2)
-                        m_source_indexes.erase(closed_uri);
+                        m_sources.erase(closed_uri);
                         // the surface is dropped with the buffer, because a closed file must not complete (§12.2)
                         m_component_surfaces.erase(closed_uri);
                         // the publications of the closed root are cleared unless another root still owns them (§12.2)
@@ -1045,10 +1428,12 @@ namespace albor::language_server
             if (line_value == nullptr || character_value == nullptr)
                 return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the position is incomplete").to_string(), .notifications = {}};
             // the index of the open document is what every declaration was recorded in (§12.2)
-            const auto found = m_source_indexes.find(*uri);
+            const auto found = m_sources.find(*uri);
             // a compile that produced no typed tree has no index, so the honest answer is null (§12.2)
-            if (found == m_source_indexes.end())
+            if (found == m_sources.end() || found->second.empty())
                 return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // the root entry is the document's own index, because the imports follow it (§12.2)
+            const compiler::SourceIndex& index = found->second.front().index;
             // the protocol counts from zero, while the compiler counts from one (§12.2)
             const compiler::SourceLocation cursor{.line = static_cast<std::uint32_t>(std::max(0.0, line_value->as_number())) + 1, .column = static_cast<std::uint32_t>(std::max(0.0, character_value->as_number())) + 1};
             // the use under the cursor is the one a jump follows (§12.2)
@@ -1056,7 +1441,7 @@ namespace albor::language_server
             // a cursor just past a name still names it, which is what a double click at the end does (§12.2)
             const compiler::SourceUse* edge = nullptr;
             // the uses are scanned in written order, because the first one covering the cursor is under it (§12.2)
-            for (const compiler::SourceUse& use : found->second.uses) {
+            for (const compiler::SourceUse& use : index.uses) {
                 // a span that covers the cursor is the exact answer (§12.2)
                 if (span_contains(use.span, cursor)) {
                     named = &use;
@@ -1074,6 +1459,231 @@ namespace albor::language_server
                 return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
             // the declaration the name resolves to is what an editor opens (§12.2)
             return Exchange{.reply = envelope(reply_id, definition_location(*uri, *named->target)).to_string(), .notifications = {}};
+        }
+
+        // a references request answers every place one declaration is written, across the import graph (§12.2)
+        if (method->as_string() == "textDocument/references") {
+            // a document request carries parameters (§12.2)
+            if (params == nullptr || !params->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no document").to_string(), .notifications = {}};
+            // the document is named through a text document identifier (§12.2)
+            const core::Json* text_document = params->member("textDocument");
+            // a request with no document names nothing (§12.2)
+            if (text_document == nullptr || !text_document->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request names no document").to_string(), .notifications = {}};
+            // the uri names what to read (§12.2)
+            const std::optional<std::string> uri = string_member(*text_document, "uri");
+            // an absent uri names nothing (§12.2)
+            if (!uri)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the document has no uri").to_string(), .notifications = {}};
+            // a document that is not open has no index, because every answer comes from an editor buffer (§12.2)
+            if (m_documents.find(*uri) == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_REQUEST, "the document is not open: " + *uri).to_string(), .notifications = {}};
+            // the position is read, because references are asked at the cursor (§12.2)
+            const core::Json* position = params->member("position");
+            // a request with no position answers from nowhere, which is refused rather than guessed (§12.2)
+            if (position == nullptr || !position->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no position").to_string(), .notifications = {}};
+            // the line is required, because it is the row the cursor is on (§12.2)
+            const core::Json* line_value = position->member("line");
+            // the character is required, because it is the column within that row (§12.2)
+            const core::Json* character_value = position->member("character");
+            // a request missing either answers from nowhere, which is refused (§12.2)
+            if (line_value == nullptr || character_value == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the position is incomplete").to_string(), .notifications = {}};
+            // the root entry is the document's own index, which its declarations and uses are read from (§12.2)
+            const IndexedSource* root = root_source_of(m_sources, *uri);
+            // a compile that produced no typed tree has nothing to reference, so the honest answer is null (§12.2)
+            if (root == nullptr)
+                return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // the protocol counts from zero, while the compiler counts from one (§12.2)
+            const compiler::SourceLocation cursor{.line = static_cast<std::uint32_t>(std::max(0.0, line_value->as_number())) + 1, .column = static_cast<std::uint32_t>(std::max(0.0, character_value->as_number())) + 1};
+            // the declaration the cursor names is what every use is matched against (§12.2)
+            const std::optional<DeclarationId> target = declaration_id_at(root->index, root->key, cursor);
+            // a cursor on nothing, or on a framework name with no source declaration, has nothing to reference (§12.2)
+            if (!target.has_value())
+                return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // the client says whether the declaration itself belongs in the reply (§12.2)
+            bool include_declaration = true;
+            // the reference context is where the protocol carries that choice (§12.2)
+            if (const core::Json* context = params->member("context"); context != nullptr && context->is_object()) {
+                // the flag is read when the client wrote it, because it is a boolean (§12.2)
+                if (const core::Json* include = context->member("includeDeclaration"); include != nullptr && include->kind() == core::Json::Kind::Boolean)
+                    include_declaration = include->as_bool();
+            }
+            // every indexed file of every open root is searched, because references cross the graph (§12.2)
+            const std::vector<const IndexedSource*> sources = indexed_sources(m_sources);
+            // the sites are deduped, because a file imported by several roots is indexed once per graph (§12.2)
+            std::vector<ReferenceSite> sites = unique_sites(reference_sites(sources, *target, include_declaration));
+            // the reply order is by file and position, which keeps the answer stable (§12.2)
+            sort_sites(sites);
+            // the locations accumulate in reply order (§12.2)
+            std::vector<core::Json> locations;
+            // each site becomes one location, because that is what a references reply is a list of (§12.2)
+            for (const ReferenceSite& site : sites) {
+                // a location is an object with a uri and a range (§12.2)
+                core::Json location;
+                // the uri is the open buffer or the saved file the site sits in (§12.2)
+                location.set("uri", core::Json(site.uri));
+                // the range is the written name an editor highlights (§12.2)
+                location.set("range", range_of(site.span));
+                // the location joins the reply (§12.2)
+                locations.push_back(std::move(location));
+            }
+            // the reply is the location list, which is what the protocol describes (§12.2)
+            return Exchange{.reply = envelope(reply_id, core::Json(std::move(locations))).to_string(), .notifications = {}};
+        }
+
+        // a prepare rename request validates the cursor before the editor opens its rename box (§12.2)
+        if (method->as_string() == "textDocument/prepareRename") {
+            // a document request carries parameters (§12.2)
+            if (params == nullptr || !params->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no document").to_string(), .notifications = {}};
+            // the document is named through a text document identifier (§12.2)
+            const core::Json* text_document = params->member("textDocument");
+            // a request with no document names nothing (§12.2)
+            if (text_document == nullptr || !text_document->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request names no document").to_string(), .notifications = {}};
+            // the uri names what to read (§12.2)
+            const std::optional<std::string> uri = string_member(*text_document, "uri");
+            // an absent uri names nothing (§12.2)
+            if (!uri)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the document has no uri").to_string(), .notifications = {}};
+            // a document that is not open has no index, because every answer comes from an editor buffer (§12.2)
+            if (m_documents.find(*uri) == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_REQUEST, "the document is not open: " + *uri).to_string(), .notifications = {}};
+            // the position is read, because prepare rename speaks about the cursor (§12.2)
+            const core::Json* position = params->member("position");
+            // a request with no position answers from nowhere, which is refused rather than guessed (§12.2)
+            if (position == nullptr || !position->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no position").to_string(), .notifications = {}};
+            // the line is required, because it is the row the cursor is on (§12.2)
+            const core::Json* line_value = position->member("line");
+            // the character is required, because it is the column within that row (§12.2)
+            const core::Json* character_value = position->member("character");
+            // a request missing either answers from nowhere, which is refused (§12.2)
+            if (line_value == nullptr || character_value == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the position is incomplete").to_string(), .notifications = {}};
+            // the root entry is the document's own index, which its declarations and uses are read from (§12.2)
+            const IndexedSource* root = root_source_of(m_sources, *uri);
+            // a document with no typed tree has no rename target, which the protocol spells as null (§12.2)
+            if (root == nullptr)
+                return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // the protocol counts from zero, while the compiler counts from one (§12.2)
+            const compiler::SourceLocation cursor{.line = static_cast<std::uint32_t>(std::max(0.0, line_value->as_number())) + 1, .column = static_cast<std::uint32_t>(std::max(0.0, character_value->as_number())) + 1};
+            // the declaration the cursor names is what the rename would edit (§12.2)
+            const std::optional<DeclarationId> target = declaration_id_at(root->index, root->key, cursor);
+            // a cursor that names no declaration is null, because there is nothing to rename (§12.2)
+            if (!target.has_value())
+                return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // every indexed file is searched, because the declaration may live in an import (§12.2)
+            const std::vector<const IndexedSource*> sources = indexed_sources(m_sources);
+            // the declaration is located before it is validated or described (§12.2)
+            const std::optional<LocatedSymbol> located = locate_symbol(sources, *target);
+            // a declaration the outline does not carry cannot be renamed, so null is the honest answer (§12.2)
+            if (!located.has_value())
+                return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // a builtin, an exported component or a duplicate declaration answers null before the box opens (§12.2)
+            if (rename_target_refusal(*located).has_value())
+                return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // the use under the cursor is what the editor highlights, and a declaration falls back to its name (§12.2)
+            const compiler::SourceUse* use = use_at(root->index, cursor);
+            // the range covers the token the rename box would replace (§12.2)
+            const compiler::SourceSpan span = use != nullptr ? use->span : located->symbol->name_span;
+            // the reply carries the range and the name the rename box prefills (§12.2)
+            core::Json result;
+            // the range is the token under the cursor (§12.2)
+            result.set("range", range_of(span));
+            // the placeholder is the declaration name, which is what the editor shows (§12.2)
+            result.set("placeholder", core::Json(located->symbol->name));
+            // the reply is what an editor opens its rename box with (§12.2)
+            return Exchange{.reply = envelope(reply_id, std::move(result)).to_string(), .notifications = {}};
+        }
+
+        // a rename request validates the symbol and returns the edit every use needs (§12.2)
+        if (method->as_string() == "textDocument/rename") {
+            // a document request carries parameters (§12.2)
+            if (params == nullptr || !params->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no document").to_string(), .notifications = {}};
+            // the document is named through a text document identifier (§12.2)
+            const core::Json* text_document = params->member("textDocument");
+            // a request with no document names nothing (§12.2)
+            if (text_document == nullptr || !text_document->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request names no document").to_string(), .notifications = {}};
+            // the uri names what to read (§12.2)
+            const std::optional<std::string> uri = string_member(*text_document, "uri");
+            // an absent uri names nothing (§12.2)
+            if (!uri)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the document has no uri").to_string(), .notifications = {}};
+            // a document that is not open has no index, because every answer comes from an editor buffer (§12.2)
+            if (m_documents.find(*uri) == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_REQUEST, "the document is not open: " + *uri).to_string(), .notifications = {}};
+            // the position is read, because the rename starts from the cursor (§12.2)
+            const core::Json* position = params->member("position");
+            // a request with no position answers from nowhere, which is refused rather than guessed (§12.2)
+            if (position == nullptr || !position->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no position").to_string(), .notifications = {}};
+            // the line is required, because it is the row the cursor is on (§12.2)
+            const core::Json* line_value = position->member("line");
+            // the character is required, because it is the column within that row (§12.2)
+            const core::Json* character_value = position->member("character");
+            // a request missing either answers from nowhere, which is refused (§12.2)
+            if (line_value == nullptr || character_value == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the position is incomplete").to_string(), .notifications = {}};
+            // the new name is a required string, because it is what every edit writes (§12.2)
+            const std::optional<std::string> new_name = string_member(*params, "newName");
+            // a request with no name cannot produce an edit, so it is refused (§12.2)
+            if (!new_name)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no new name").to_string(), .notifications = {}};
+            // a name the language cannot spell as an identifier is refused before anything is edited (§11.1)
+            if (!valid_identifier(*new_name))
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the new name is not a valid identifier").to_string(), .notifications = {}};
+            // the root entry is the document's own index, which its declarations and uses are read from (§12.2)
+            const IndexedSource* root = root_source_of(m_sources, *uri);
+            // a document with no typed tree has nothing to rename, which is stated rather than answered empty (§12.2)
+            if (root == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_REQUEST, "the document carries no index").to_string(), .notifications = {}};
+            // the protocol counts from zero, while the compiler counts from one (§12.2)
+            const compiler::SourceLocation cursor{.line = static_cast<std::uint32_t>(std::max(0.0, line_value->as_number())) + 1, .column = static_cast<std::uint32_t>(std::max(0.0, character_value->as_number())) + 1};
+            // the declaration the cursor names is what the rename edits and validates (§12.2)
+            const std::optional<DeclarationId> target = declaration_id_at(root->index, root->key, cursor);
+            // a cursor that names no declaration is refused with its reason, because an empty edit would hide it (§12.2)
+            if (!target.has_value())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the cursor names no renameable declaration").to_string(), .notifications = {}};
+            // every indexed file is searched, because the declaration may live in an import (§12.2)
+            const std::vector<const IndexedSource*> sources = indexed_sources(m_sources);
+            // the declaration is located before it is validated or edited (§12.2)
+            const std::optional<LocatedSymbol> located = locate_symbol(sources, *target);
+            // a declaration the outline does not carry has no surface to edit (§12.2)
+            if (!located.has_value())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the cursor names no renameable declaration").to_string(), .notifications = {}};
+            // validation reads the declaration's scope before any edit is produced (§12.2)
+            if (const std::optional<std::string> refusal = rename_refusal(m_catalog, *located, *new_name); refusal.has_value())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, *refusal).to_string(), .notifications = {}};
+            // the declaration and every use are the sites the edit rewrites (§12.2)
+            std::vector<ReferenceSite> sites = unique_sites(reference_sites(sources, *target, true));
+            // the edits are emitted in reply order, which keeps the workspace edit stable (§12.2)
+            sort_sites(sites);
+            // the changes group the edits by uri, because the protocol describes the edit that way (§12.2)
+            std::map<std::string, std::vector<core::Json>, std::less<>> edits;
+            // each site becomes one text edit in the file it is written in (§12.2)
+            for (const ReferenceSite& site : sites) {
+                // a handler keeps its prefix, so it is written as on_<name> (§11.1)
+                const std::string text = site.handler ? "on_" + *new_name : *new_name;
+                // the edit joins the file's list, which is what an editor applies as one change (§12.2)
+                edits[site.uri].push_back(edit_of(site.span, text));
+            }
+            // each document's list becomes one array, because the protocol groups an edit by document (§12.2)
+            std::map<std::string, core::Json, std::less<>> changes;
+            // each document's edits join the changes, which is what an editor applies (§12.2)
+            for (auto& [file, list] : edits)
+                changes.emplace(file, core::Json(std::move(list)));
+            // the result carries the changes, which is the whole of a workspace edit (§12.2)
+            core::Json result;
+            // the changes join the result, which the editor applies (§12.2)
+            result.set("changes", core::Json(std::move(changes)));
+            // the rename answers with the edit, which the editor applies (§12.2)
+            return Exchange{.reply = envelope(reply_id, std::move(result)).to_string(), .notifications = {}};
         }
 
         // an outline request answers from the declarations the compile already indexed (§12.2)
@@ -1097,9 +1707,9 @@ namespace albor::language_server
             // the rendered symbols accumulate in declaration order (§12.2)
             std::vector<core::Json> symbols;
             // a document whose compile produced no tree has an empty outline, which is the honest answer (§12.2)
-            if (const auto found = m_source_indexes.find(*uri); found != m_source_indexes.end()) {
+            if (const auto found = m_sources.find(*uri); found != m_sources.end() && !found->second.empty()) {
                 // each top level declaration is one symbol, which its members nest below (§12.2)
-                for (const compiler::SourceSymbol& symbol : found->second.symbols)
+                for (const compiler::SourceSymbol& symbol : found->second.front().index.symbols)
                     symbols.push_back(document_symbol(symbol));
             }
             // the outline is a list, which is what the protocol describes for document symbols (§12.2)
@@ -1125,8 +1735,8 @@ namespace albor::language_server
             if (m_documents.find(*uri) == nullptr)
                 return Exchange{.reply = failure(reply_id, INVALID_REQUEST, "the document is not open: " + *uri).to_string(), .notifications = {}};
             // a document whose compile produced no tree has no tokens, which is the honest answer (§12.2)
-            if (const auto found = m_source_indexes.find(*uri); found != m_source_indexes.end())
-                return Exchange{.reply = envelope(reply_id, semantic_tokens(found->second)).to_string(), .notifications = {}};
+            if (const auto found = m_sources.find(*uri); found != m_sources.end() && !found->second.empty())
+                return Exchange{.reply = envelope(reply_id, semantic_tokens(found->second.front().index)).to_string(), .notifications = {}};
             // an empty reply is what the protocol spells for no tokens (§12.2)
             return Exchange{.reply = envelope(reply_id, core::Json(std::map<std::string, core::Json, std::less<>>{{"data", core::Json(std::vector<core::Json>{})}})).to_string(), .notifications = {}};
         }
