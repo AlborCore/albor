@@ -13,7 +13,6 @@ permissions:
   contents: read
   pull-requests: read
 
-# the pinned tools are the ABI inputs vcpkg caches by; the vcpkg commit is per platform because each image seeds its own
 env:
   CMAKE_VERSION: 4.4.4
   NINJA_VERSION: 1.13.2
@@ -43,7 +42,6 @@ jobs:
           count=$(echo "$response" | grep -c '"number"' || true)
           echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> $GITHUB_OUTPUT
 
-  # the shader artifact is committed, so this job is the only place the metal toolchain runs
   shaders-macos:
     name: shaders (macos)
     needs: [check-pr]
@@ -51,21 +49,19 @@ jobs:
       !cancelled() &&
       (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 5
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - name: metal toolchain
+      - name: toolchain
         run: |
-          # the framework's xcode is pinned, and xcode 26 ships the metal compiler as a component that may be absent
           sudo xcode-select --switch /Applications/Xcode_16.4.app
           xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
-      - name: committed shader artifact
+      - name: shader
         run: bash build/shaders.sh
 
-  # the direct3d artifact is committed too, so this job is the only place fxc runs
   shaders-windows:
     name: shaders (windows)
     needs: [check-pr]
@@ -73,16 +69,15 @@ jobs:
       !cancelled() &&
       (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
     runs-on: windows-2022
-    timeout-minutes: 15
+    timeout-minutes: 5
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - name: committed shader artifact
+      - name: shader
         run: bash build/shaders.sh --d3d
 
-  # the vulkan artifact is committed too, so this job is the only place glslang runs (§6.3, AD-16)
   shaders-linux:
     name: shaders (linux)
     needs: [check-pr]
@@ -90,18 +85,16 @@ jobs:
       !cancelled() &&
       (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - name: vulkan toolchain
+      - name: toolchain
         run: |
-          # glslang 15.1.0 from the ubuntu 24.04 package generated the committed container (§6.3, AD-16)
-          # python3 rewrites the dual source output decoration when the artifact is regenerated
           sudo apt-get update && sudo apt-get install -y glslang-tools python3
-      - name: committed shader artifact
+      - name: shader
         run: bash build/shaders.sh --vulkan
 
   build:
@@ -116,7 +109,7 @@ jobs:
       pull-requests: read
       code-quality: write
       id-token: write
-    timeout-minutes: 120
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -152,7 +145,6 @@ jobs:
               sudo xcode-select --switch /Applications/Xcode_16.4.app
           - name: macos-coverage
             os: macos-15
-            # the coverage report runs on pull requests and on main to maintain the baseline (AD-16)
             enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
             preset: coverage
             coverage-flag: macos
@@ -185,18 +177,34 @@ jobs:
               mkdir -p .vcpkg-cache
               # the preset launches the compiler through ccache, which the runner image does not ship
               choco install ccache --no-progress -y
+          - name: windows-coverage
+            os: windows-2022
+            enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+            preset: coverage
+            coverage-flag: windows
+            vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the preset launches the compiler through ccache, which the runner image does not ship
+              choco install ccache --no-progress -y
           - name: linux-release
             os: ubuntu-24.04
             enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-            # wayland-protocols and libdecor are vendored, so the job installs the frame's system libraries instead (AD-16)
-            # the vulkan loader and lavapipe carry the gpu backend, and xvfb runs the tier two x11 suite (AD-22)
             setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
           - name: linux-debug
             os: ubuntu-24.04
             enable: true
             preset: debug
+            vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
+            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
+          - name: linux-coverage
+            os: ubuntu-24.04
+            enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+            preset: coverage
+            coverage-flag: linux
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
     env:
@@ -213,7 +221,7 @@ jobs:
         if: matrix.enable
         run: ${{ matrix.setup }}
 
-      - name: resolve the software vulkan driver
+      - name: vulkan driver
         if: matrix.enable && runner.os == 'Linux'
         run: |
           # mesa 25 names the lavapipe icd lvp_icd.json, older releases name it lvp_icd.x86_64.json (AD-22)
@@ -254,7 +262,6 @@ jobs:
           vcpkgJsonGlob: vcpkg.json
           doNotCache: true
 
-      # the msvc action repoints VCPKG_ROOT at the image's bundled vcpkg, so the pinned checkout is restored here
       - name: pin the vcpkg root
         if: matrix.enable
         run: echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> "$GITHUB_ENV"
@@ -301,7 +308,6 @@ jobs:
         working-directory: .build-${{ matrix.preset }}/tests
         run: ./albor-tests && ./albor-generated-font-checks
 
-      # the vscode client is a node package, so its toolchain is pinned like cmake and vcpkg are (§12.2)
       - name: node
         if: matrix.enable && matrix.preset == 'debug'
         uses: actions/setup-node@v7
@@ -310,7 +316,6 @@ jobs:
           cache: npm
           cache-dependency-path: tools/albor-vscode/package-lock.json
 
-      # the smoke test launches the server this job just built, so the client and the binary are proven together (§12.2, §16)
       - name: language client smoke test
         if: matrix.enable && matrix.preset == 'debug'
         working-directory: tools/albor-vscode
@@ -367,7 +372,6 @@ jobs:
           export ALBOR_EXPECT_SCALE=2
           ./albor-linux-tests --gtest_filter='-X11Platform.*'
 
-      # the linux platform font resolver is tracked in #235, so the selection check waits for it
       - name: font selection check
         if: matrix.enable && runner.os != 'Linux'
         env:
