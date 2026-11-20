@@ -79,23 +79,8 @@ namespace albor::compiler
             // a duplicate name publishes once, because the loader reports the ambiguity before checking (§11.1)
             if (m_imported_component_types.contains(component.name))
                 continue;
-            // the type is assembled locally, because each interface contributes its own members (§11.1)
-            ElementType type;
-            // the name is what an element writes, so an instance resolves against it (§11.1)
-            type.name = component.name;
-            // the declared properties come first, because one shadows a common property of the same name (§11.1)
-            for (const CheckedProperty& property : component.properties)
-                type.properties.push_back(ElementProperty{.name = property.name, .type = property.type, .assignable = true});
-            // the common properties join, because a component arranges like any other node does (§8.2)
-            for (const ElementProperty& common : common_element_properties())
-                type.properties.push_back(common);
-            // the signals carry their parameter names, because a handler body reads the raised value by them (§11.1)
-            for (const CheckedSignal& signal : component.signals)
-                type.signals.push_back(ElementSignal{.name = signal.name, .parameter_types = signal.parameter_types, .parameter_names = signal.parameter_names});
-            // content reaches an imported component through its own file, never through an instance (§11.1)
-            type.accepts_children = false;
-            // the type is published, because an element reference resolves it before the catalog (§11.1)
-            m_imported_component_types.emplace(component.name, std::move(type));
+            // the type is assembled from the imported interface, which contributes its own members (§11.1)
+            m_imported_component_types.emplace(component.name, component_element_type(component.name, component.properties, component.signals));
         }
     }
 
@@ -449,23 +434,8 @@ namespace albor::compiler
             // a duplicate name publishes once, because the index pass already reported the second (§11.1)
             if (m_file_component_types.contains(component.name))
                 continue;
-            // the type is assembled locally, because each component contributes its own members (§11.1)
-            ElementType type;
-            // the name is what an element writes, so an instance resolves against it (§11.1)
-            type.name = component.name;
-            // the declared properties come first, because one shadows a common property of the same name (§11.1)
-            for (const CheckedProperty& property : component.properties)
-                type.properties.push_back(ElementProperty{.name = property.name, .type = property.type, .assignable = true});
-            // the common properties join, because a component arranges like any other node does (§8.2)
-            for (const ElementProperty& common : common_element_properties())
-                type.properties.push_back(common);
-            // the signals carry their parameter names, because a handler body reads the raised value by them (§11.1)
-            for (const CheckedSignal& signal : component.signals)
-                type.signals.push_back(ElementSignal{.name = signal.name, .parameter_types = signal.parameter_types, .parameter_names = signal.parameter_names});
-            // content reaches a base through a derived component, never through an instance (§11.1)
-            type.accepts_children = false;
-            // the type is published, because an element reference resolves before the catalog (§11.1)
-            m_file_component_types.emplace(component.name, std::move(type));
+            // the type is assembled from the declaration, because each component contributes its own members (§11.1)
+            m_file_component_types.emplace(component.name, component_element_type(component.name, component.properties, component.signals));
         }
     }
 
@@ -2187,6 +2157,26 @@ namespace albor::compiler
             return false;
         }
     } // namespace
+
+    ElementType component_element_type(std::string name, const std::vector<CheckedProperty>& properties, const std::vector<CheckedSignal>& signals) {
+        // the type starts with the name an element writes, which every instance resolves against (§11.1)
+        ElementType type;
+        // the name is moved in, because the caller never reads its copy afterwards (§11.1)
+        type.name = std::move(name);
+        // the declared properties come first, because one shadows a common property of the same name (§11.1)
+        for (const CheckedProperty& property : properties)
+            type.properties.push_back(ElementProperty{.name = property.name, .type = property.type, .assignable = true});
+        // the common properties join, because a component arranges like any other node does (§8.2)
+        for (const ElementProperty& common : common_element_properties())
+            type.properties.push_back(common);
+        // the signals carry their parameter names, because a handler body reads the raised value by them (§11.1)
+        for (const CheckedSignal& signal : signals)
+            type.signals.push_back(ElementSignal{.name = signal.name, .parameter_types = signal.parameter_types, .parameter_names = signal.parameter_names});
+        // content reaches a component through a derived component, never through an instance (§11.1)
+        type.accepts_children = false;
+        // the assembled type is what an instance resolves against (§11.1)
+        return type;
+    }
 
     void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics) {
         // the structs are walked in declaration order, which is the order a field may name an earlier one (§11.1)

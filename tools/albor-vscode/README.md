@@ -26,9 +26,10 @@ The binary lands at `.build-debug/tools/albor-lsp/albor-lsp` on macOS and Linux,
 Changing either setting restarts the server.
 
 The manifests are sent at `initialize` as `initializationOptions.manifests`. The language
-server resolves them with the manifest front end once
-[#126](https://github.com/AlborCore/albor/issues/126) lands; until then it answers from the
-built-in element catalog and the setting is carried but not consumed.
+server resolves them with the same manifest front end the build uses, so their records, native
+components, properties and signals complete and hover in the editor. The extension also watches
+`**/*.ui-manifest` and forwards a saved edit as `workspace/didChangeWatchedFiles`, which
+rebuilds the catalog and recompiles the open roots without a restart.
 
 ## Run it from this source tree
 

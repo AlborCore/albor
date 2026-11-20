@@ -207,13 +207,20 @@ async function main() {
     const text = "component Smoke {\n    Column {\n        Label { colour: \"red\"; }\n    }\n}\n";
     fs.writeFileSync(source, text);
     const uri = pathToFileURL(source).href;
+    // the manifest declares the native component the fixed document instantiates, which is the catalog the client supplies (§11.2, AD-17)
+    const manifest_file = path.join(directory, "smoke.ui-manifest");
+    const manifest_text = "native component WaveformView {\n    in property<color> line_color: #00FF00;\n    signal selection_changed(float time_pos);\n}\n";
+    fs.writeFileSync(manifest_file, manifest_text);
+    const manifest_uri = pathToFileURL(manifest_file).href;
     // the language client appends --stdio for TransportKind.stdio, so the smoke test spawns the same command line (§12.2)
     const child = spawn(EXECUTABLE, ["--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
     const connection = new Connection(child);
     try {
         // the handshake names the manifest list the extension passes, and asserts the capabilities it relies on (§12.2)
-        const initialized = await connection.request("initialize", { processId: process.pid, rootUri: null, capabilities: {}, initializationOptions: { manifests: [] } });
-        assert.equal(initialized.capabilities.textDocumentSync, 1);
+        const initialized = await connection.request("initialize", { processId: process.pid, rootUri: null, capabilities: {}, initializationOptions: { manifests: [manifest_file] } });
+        // the sync options carry the full change kind and the save notification, which the server refreshes importers from (§11.1, §12.2)
+        assert.equal(initialized.capabilities.textDocumentSync.change, 1);
+        assert.equal(initialized.capabilities.textDocumentSync.save.includeText, false);
         assert.ok(initialized.capabilities.completionProvider !== undefined);
         assert.equal(initialized.capabilities.hoverProvider, true);
         connection.notify("initialized", {});
@@ -226,28 +233,41 @@ async function main() {
         assert.ok(diagnostic !== undefined);
         assert.equal(diagnostic.source, "albor");
         assert.equal(diagnostic.severity, 1);
-        // a full text change is what the client sends on every edit, and a fixed property must clear the publication (§12.2)
-        const fixed = "component Smoke {\n    Column {\n        Label { text: \"ok\"; }\n    }\n}\n";
+        // a full text change is what the client sends on every edit, and a manifest component must compile against the catalog (§12.2, AD-17)
+        const fixed = "component Smoke {\n    Column {\n        Label { text: \"ok\"; }\n        WaveformView { line_color: #00FF00; }\n    }\n}\n";
         connection.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: fixed }] });
         const cleared = await connection.wait_for_notification("textDocument/publishDiagnostics");
         assert.equal(cleared.params.uri, uri);
         assert.equal(cleared.params.diagnostics.length, 0);
-        // completion inside the column body offers the builtin elements, which is what the client presents (§12.2)
+        // completion inside the column body offers the manifest element beside the builtins (§11.2, AD-17)
         const completion = await connection.request("textDocument/completion", { textDocument: { uri }, position: { line: 2, character: 8 } });
         assert.ok(Array.isArray(completion));
         const labels = completion.map((item) => item.label);
         assert.ok(labels.includes("Label"));
         assert.ok(labels.includes("Column"));
-        // hover on the element name describes it, which is the second editor feature the issue asks for (§12.2)
-        const hover = await connection.request("textDocument/hover", { textDocument: { uri }, position: { line: 2, character: 10 } });
+        assert.ok(labels.includes("WaveformView"));
+        // hover on the manifest element describes it, which is the second editor feature the issue asks for (§12.2)
+        const hover = await connection.request("textDocument/hover", { textDocument: { uri }, position: { line: 3, character: 10 } });
         assert.ok(hover !== null && hover.contents !== undefined);
-        assert.ok(hover.contents.value.includes("Label"));
+        assert.ok(hover.contents.value.includes("WaveformView"));
+        // a saved manifest edit is what the client watches and forwards, which must refresh the open root (§11.2, §12.2)
+        fs.writeFileSync(manifest_file, "");
+        connection.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: manifest_uri, type: 2 }] });
+        const broken = await connection.wait_for_notification("textDocument/publishDiagnostics");
+        assert.equal(broken.params.uri, uri);
+        assert.ok(broken.params.diagnostics.length >= 1);
+        // restoring the manifest clears the stale diagnostics, because the catalog is rebuilt before the recompile (§12.2, §16)
+        fs.writeFileSync(manifest_file, manifest_text);
+        connection.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: manifest_uri, type: 2 }] });
+        const restored = await connection.wait_for_notification("textDocument/publishDiagnostics");
+        assert.equal(restored.params.uri, uri);
+        assert.equal(restored.params.diagnostics.length, 0);
         // shutdown and exit are the protocol's close sequence, which proves the process ends cleanly (§12.2)
         await connection.request("shutdown", null);
         connection.notify("exit", {});
         const code = await connection.wait_for_exit();
         assert.equal(code, 0);
-        process.stdout.write(`smoke: initialize, diagnostics, completion, hover and shutdown passed against ${EXECUTABLE}\n`);
+        process.stdout.write(`smoke: initialize, diagnostics, manifest reload, completion, hover and shutdown passed against ${EXECUTABLE}\n`);
     } catch (error) {
         // the server's stderr is the reason a launch or a frame failed, so it is printed before the test gives up (§12.2)
         if (connection.stderr.length > 0)

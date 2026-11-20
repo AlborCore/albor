@@ -15,6 +15,9 @@ const START_TIMEOUT = 15000;
 // the client the extension host owns, which is stopped when the extension deactivates (§12.2)
 let client: LanguageClient | undefined;
 
+// the watcher that reports a manifest or an import edit, which the server refreshes its catalog and roots from (§11.1, §11.2, §12.2)
+let file_watcher: vscode.FileSystemWatcher | undefined;
+
 // the restarts are serialized, because two servers over one workspace would publish twice (§12.2)
 let restarts: Promise<void> = Promise.resolve();
 
@@ -37,17 +40,23 @@ async function start_client(): Promise<void> {
     const executable = configuration.get<string>("lsp.executable", DEFAULT_EXECUTABLE);
     // a relative manifest resolves against the first folder, because initialize is workspace scoped (§12.2)
     const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    // the manifests are the catalog paths initialize carries, which #126 turns into elements and records (§11.2, §12.2)
+    // the manifests are the catalog paths initialize carries, which resolve into elements and records (§11.2, §12.2)
     const manifests = manifest_paths(configuration.get<string[]>("manifests", []), workspace);
     // the selector names a saved or an untitled buffer, because the server accepts both (§12.2)
     const document_selector = [
         { scheme: "file", language: LANGUAGE_ID },
         { scheme: "untitled", language: LANGUAGE_ID }
     ];
-    // the initialize options are how a client supplies the manifest catalog, which is the channel #126 reads (§11.2, AD-17)
+    // the initialize options are how a client supplies the manifest catalog, which the server resolves (§11.2, AD-17)
     const initialization_options = { manifests };
-    // the client owns diagnostics, completion and hover through the capabilities the server advertises (§12.2)
-    const client_options: LanguageClientOptions = { documentSelector: document_selector, initializationOptions: initialization_options };
+    // a saved manifest or ui file reaches the server as a watched file change, which is how its catalog and roots refresh (§11.1, §11.2, §12.2)
+    const watcher = vscode.workspace.createFileSystemWatcher("**/*.{ui,ui-manifest}");
+    // a previous watcher is dropped, because a restart must report to the client this attempt starts (§12.2)
+    file_watcher?.dispose();
+    // the watcher is kept, so stopping the client disposes the one that reports to it (§12.2)
+    file_watcher = watcher;
+    // the client owns diagnostics, completion and hover, and forwards manifest and import edits to the server (§12.2)
+    const client_options: LanguageClientOptions = { documentSelector: document_selector, initializationOptions: initialization_options, synchronize: { fileEvents: watcher } };
     // the starting client is kept locally, because a later restart must not be the one a stale timeout kills (§12.2)
     const starting = new LanguageClient(LANGUAGE_ID, "Albor", server_options(executable), client_options);
     // the client is stored before it starts, because deactivate has to stop it even while it connects (§12.2)
@@ -67,6 +76,11 @@ async function start_client(): Promise<void> {
     } catch (error) {
         // a rejected handshake leaves the spawned process alive, so it is killed before the client is forgotten (§12.2)
         starting.serverProcess?.kill();
+        // the watcher belongs to the failed attempt, so it is disposed before a later start creates its own (§12.2)
+        watcher.dispose();
+        // the module reference is cleared only when this attempt still owns it, because a restart may have moved on (§12.2)
+        if (file_watcher === watcher)
+            file_watcher = undefined;
         // the current client is cleared only when this attempt still owns it, because a restart may have moved on (§12.2)
         if (client === starting)
             client = undefined;
@@ -87,6 +101,10 @@ function report_failure(error: unknown): void {
 
 // stop the running client and forget it, which is what a restart and deactivation both begin with (§12.2)
 async function stop_client(): Promise<void> {
+    // the watcher is disposed first, because it reports to the client that is about to stop (§12.2)
+    file_watcher?.dispose();
+    // the next start creates the watcher its own client needs (§12.2)
+    file_watcher = undefined;
     // the reference is captured first, because a start may replace it while the stop is still running (§12.2)
     const running = client;
     // the reference is cleared before the stop, because the next start owns a fresh client (§12.2)

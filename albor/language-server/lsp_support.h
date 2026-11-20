@@ -26,6 +26,16 @@ namespace albor::language_server
         std::string documentation;
     };
 
+    // the components one open file may instantiate, which an editor resolves before the catalog (§11.1, §12.2)
+    struct ComponentSurface
+    {
+        // the components the file declares, which an element resolves against first (§11.1)
+        std::vector<compiler::ElementType> local;
+
+        // the components its imports declare, which resolve after the file's own and before the catalog (§11.1)
+        std::vector<compiler::ElementType> imported;
+    };
+
     // what the completion request offers, which depends on where the cursor is (§12.2)
     enum class CompletionContext
     {
@@ -52,8 +62,8 @@ namespace albor::language_server
     [[nodiscard]] std::string enclosing_element_at(const Document& document, std::size_t line, std::size_t character);
 
     // the things that may be written at this position, which is the completion response (§12.2)
-    [[nodiscard]] std::vector<CompletionItem> completions_at(const Document& document, const compiler::ElementCatalog& catalog, std::size_t line, std::size_t character);
+    [[nodiscard]] std::vector<CompletionItem> completions_at(const Document& document, const compiler::ElementCatalog& catalog, const ComponentSurface& components, std::size_t line, std::size_t character);
 
     // what the token under the cursor means, which is absent when the cursor is on nothing (§12.2)
-    [[nodiscard]] std::optional<std::string> hover_at(const Document& document, const compiler::ElementCatalog& catalog, std::size_t line, std::size_t character);
+    [[nodiscard]] std::optional<std::string> hover_at(const Document& document, const compiler::ElementCatalog& catalog, const ComponentSurface& components, std::size_t line, std::size_t character);
 } // namespace albor::language_server

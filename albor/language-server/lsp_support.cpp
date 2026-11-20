@@ -128,18 +128,61 @@ namespace albor::language_server
             return {};
         }
 
-        // the element names the catalog holds, which is what an element completion offers (§11.1, §11.2)
-        std::vector<CompletionItem> element_items(const compiler::ElementCatalog& catalog) {
-            // the items accumulate, one per known element (§12.2)
+        // report whether an offered list already carries a name, which is how a shadowed element is hidden (§11.1)
+        bool holds_name(const std::vector<CompletionItem>& items, const std::string& name) {
+            // every item is compared, because the duplicate hides at whatever position it took (§11.1)
+            return std::any_of(items.begin(), items.end(), [&name](const CompletionItem& item) { return item.label == name; });
+        }
+
+        // the type a written name resolves, which is the file's own, its imports, then the catalog (§11.1)
+        const compiler::ElementType* element_type_named(const compiler::ElementCatalog& catalog, const ComponentSurface& components, std::string_view name) {
+            // the file's own components come first, because a declared name shadows an import and a catalog type (§11.1)
+            for (const compiler::ElementType& type : components.local) {
+                // the name decides, so the first match is the declaration (§11.1)
+                if (type.name == name)
+                    return &type;
+            }
+            // the imports follow, because they resolve after the file's own and before the catalog (§11.1)
+            for (const compiler::ElementType& type : components.imported) {
+                // the name decides, so the first match is the imported declaration (§11.1)
+                if (type.name == name)
+                    return &type;
+            }
+            // the catalog decides last, because a builtin or manifest type may be shadowed above (§11.1, §11.2)
+            return catalog.find(name);
+        }
+
+        // the names the file may write, which is its own components, its imports, then the catalog (§11.1, §11.2)
+        std::vector<CompletionItem> element_items(const compiler::ElementCatalog& catalog, const ComponentSurface& components) {
+            // the items accumulate in resolution order, one per whole name (§12.2)
             std::vector<CompletionItem> items;
-            // every type in the catalog is offered, because any of them may be instantiated (§11.2, AD-17)
+            // the file's own components are offered first, because a declared name shadows an import (§11.1)
+            for (const compiler::ElementType& type : components.local) {
+                // a name declared twice is offered once, because one declaration resolves (§11.1)
+                if (holds_name(items, type.name))
+                    continue;
+                // the item is the component name, which is what the author types (§12.2)
+                items.push_back(CompletionItem{.label = type.name, .detail = "component", .kind = KIND_CLASS, .documentation = ""});
+            }
+            // the imported components follow, because they resolve after the file's own (§11.1)
+            for (const compiler::ElementType& type : components.imported) {
+                // a name the file declares is not offered twice, because the local declaration wins (§11.1)
+                if (holds_name(items, type.name))
+                    continue;
+                // the item is the imported component name, which the author writes the same way (§12.2)
+                items.push_back(CompletionItem{.label = type.name, .detail = "component", .kind = KIND_CLASS, .documentation = ""});
+            }
+            // every catalog type follows, because any of them may still be instantiated (§11.2, AD-17)
             for (const compiler::ElementType& type : catalog.types()) {
+                // a name a component shadows is not offered again, because the resolver never reaches it (§11.1)
+                if (holds_name(items, type.name))
+                    continue;
                 // the detail says whether children are accepted, which is what a person cannot guess (§8)
                 const std::string detail = type.accepts_children ? "container" : "widget";
                 // the item is the element name, which is what the author types (§12.2)
                 items.push_back(CompletionItem{.label = type.name, .detail = detail, .kind = KIND_CLASS, .documentation = ""});
             }
-            // the items are returned in the catalog's order, which keeps a response stable (§12.2)
+            // the items are returned in resolution order, which keeps a response stable (§12.2)
             return items;
         }
 
@@ -149,6 +192,9 @@ namespace albor::language_server
             std::vector<CompletionItem> items;
             // every property is offered, because any of them may be assigned (§11.1)
             for (const compiler::ElementProperty& property : type.properties) {
+                // a declared property that shadows a common one is offered once, because its name resolves once (§11.1)
+                if (holds_name(items, property.name))
+                    continue;
                 // the item is the property name with its type, which is what a person needs to assign it (§11.1)
                 items.push_back(CompletionItem{.label = property.name, .detail = property.type.to_string(), .kind = KIND_PROPERTY, .documentation = ""});
             }
@@ -312,7 +358,7 @@ namespace albor::language_server
         return CompletionContext::Declaration;
     }
 
-    std::vector<CompletionItem> completions_at(const Document& document, const compiler::ElementCatalog& catalog, std::size_t line, std::size_t character) {
+    std::vector<CompletionItem> completions_at(const Document& document, const compiler::ElementCatalog& catalog, const ComponentSurface& components, std::size_t line, std::size_t character) {
         // the context decides the response, because one cursor means different things in different places (§12.2)
         const CompletionContext context = completion_context_at(document, line, character);
         // nowhere useful offers nothing, because a long list of irrelevant names is worse than none (§12.2)
@@ -322,9 +368,9 @@ namespace albor::language_server
         if (context == CompletionContext::Signal) {
             // the enclosing element is read, because its signals are what may follow (§12.2)
             const std::string element = enclosing_element_at(document, line, character);
+            // the type resolves against the file's own components, its imports and then the catalog (§11.1, AD-17)
+            const compiler::ElementType* type = element_type_named(catalog, components, element);
             // an unknown element has no signals to offer, so nothing is offered rather than a guess (§12.2)
-            const compiler::ElementType* type = catalog.find(element);
-            // an unknown element offers nothing (§12.2)
             if (type == nullptr)
                 return {};
             // the signals only, which is what the handler prefix asked for (§11.1)
@@ -344,17 +390,17 @@ namespace albor::language_server
             // a body with no named element is a component body, which has no element properties (§11.1)
             if (element.empty())
                 return {};
-            // the type is read from the catalog, which is the single source of truth (§11.2, AD-17)
-            const compiler::ElementType* type = catalog.find(element);
-            // an element the catalog does not hold offers nothing rather than another element's properties (§12.2, AD-17)
+            // the type resolves against the file's own components, its imports and then the catalog (§11.1, AD-17)
+            const compiler::ElementType* type = element_type_named(catalog, components, element);
+            // an element nothing declares offers nothing rather than another element's properties (§12.2, AD-17)
             if (type == nullptr)
                 return {};
             // the element's own surface is what may follow the colon (§11.1)
             return element_body_items(*type);
         }
-        // inside an element body, any known element may be the child being written (§11.1)
+        // inside an element body, any visible element may be the child being written (§11.1)
         if (context == CompletionContext::Element)
-            return element_items(catalog);
+            return element_items(catalog, components);
         // a component body holds both its declarations and its child elements, so both are offered (§11.1)
         std::vector<CompletionItem> items;
         // the keywords are what may start a declaration there (§11.1)
@@ -363,14 +409,14 @@ namespace albor::language_server
             items.push_back(CompletionItem{.label = keyword, .detail = "keyword", .kind = KIND_TEXT, .documentation = ""});
         }
         // the child elements are what may start an element there, which is the other half of that body (§11.1)
-        const std::vector<CompletionItem> children = element_items(catalog);
+        const std::vector<CompletionItem> children = element_items(catalog, components);
         // the element names join the keywords, because both are valid at that position (§11.1)
         items.insert(items.end(), children.begin(), children.end());
         // both are returned, which is what a component body answers (§12.2)
         return items;
     }
 
-    std::optional<std::string> hover_at(const Document& document, const compiler::ElementCatalog& catalog, std::size_t line, std::size_t character) {
+    std::optional<std::string> hover_at(const Document& document, const compiler::ElementCatalog& catalog, const ComponentSurface& components, std::size_t line, std::size_t character) {
         // a position past the last line names nothing (§12.2)
         if (line >= document.line_count())
             return std::nullopt;
@@ -387,8 +433,8 @@ namespace albor::language_server
         const std::string signal_name = handler ? word.substr(HANDLER_PREFIX.size()) : word;
         // the enclosing element is read, because a property and a signal belong to one (§12.2)
         const std::string element = enclosing_element_at(document, line, character);
-        // a named element answers from the catalog, which is the single source of truth (§11.2, AD-17)
-        const compiler::ElementType* type = element.empty() ? nullptr : catalog.find(element);
+        // a named element answers from the file's own components, its imports and then the catalog (§11.1, §11.2, AD-17)
+        const compiler::ElementType* type = element.empty() ? nullptr : element_type_named(catalog, components, element);
         // a handler is described as the signal it attaches to (§11.1)
         if (handler && type != nullptr) {
             // the signal is looked up by its bare name (§11.1)
@@ -406,6 +452,18 @@ namespace albor::language_server
             // a property the element does not expose has nothing to say (§12.2)
             if (property != nullptr)
                 return element + "." + property->name + " : " + property->type.to_string();
+        }
+        // the word may be a component the file declares, which is what an instance would build (§11.1)
+        for (const compiler::ElementType& declared : components.local) {
+            // the name decides, so the first match is the declaration (§11.1)
+            if (declared.name == word)
+                return declared.name + " component";
+        }
+        // an imported component follows, because it resolves after the file's own (§11.1)
+        for (const compiler::ElementType& declared : components.imported) {
+            // the name decides, so the first match is the imported declaration (§11.1)
+            if (declared.name == word)
+                return declared.name + " component";
         }
         // the word may be the element itself, which is what hovering its own name means (§12.2)
         const compiler::ElementType* hovered = catalog.find(word);

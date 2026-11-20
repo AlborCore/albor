@@ -6,16 +6,20 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include "albor/compiler/codegen/codegen.h"
 #include "albor/compiler/diagnostic.h"
+#include "albor/compiler/lexer.h"
 #include "albor/compiler/type_checker.h"
 #include "albor/compiler/ui_loader.h"
+#include "albor/core/file_bytes.h"
 #include "albor/core/json.h"
 #include "albor/language-server/lsp_server.h"
+#include "albor/manifest/manifest.h"
 
 using namespace albor;
 using namespace albor::language_server;
@@ -23,11 +27,35 @@ using namespace albor::language_server;
 namespace
 {
     // run the compiler the way a build does, which is what the language server must agree with (§16)
-    std::vector<compiler::Diagnostic> compiler_diagnostics(const std::string& text) {
+    std::vector<compiler::Diagnostic> compiler_diagnostics(const std::string& text, const std::vector<std::filesystem::path>& manifests = {}) {
         // the diagnostics accumulate, because the server publishes what the compiler found (§16)
         compiler::DiagnosticList diagnostics;
-        // the builtin catalog is what a ui file may use without a manifest (§11.1, §8)
+        // the catalog starts with the builtin widgets, which every ui file may instantiate (§11.1, §8)
         compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
+        // every manifest is parsed first, because a declaration in one may name a record another declares (§11.2, AD-17)
+        std::vector<manifest::ManifestFile> parsed_manifests;
+        // each manifest is read, because its records and native components are what the catalog resolves (§11.2, AD-17)
+        for (const std::filesystem::path& manifest : manifests) {
+            // the manifest text is read whole, because its declarations are known before the ui file is checked (§11.2)
+            const std::optional<std::vector<std::uint8_t>> manifest_bytes = core::read_regular_file(manifest);
+            // a manifest that cannot be read contributes no declaration, which is what the server does as well (§11.2)
+            if (!manifest_bytes)
+                continue;
+            // the module name is the file stem, which is what the glue generator names the directory after (§11.2)
+            const std::string module = manifest.stem().string();
+            // the bytes become the source text, because the scanner takes characters rather than a file (§11.1)
+            const std::string manifest_text(manifest_bytes->begin(), manifest_bytes->end());
+            // the manifest's own problems join the run, because a bad declaration is the author's problem too (§11.2)
+            const std::vector<compiler::Token> manifest_tokens = compiler::Lexer(manifest_text, diagnostics).tokenize();
+            // the manifest is parsed into declarations, which is where the records and the components live (§11.2, AD-17)
+            parsed_manifests.push_back(manifest::ManifestParser(manifest_tokens, diagnostics).parse(module));
+        }
+        // every record joins first, because a component property in any manifest may name one (§11.2, AD-17, AD-13)
+        for (const manifest::ManifestFile& parsed : parsed_manifests)
+            manifest::register_records(parsed, catalog);
+        // the components join next, which is what makes a native element constructible (§11.2, AD-17)
+        for (const manifest::ManifestFile& parsed : parsed_manifests)
+            manifest::register_components(parsed, catalog);
         // the root buffer is answered by name, because a saved file is what a build compiles (§11.1)
         const auto reader = [&text](const std::filesystem::path& path) -> std::optional<std::string> {
             // the corpus has no imports, so only the root name answers (§11.1)
@@ -41,7 +69,11 @@ namespace
         if (!checked.has_value())
             return diagnostics.diagnostics();
         // the generator runs too, because codegen reports its own diagnostics (§11.3)
-        (void)compiler::CodeGenerator(diagnostics).generate(*checked);
+        compiler::CodeGenerator generator(diagnostics);
+        // the catalog is handed over, because a native element constructs through its factory (§11.2, AD-17)
+        generator.set_catalog(&catalog);
+        // the generated output is discarded, because the agreement compares the diagnostics (§11.3)
+        (void)generator.generate(*checked);
         // the diagnostics are returned, which is what the agreement compares (§16)
         return diagnostics.diagnostics();
     }
@@ -67,6 +99,72 @@ namespace
         const std::string line = std::string(R"({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":)") + core::Json(uri).to_string() + R"(,"version":)" + std::to_string(version) + R"(},"contentChanges":[{"text":)" + core::Json(text).to_string() + "}]}}";
         // the line is handled, which is the whole of the loop (§12.2)
         return server.handle_line(line);
+    }
+
+    // perform the handshake with a manifest list, which is how a client supplies its catalog (§11.2, §12.2)
+    Exchange did_initialize(LspServer& server, const std::vector<std::filesystem::path>& manifests, const std::string& workspace_uri = {}) {
+        // the paths become json strings, because the protocol carries them as text (§12.2)
+        std::vector<core::Json> entries;
+        // each configured path is written the way a client writes a setting (§11.2)
+        for (const std::filesystem::path& manifest : manifests)
+            entries.push_back(core::Json(manifest.generic_string()));
+        // the initialization options carry the manifest list, which is the channel the server reads (§11.2, §12.2)
+        core::Json options;
+        // the list is an array of strings, which is what the server expects (§12.2)
+        options.set("manifests", core::Json(std::move(entries)));
+        // the parameters carry the options and, when given, the workspace a relative manifest resolves against (§12.2)
+        core::Json params;
+        // the options are the catalog source the handshake names (§11.2, AD-17)
+        params.set("initializationOptions", std::move(options));
+        // a workspace uri is what a relative manifest resolves against, which the documentation promises (§11.2, §12.2)
+        if (!workspace_uri.empty()) {
+            // the first folder is the root a relative path joins to (§12.2)
+            core::Json folder;
+            // the uri names the directory the manifest sits in (§12.2)
+            folder.set("uri", core::Json(workspace_uri));
+            // the folder list carries the one workspace this test names (§12.2)
+            params.set("workspaceFolders", core::Json(std::vector<core::Json>{std::move(folder)}));
+        }
+        // the request is an object, because every protocol request is (§12.2)
+        core::Json request;
+        // the version identifies the protocol (§12.2)
+        request.set("jsonrpc", core::Json(std::string("2.0")));
+        // the identifier is what the reply echoes (§12.2)
+        request.set("id", core::Json(1.0));
+        // the method is the handshake, which is what configures the catalog (§12.2)
+        request.set("method", core::Json(std::string("initialize")));
+        // the parameters join the request, which is where the options live (§12.2)
+        request.set("params", std::move(params));
+        // the handshake is handled, which is the whole of the exchange (§12.2)
+        return server.handle_line(request.to_string());
+    }
+
+    // report a watched manifest edit, which is how a client refreshes the catalog (§11.2, §12.2)
+    Exchange did_change_watched_manifest(LspServer& server, const std::filesystem::path& manifest) {
+        // the path becomes the file uri the protocol carries (§12.2)
+        const std::string path = manifest.generic_string();
+        // an absolute path yields a uri with a third slash after the scheme (§12.2)
+        const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+        // the change is a file event, which is what the watched notification carries (§12.2)
+        core::Json change;
+        // the uri names the manifest the editor saw change (§11.2, §12.2)
+        change.set("uri", core::Json(uri));
+        // the type is changed, because the file exists before and after the edit (§12.2)
+        change.set("type", core::Json(2.0));
+        // the change list carries the one event this helper raises (§12.2)
+        core::Json params;
+        // the list is an array, because the protocol groups changes that way (§12.2)
+        params.set("changes", core::Json(std::vector<core::Json>{std::move(change)}));
+        // the message is an object, because every protocol message is (§12.2)
+        core::Json message;
+        // the version identifies the protocol (§12.2)
+        message.set("jsonrpc", core::Json(std::string("2.0")));
+        // the method is the watched file notification, which is what a client sends (§12.2)
+        message.set("method", core::Json(std::string("workspace/didChangeWatchedFiles")));
+        // the parameters join the notification, which is where the change lives (§12.2)
+        message.set("params", std::move(params));
+        // the notification is handled, which is the whole of the exchange (§12.2)
+        return server.handle_line(message.to_string());
     }
 
     // the published diagnostics, returned by value because a caller must not outlive this parse (§12.2)
@@ -99,7 +197,14 @@ TEST(LspServerChecks, InitializeAnswersWithoutNeedingADocument) {
     EXPECT_EQ(publish->kind(), core::Json::Kind::Object);
     const core::Json* sync = capabilities->member("textDocumentSync");
     ASSERT_NE(sync, nullptr);
-    EXPECT_EQ(sync->as_number(), 1.0);
+    // the sync options carry the full change kind and the save notification a client registers for (§12.2)
+    ASSERT_EQ(sync->kind(), core::Json::Kind::Object);
+    const core::Json* change = sync->member("change");
+    ASSERT_NE(change, nullptr);
+    EXPECT_EQ(change->as_number(), 1.0);
+    const core::Json* save = sync->member("save");
+    ASSERT_NE(save, nullptr);
+    EXPECT_EQ(save->kind(), core::Json::Kind::Object);
     EXPECT_EQ(server.document_count(), 0U);
 }
 
@@ -556,9 +661,9 @@ TEST(LspServerChecks, ARequestForAClosedDocumentIsRefused) {
 namespace
 {
     // ask for completions at a position, which is what an editor does when a person types (§12.2)
-    std::vector<std::string> complete_at(LspServer& server, int line, int character) {
+    std::vector<std::string> complete_at(LspServer& server, int line, int character, const std::string& uri = "file:///panel.ui") {
         // the document is open already, so the request names it (§12.2)
-        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///panel.ui\"},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
         // the request is handled, which is the whole of the exchange (§12.2)
         const Exchange exchange = server.handle_line(request);
         // a reply is always produced for a request (§12.2)
@@ -585,9 +690,9 @@ namespace
     }
 
     // ask for a hover at a position, which is what an editor shows when a pointer rests (§12.2)
-    std::string hover_at(LspServer& server, int line, int character) {
+    std::string hover_at(LspServer& server, int line, int character, const std::string& uri = "file:///panel.ui") {
         // the request names the open document and the position (§12.2)
-        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///panel.ui\"},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
         // the request is handled (§12.2)
         const Exchange exchange = server.handle_line(request);
         // a reply is always produced for a request (§12.2)
@@ -710,6 +815,287 @@ TEST(LspCompletionChecks, ACompletionRequestWithoutAPositionIsRefused) {
     EXPECT_NE(exchange.reply->find("no position"), std::string::npos);
 }
 
+TEST(LspComponentCompletionChecks, CompletionOffersOwnComponentsThenImportsThenCatalog) {
+    // arrange a panel that declares a base and imports a side panel, which are two component kinds (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-order";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the component the panel instantiates from another file (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the hidden file sits on disk unimported, so it is outside the panel's visible scope (§12.2)
+    std::ofstream(root / "hidden.ui") << R"(component Hidden { Column { } })";
+    // the empty line inside the column is where a child element may begin (§11.1)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    signal tapped();\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        Holder {\n            caption: \"x\";\n            on_tapped: { }\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the cursor rests on the empty line inside the column (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> labels = complete_at(server, 14, 8, uri);
+    // assert the file's own components come first, in declaration order (§11.1)
+    ASSERT_GE(labels.size(), 4U);
+    EXPECT_EQ(labels.at(0), "Holder");
+    EXPECT_EQ(labels.at(1), "Panel");
+    // assert the imported component follows the file's own (§11.1)
+    EXPECT_EQ(labels.at(2), "SidePanel");
+    // assert the catalog follows the imports, because it resolves last (§11.1, §11.2)
+    const auto label = std::find(labels.begin(), labels.end(), "Label");
+    ASSERT_NE(label, labels.end());
+    EXPECT_GT(std::distance(labels.begin(), label), 2);
+    // assert a file that is on disk but not imported is never offered (§12.2)
+    EXPECT_EQ(std::find(labels.begin(), labels.end(), "Hidden"), labels.end());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, CompletionOnALocalInstanceOffersItsMembers) {
+    // arrange a panel whose base is instantiated inside its own content (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-local-members";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file is present because the panel imports it, so its members are in scope elsewhere (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the property and the handler sit on the lines the requests below address (§12.2)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    signal tapped();\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        Holder {\n            caption: \"x\";\n            on_tapped: { }\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the requests sit after the property colon and after the handler prefix (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> properties = complete_at(server, 11, 20, uri);
+    const std::vector<std::string> signals = complete_at(server, 12, 15, uri);
+    // assert the local instance offers the property it declares (§11.1)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "caption"), properties.end());
+    // assert a common property is offered too, because every node arranges (§11.1, §8.2)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "tooltip"), properties.end());
+    // assert the handler prefix offers the local signal with its prefix (§11.1)
+    EXPECT_NE(std::find(signals.begin(), signals.end(), "on_tapped"), signals.end());
+    // assert the imported component's members are not offered on a local instance (§12.2)
+    EXPECT_EQ(std::find(properties.begin(), properties.end(), "title"), properties.end());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, CompletionOnAnImportedInstanceOffersItsMembers) {
+    // arrange a panel that instantiates the component its import declares (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-imported-members";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the property and the signal the instance writes (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the local component declares a member of its own, which must not leak onto the imported instance (§12.2)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    signal tapped();\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        SidePanel {\n            title: \"x\";\n            on_closed: { }\n        }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the requests sit after the property colon and after the handler prefix (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> properties = complete_at(server, 11, 18, uri);
+    const std::vector<std::string> signals = complete_at(server, 12, 15, uri);
+    // assert the imported instance offers the property its interface declares (§11.1)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "title"), properties.end());
+    // assert a common property is offered too, because every node arranges (§11.1, §8.2)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "tooltip"), properties.end());
+    // assert the handler prefix offers the imported signal with its prefix (§11.1)
+    EXPECT_NE(std::find(signals.begin(), signals.end(), "on_closed"), signals.end());
+    // assert the local component's members are not offered on an imported instance (§12.2)
+    EXPECT_EQ(std::find(properties.begin(), properties.end(), "caption"), properties.end());
+    EXPECT_EQ(std::find(signals.begin(), signals.end(), "on_tapped"), signals.end());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, HoverNamesALocalComponentAndItsMembers) {
+    // arrange a panel whose base is instantiated inside its own content (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-local-hover";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file is present because the panel imports it, so the scope is the real one (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the instance, its property and its handler sit on the lines the hovers below address (§12.2)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    signal tapped();\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        Holder {\n            caption: \"x\";\n            on_tapped: { }\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the pointer rests on the instance, its property and its handler (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::string component = hover_at(server, 10, 10, uri);
+    const std::string property = hover_at(server, 11, 14, uri);
+    const std::string signal = hover_at(server, 12, 16, uri);
+    // assert the instance is named as the component it builds (§11.1, §12.2)
+    EXPECT_EQ(component, "Holder component");
+    // assert the property names the component it belongs to and its type (§11.1)
+    EXPECT_NE(property.find("Holder.caption"), std::string::npos);
+    EXPECT_NE(property.find("string"), std::string::npos);
+    // assert the handler names the signal it attaches to (§11.1)
+    EXPECT_EQ(signal, "Holder.tapped signal");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, HoverNamesAnImportedComponentAndItsMembers) {
+    // arrange a panel that instantiates the component its import declares (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-imported-hover";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the property and the signal the instance writes (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the instance, its property and its handler sit on the lines the hovers below address (§12.2)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel {\n            title: \"x\";\n            on_closed: { }\n        }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the pointer rests on the instance, its property and its handler (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::string component = hover_at(server, 4, 10, uri);
+    const std::string property = hover_at(server, 5, 14, uri);
+    const std::string signal = hover_at(server, 6, 16, uri);
+    // assert the instance is named as the imported component it builds (§11.1, §12.2)
+    EXPECT_EQ(component, "SidePanel component");
+    // assert the property names the imported component it belongs to and its type (§11.1)
+    EXPECT_NE(property.find("SidePanel.title"), std::string::npos);
+    EXPECT_NE(property.find("string"), std::string::npos);
+    // assert the handler names the signal it attaches to (§11.1)
+    EXPECT_EQ(signal, "SidePanel.closed signal");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, ALocalComponentShadowsTheImportedName) {
+    // arrange a local component named like the imported one, which the resolver prefers (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-shadow";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the same name, which the local declaration shadows (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the local interface redeclares the shared property with another type, which is how shadowing is observable (§11.1)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent SidePanel {\n    in property<string> tint;\n    in property<float> title;\n    signal pressed();\n    Column { @children }\n}\n\ncomponent Panel : SidePanel {\n    Column {\n        SidePanel {\n            tint: \"red\";\n            title: 1.0;\n            on_pressed: { }\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the requests ask for elements, the property, the signal and two hovers (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> elements = complete_at(server, 17, 8, uri);
+    const std::vector<std::string> properties = complete_at(server, 12, 17, uri);
+    const std::vector<std::string> signals = complete_at(server, 14, 15, uri);
+    const std::string tint_hover = hover_at(server, 12, 14, uri);
+    const std::string title_hover = hover_at(server, 13, 14, uri);
+    // assert the shared name is offered once, because the local declaration wins (§11.1)
+    EXPECT_EQ(std::count(elements.begin(), elements.end(), "SidePanel"), 1);
+    // assert the instance resolves the local property, because the local interface shadows the import (§11.1)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "tint"), properties.end());
+    // assert the local signal wins for the same reason (§11.1)
+    EXPECT_NE(std::find(signals.begin(), signals.end(), "on_pressed"), signals.end());
+    EXPECT_EQ(std::find(signals.begin(), signals.end(), "on_closed"), signals.end());
+    // assert the hover reads the local member, because the local declaration wins (§11.1)
+    EXPECT_EQ(tint_hover, "SidePanel.tint : string");
+    // assert a shared name reads the local type rather than the hidden import's (§11.1)
+    EXPECT_EQ(title_hover, "SidePanel.title : float");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, AChangedImportStopsCompletingAndACloseRefusesTheDocument) {
+    // arrange a panel that declares a base and imports a side panel (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-replaced";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the component the first text names (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the first text names a local base and the import, which both must complete (§11.1)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the first compile is asked for the two component names (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> before = complete_at(server, 9, 8, uri);
+    // assert both kinds are offered before the edit (§11.1)
+    EXPECT_NE(std::find(before.begin(), before.end(), "Holder"), before.end());
+    EXPECT_NE(std::find(before.begin(), before.end(), "SidePanel"), before.end());
+    // act the editor drops the local base and the import, which replaces the surface (§12.2)
+    const std::string changed = "component Panel {\n    Column {\n\n    }\n}\n";
+    (void)did_change(server, changed, 2, uri);
+    const std::vector<std::string> after = complete_at(server, 2, 8, uri);
+    // assert a removed component and a removed import stop completing (§11.1, §12.2)
+    EXPECT_EQ(std::find(after.begin(), after.end(), "Holder"), after.end());
+    EXPECT_EQ(std::find(after.begin(), after.end(), "SidePanel"), after.end());
+    // assert the catalog still answers, because only the file's own surface was replaced (§11.2, AD-17)
+    EXPECT_NE(std::find(after.begin(), after.end(), "Label"), after.end());
+    // act the editor closes the document, which drops the retained surface (§12.2)
+    const std::string close = "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "}}}";
+    (void)server.handle_line(close);
+    const Exchange exchange = server.handle_line("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":2,\"character\":8}}}");
+    // assert a closed document is refused rather than answered from a stale surface (§12.2)
+    ASSERT_TRUE(exchange.reply.has_value());
+    EXPECT_NE(exchange.reply->find("not open"), std::string::npos);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, AComponentThatShadowsACatalogNameIsOfferedOnce) {
+    // arrange a local component named like a builtin widget, which §11.1 resolves before the catalog (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-catalog-shadow";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the base declares its own property, which the builtin Label does not have (§11.1)
+    const std::string text = "component Label {\n    in property<string> tint;\n    Column { @children }\n}\n\ncomponent Panel : Label {\n    Column {\n        Label {\n            tint: \"red\";\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because a saved root follows the file stem rule (§11.1, §14.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the completion asks inside the column and the hover rests on the instance (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> elements = complete_at(server, 11, 8, uri);
+    const std::string described = hover_at(server, 7, 10, uri);
+    // assert the name is offered once, because the local declaration shadows the builtin (§11.1)
+    EXPECT_EQ(std::count(elements.begin(), elements.end(), "Label"), 1);
+    // assert the hover names a component rather than the builtin widget it hides (§11.1, §12.2)
+    EXPECT_EQ(described, "Label component");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, AComponentBodyOffersTheVisibleComponents) {
+    // arrange a panel that imports a component, which its own body may instantiate (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-declaration";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the component the body may name (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the indented empty line is the top level of the component body, where a child may begin (§11.1)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    \n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the cursor sits at the top level of the component body (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> labels = complete_at(server, 3, 4, uri);
+    // assert a declaration keyword is offered, because the body holds declarations (§11.1)
+    EXPECT_NE(std::find(labels.begin(), labels.end(), "signal"), labels.end());
+    // assert the imported component is offered, because the body may instantiate it (§11.1)
+    EXPECT_NE(std::find(labels.begin(), labels.end(), "SidePanel"), labels.end());
+    std::filesystem::remove_all(root, ignored);
+}
+
 namespace
 {
     // ask for the definition at a position, which is what an editor does when a name is activated (§12.2)
@@ -809,6 +1195,30 @@ TEST(LspNavigationChecks, InitializeAdvertisesDefinitionOutlineAndTokens) {
     const core::Json* full = semantic->member("full");
     ASSERT_NE(full, nullptr);
     EXPECT_EQ(full->as_bool(), true);
+}
+
+TEST(LspNavigationChecks, InitializeAdvertisesReferencesAndRename) {
+    // arrange
+    LspServer server;
+    // act
+    const Exchange exchange = server.handle_line(R"({"jsonrpc":"2.0","id":2,"method":"initialize","params":{}})");
+    // assert the handshake answered as a reply, because an editor waits for it (§12.2)
+    ASSERT_TRUE(exchange.reply.has_value());
+    const core::Json reply = core::Json::parse(*exchange.reply).value_or(core::Json());
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* capabilities = result->member("capabilities");
+    ASSERT_NE(capabilities, nullptr);
+    // assert references are offered, because the index resolves every written name (§12.2)
+    const core::Json* references = capabilities->member("referencesProvider");
+    ASSERT_NE(references, nullptr);
+    EXPECT_EQ(references->as_bool(), true);
+    // assert rename is offered with its prepare request, because validation precedes the edit (§12.2)
+    const core::Json* rename = capabilities->member("renameProvider");
+    ASSERT_NE(rename, nullptr);
+    const core::Json* prepare = rename->member("prepareProvider");
+    ASSERT_NE(prepare, nullptr);
+    EXPECT_EQ(prepare->as_bool(), true);
 }
 
 TEST(LspNavigationChecks, DefinitionOnAnElementOpensTheComponentDeclaration) {
@@ -1278,5 +1688,1335 @@ TEST(LspNavigationChecks, AChangeToAnImportedBufferRefreshesTheImporterIndex) {
     const core::Json* character = start->member("character");
     ASSERT_NE(character, nullptr);
     EXPECT_EQ(character->as_number(), static_cast<double>(std::string("component ").size()));
+    std::filesystem::remove_all(root, ignored);
+}
+
+namespace
+{
+    // the manifest fixture, which declares a native component, its data type and a record (§11.2, AD-17)
+    constexpr std::string_view MANIFEST_FIXTURE = R"(
+native component WaveformView {
+    in property<Snapshot<WaveformData>> data;
+    in property<color> line_color: #00FF00;
+    signal selection_changed(float time_pos);
+}
+
+record Task {
+    key: string;
+    title: string;
+    done: bool = false;
+}
+)";
+
+    // the ui fixture, which uses the manifest component and record the way an application does (§11.2, AD-17)
+    constexpr std::string_view MANIFEST_UI = R"(component Panel {
+    in property<Snapshot<WaveformData>> data;
+    inout property<vector<Task>> tasks;
+
+    Column {
+        WaveformView {
+            data: data;
+        }
+
+        Repeat(task in tasks) {
+            Label { text: task.title; }
+        }
+    }
+})";
+} // namespace
+
+TEST(LspManifestChecks, AManifestComponentAndRecordResolveInTheEditor) {
+    // arrange a manifest that declares the component, its data type and the record the file names (§11.2, AD-17)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-clean";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // act the editor supplies the manifest at initialize and opens a file that uses it (§11.2, §12.2)
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    const Exchange exchange = did_open(server, std::string(MANIFEST_UI));
+    // assert the compile resolves the manifest declarations, because that is the build catalog (§11.2, AD-17, §16)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    const core::Json payload = published(exchange);
+    const core::Json* entries = payload.member("diagnostics");
+    ASSERT_NE(entries, nullptr);
+    EXPECT_TRUE(entries->as_array().empty());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, CompletionAndHoverOfferManifestNames) {
+    // arrange a file whose cursor positions name the manifest component, property and signal (§11.2, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-completion";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // the text keeps the manifest names on lines the requests below address (§12.2)
+    const std::string text = "component Panel {\n    in property<Snapshot<WaveformData>> data;\n    Column {\n        WaveformView {\n            line_color: #00FF00;\n            on_selection_changed: { }\n        }\n    }\n}";
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    (void)did_open(server, text);
+    // act the request asks inside the column, after the colon and after the handler prefix (§12.2)
+    const std::vector<std::string> elements = complete_at(server, 3, 8);
+    const std::vector<std::string> properties = complete_at(server, 4, 23);
+    const std::vector<std::string> signals = complete_at(server, 5, 15);
+    // assert the component, its property and its signal are offered by name (§11.2, AD-17)
+    EXPECT_TRUE(std::find(elements.begin(), elements.end(), "WaveformView") != elements.end());
+    EXPECT_TRUE(std::find(properties.begin(), properties.end(), "line_color") != properties.end());
+    EXPECT_TRUE(std::find(signals.begin(), signals.end(), "on_selection_changed") != signals.end());
+    // act the hover requests rest on the component, the property and the signal (§12.2)
+    const std::string component = hover_at(server, 3, 10);
+    const std::string property = hover_at(server, 4, 20);
+    const std::string signal = hover_at(server, 5, 20);
+    // assert each hover carries the manifest name, which is what the editor shows (§11.2, §12.2)
+    EXPECT_NE(component.find("WaveformView"), std::string::npos);
+    EXPECT_NE(property.find("line_color"), std::string::npos);
+    EXPECT_NE(property.find("color"), std::string::npos);
+    EXPECT_NE(signal.find("selection_changed"), std::string::npos);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, AManifestEditRefreshesOpenRootsAndClearsStaleDiagnostics) {
+    // arrange a manifest that declares nothing, so the open file cannot resolve its names yet (§11.2, AD-17)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-reload";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << "";
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    // act the editor opens a file that needs the declarations the empty manifest does not carry (§12.2)
+    const Exchange opened = did_open(server, std::string(MANIFEST_UI));
+    // assert the unresolved names are reported, because the catalog holds no such declaration (§11.2, AD-17)
+    ASSERT_EQ(opened.notifications.size(), 1U);
+    ASSERT_GT(server.last_diagnostic_count(), 0U);
+    // act the manifest gains the declarations and the client reports the saved edit (§11.2, §12.2)
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    const Exchange refreshed = did_change_watched_manifest(server, manifest);
+    // assert the open root is republished clean, which clears the stale unknown-type diagnostics (§12.2, §16)
+    ASSERT_FALSE(refreshed.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    bool cleared = false;
+    for (const Notification& notification : refreshed.notifications) {
+        // a publication names one file, which is what this test routes against the root (§12.2)
+        if (notification.method != "textDocument/publishDiagnostics")
+            continue;
+        // the payload is parsed, because the diagnostics are the answer under test (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        // a publication for another file carries no evidence about the root (§12.2)
+        const core::Json* uri = payload.member("uri");
+        // a payload without a uri names no routed file, so it is skipped (§12.2)
+        if (uri == nullptr || uri->kind() != core::Json::Kind::String || uri->as_string() != "file:///panel.ui")
+            continue;
+        // the root publication is the one this assertion reads (§12.2)
+        cleared = true;
+        // the entries are the squiggles an editor shows, which must now be gone (§16)
+        const core::Json* entries = payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr);
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    EXPECT_TRUE(cleared);
+    // act the declarations are removed again, which is a manifest edit in the other direction (§11.2, §12.2)
+    std::ofstream(manifest) << "";
+    const Exchange broken = did_change_watched_manifest(server, manifest);
+    // assert the root is recompiled against the empty catalog and the unknown names return (§11.2, §16)
+    ASSERT_FALSE(broken.notifications.empty());
+    EXPECT_GT(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, ARelativeManifestResolvesAgainstTheFirstWorkspaceFolder) {
+    // arrange a workspace folder holding the manifest, which a client may name relative to it (§11.2, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-relative";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / "waveform.ui-manifest") << MANIFEST_FIXTURE;
+    // the workspace uri names the folder the relative path resolves against (§12.2)
+    const std::string folder = root.generic_string();
+    const std::string workspace_uri = "file://" + std::string(folder.starts_with('/') ? "" : "/") + folder;
+    // act the client names only the file name, which joins the first workspace folder (§11.2, §12.2)
+    LspServer server;
+    (void)did_initialize(server, {std::filesystem::path("waveform.ui-manifest")}, workspace_uri);
+    const Exchange exchange = did_open(server, std::string(MANIFEST_UI));
+    // assert the resolved manifest supplied the catalog, because the file compiles cleanly (§11.2, AD-17)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, TheServerAgreesWithTheCompilerOnAManifestBackedCorpus) {
+    // this is the suite section 16 defines, run over a corpus that names manifest declarations (§16)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-agreement";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // the corpus covers the names the manifest supplies and the mistakes a reader makes with them (§16)
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"a clean manifest component and record", std::string(MANIFEST_UI)},
+        {"an unknown manifest property", R"(component Panel { Column { WaveformView { nope: 1; } } })"},
+        {"an unknown record field", R"(component Panel { inout property<vector<Task>> tasks; Column { Repeat(task in tasks) { Label { text: task.nope; } } } })"},
+    };
+    for (const auto& [name, text] : cases) {
+        // arrange the editor opens the case with the manifest the build uses (§11.2, §16)
+        LspServer server;
+        (void)did_initialize(server, {manifest});
+        const Exchange exchange = did_open(server, text);
+        // act the compiler is run separately, which is the other side of the comparison (§16)
+        const std::vector<compiler::Diagnostic> expected = compiler_diagnostics(text, {manifest});
+        // assert the server published exactly what the compiler reported (§16)
+        const core::Json published_payload = published(exchange);
+        const core::Json* entries = published_payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr) << name;
+        EXPECT_EQ(entries->as_array().size(), expected.size()) << name;
+        // assert each code matches in order, because a count alone would pass a mismatched set (§16)
+        for (std::size_t index = 0; index < expected.size() && index < entries->as_array().size(); index++) {
+            // the code is what an editor filters by, so it is the stable identity of a diagnostic (§11.1, §16)
+            const core::Json* code = entries->as_array().at(index).member("code");
+            ASSERT_NE(code, nullptr) << name;
+            EXPECT_EQ(code->as_string(), expected.at(index).code) << name;
+        }
+        // assert the server's own counter agrees too, which is what the suite reads (§16)
+        EXPECT_EQ(server.last_diagnostic_count(), expected.size()) << name;
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, AManifestEditRefreshesEveryOpenRoot) {
+    // arrange a manifest and two open roots that both name its component (§11.2, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-every-root";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    const std::string first = R"(component First { Column { WaveformView { line_color: #00FF00; } } })";
+    const std::string second = R"(component Second { Column { WaveformView { line_color: #00FF00; } } })";
+    (void)did_open(server, first, "file:///first.ui");
+    (void)did_open(server, second, "file:///second.ui");
+    // act the manifest loses the component, which leaves both roots unresolved (§11.2, §12.2)
+    std::ofstream(manifest) << "";
+    const Exchange refreshed = did_change_watched_manifest(server, manifest);
+    // assert every open root is republished, not only the last one the store hands out (§12.2, §16)
+    bool first_published = false;
+    bool second_published = false;
+    for (const Notification& notification : refreshed.notifications) {
+        // a publication for another file carries no evidence about either root (§12.2)
+        if (notification.method != "textDocument/publishDiagnostics")
+            continue;
+        // the payload is parsed, because the uri and the diagnostics are what the assertion reads (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        // a payload without a string uri names no routed file, so it is skipped (§12.2)
+        const core::Json* uri = payload.member("uri");
+        // a payload that names no file carries no evidence about a root (§12.2)
+        if (uri == nullptr || uri->kind() != core::Json::Kind::String)
+            continue;
+        // the entries are what the editor paints for that file (§16)
+        const core::Json* entries = payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr);
+        // each root is republished with the unknown name, which is what a refresh must show (§16)
+        if (uri->as_string() == "file:///first.ui") {
+            first_published = true;
+            EXPECT_FALSE(entries->as_array().empty());
+        }
+        // the second root is the one a first-root-only loop would leave stale (§12.2)
+        if (uri->as_string() == "file:///second.ui") {
+            second_published = true;
+            EXPECT_FALSE(entries->as_array().empty());
+        }
+    }
+    EXPECT_TRUE(first_published);
+    EXPECT_TRUE(second_published);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, AWatchedFileOutsideTheManifestListChangesNothing) {
+    // arrange a configured manifest and an open root that resolves through it (§11.2, AD-17)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-unrelated";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // the second manifest is on disk but not configured, so it is not a catalog source (§11.2, AD-17)
+    const std::filesystem::path other = root / "other.ui-manifest";
+    std::ofstream(other) << "native component OtherView {}\n";
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    (void)did_open(server, std::string(MANIFEST_UI));
+    ASSERT_EQ(server.last_diagnostic_count(), 0U);
+    // act the client reports an edit to a manifest that was never configured (§12.2)
+    const Exchange watched = did_change_watched_manifest(server, other);
+    // assert nothing is reloaded or republished, because the catalog did not change (§11.2, §12.2)
+    EXPECT_TRUE(watched.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, ARelativeManifestRefreshesFromAnAbsoluteUri) {
+    // arrange a workspace folder and a relative manifest, which resolve at the handshake (§11.2, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-relative-refresh";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // the workspace uri names the folder the relative path resolves against (§12.2)
+    const std::string folder = root.generic_string();
+    const std::string workspace_uri = "file://" + std::string(folder.starts_with('/') ? "" : "/") + folder;
+    LspServer server;
+    (void)did_initialize(server, {std::filesystem::path("waveform.ui-manifest")}, workspace_uri);
+    (void)did_open(server, std::string(MANIFEST_UI));
+    ASSERT_EQ(server.last_diagnostic_count(), 0U);
+    // act the manifest is emptied and the client reports its absolute file uri (§12.2)
+    std::ofstream(manifest) << "";
+    const Exchange refreshed = did_change_watched_manifest(server, root / "waveform.ui-manifest");
+    // assert the resolved relative path still matches the event, so the root is recompiled (§12.2, §16)
+    ASSERT_FALSE(refreshed.notifications.empty());
+    EXPECT_GT(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, ARecordAndAComponentResolveFromSeparateManifests) {
+    // arrange a component in the first manifest and the record it names in the second (§11.2, AD-17)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-separate";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path component_manifest = root / "component.ui-manifest";
+    std::ofstream(component_manifest) << "native component TaskView {\n    in property<vector<Task>> tasks;\n}\n";
+    const std::filesystem::path record_manifest = root / "record.ui-manifest";
+    std::ofstream(record_manifest) << "record Task {\n    key: string;\n    title: string;\n}\n";
+    // the ui file names the record as its own property and as the component's property (§11.2, AD-17)
+    const std::string text = R"(component Panel { inout property<vector<Task>> tasks; Column { TaskView { tasks: tasks; } } })";
+    // act the editor supplies both manifests, with the record declared in the one listed second (§11.2, AD-17)
+    LspServer server;
+    (void)did_initialize(server, {component_manifest, record_manifest});
+    const Exchange exchange = did_open(server, text);
+    // assert the record resolves before the component's surface is registered, because records join first (§11.2, AD-17)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    // assert the compiler resolves the same pair, because the editor and the build agree (§16)
+    EXPECT_TRUE(compiler_diagnostics(text, {component_manifest, record_manifest}).empty());
+    std::filesystem::remove_all(root, ignored);
+}
+
+namespace
+{
+    // ask for references at a position, which is what an editor does when a person asks where a name is used (§12.2)
+    core::Json references_at(LspServer& server, int line, int character, const std::string& uri, bool include_declaration = true) {
+        // the request names the open document, the cursor and whether the declaration is included (§12.2)
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "},\"context\":{\"includeDeclaration\":" + std::string(include_declaration ? "true" : "false") + "}}}";
+        // the request is handled, which is the whole of the exchange (§12.2)
+        const Exchange exchange = server.handle_line(request);
+        // a reply is always produced for a request (§12.2)
+        EXPECT_TRUE(exchange.reply.has_value());
+        // the reply is parsed, because a test asserts on the locations (§12.2)
+        const std::optional<core::Json> parsed = core::Json::parse(*exchange.reply);
+        // a reply that does not parse is a defect (§12.2)
+        EXPECT_TRUE(parsed.has_value());
+        // the result is a location list or null, which the protocol allows (§12.2)
+        const core::Json* result = parsed->member("result");
+        // a reply with no result reads as null, which the caller asserts on (§12.2)
+        return result == nullptr ? core::Json() : *result;
+    }
+
+    // ask what a rename would replace, which an editor calls before it opens the rename box (§12.2)
+    core::Json prepare_rename_at(LspServer& server, int line, int character, const std::string& uri) {
+        // the request names the open document and the cursor (§12.2)
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"textDocument/prepareRename\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
+        // the request is handled, which is the whole of the exchange (§12.2)
+        const Exchange exchange = server.handle_line(request);
+        // a reply is always produced for a request (§12.2)
+        EXPECT_TRUE(exchange.reply.has_value());
+        // the reply is parsed, because a test asserts on the range (§12.2)
+        const std::optional<core::Json> parsed = core::Json::parse(*exchange.reply);
+        // a reply that does not parse is a defect (§12.2)
+        EXPECT_TRUE(parsed.has_value());
+        // the result is a range and a placeholder or null, which the protocol allows (§12.2)
+        const core::Json* result = parsed->member("result");
+        // a reply with no result reads as null, which the caller asserts on (§12.2)
+        return result == nullptr ? core::Json() : *result;
+    }
+
+    // ask for a rename, which returns the whole reply because a refusal carries an error (§12.2)
+    core::Json rename_reply(LspServer& server, int line, int character, const std::string& new_name, const std::string& uri) {
+        // the request names the open document, the cursor and the name to write (§12.2)
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "},\"newName\":" + core::Json(new_name).to_string() + "}}";
+        // the request is handled, which is the whole of the exchange (§12.2)
+        const Exchange exchange = server.handle_line(request);
+        // a reply is always produced for a request (§12.2)
+        EXPECT_TRUE(exchange.reply.has_value());
+        // the reply is parsed, because a test reads either the edit or the refusal (§12.2)
+        const std::optional<core::Json> parsed = core::Json::parse(*exchange.reply);
+        // a reply that does not parse is a defect (§12.2)
+        EXPECT_TRUE(parsed.has_value());
+        // the whole reply is returned, because a refusal names its reason in an error (§12.2)
+        return parsed.value_or(core::Json());
+    }
+
+    // the zero based line an offset sits on, which the protocol counts from (§12.2)
+    int line_at(const std::string& text, std::size_t offset) {
+        // the newlines before the offset are what the line number counts (§12.2)
+        return static_cast<int>(std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(offset), '\n'));
+    }
+
+    // the zero based column an offset sits on, which the protocol counts from (§12.2)
+    int column_at(const std::string& text, std::size_t offset) {
+        // the last newline before the offset starts the line (§12.2)
+        const std::size_t line_start = text.rfind('\n', offset);
+        // an offset on the first line starts at the document start (§12.2)
+        const std::size_t start = line_start == std::string::npos ? 0 : line_start + 1;
+        // the column is the distance from the line start (§12.2)
+        return static_cast<int>(offset - start);
+    }
+} // namespace
+
+TEST(LspReferenceChecks, ReferencesFindEveryUseInTheFile) {
+    // arrange a property used twice, which is the local shape a references request answers (§12.2)
+    const std::string text = "component Panel {\n    in property<string> title: \"a\";\n    Column {\n        Label { text: title; }\n        Label { text: title; }\n    }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the request starts on the declaration, which is where the name is defined (§12.2)
+    const std::size_t declaration = text.find("title");
+    const core::Json with_declaration = references_at(server, line_at(text, declaration), column_at(text, declaration), uri);
+    // assert the declaration and both reads are answered (§12.2)
+    ASSERT_EQ(with_declaration.kind(), core::Json::Kind::Array);
+    EXPECT_EQ(with_declaration.as_array().size(), 3U);
+    // act the client asks for the uses alone, which is the protocol's other form (§12.2)
+    const core::Json uses_only = references_at(server, line_at(text, declaration), column_at(text, declaration), uri, false);
+    // assert the declaration is left out, because the client said so (§12.2)
+    ASSERT_EQ(uses_only.kind(), core::Json::Kind::Array);
+    EXPECT_EQ(uses_only.as_array().size(), 2U);
+}
+
+TEST(LspReferenceChecks, ReferencesCrossIntoAnImportedFile) {
+    // arrange a side panel that uses its own property, which an importer alone cannot see (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-references-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the assignment, whose declaration lives in the imported file (§12.2)
+    const std::size_t assignment = panel_text.find("title");
+    const core::Json result = references_at(server, line_at(panel_text, assignment), column_at(panel_text, assignment), panel_uri);
+    // assert the declaration, the imported read and the assignment are all answered (§12.2)
+    ASSERT_EQ(result.kind(), core::Json::Kind::Array);
+    ASSERT_EQ(result.as_array().size(), 3U);
+    std::size_t panel_sites = 0;
+    std::size_t side_sites = 0;
+    // each location is counted by the file it sits in, which is what crosses the import graph (§12.2)
+    for (const core::Json& location : result.as_array()) {
+        // the uri names the file the site is written in (§12.2)
+        const core::Json* uri = location.member("uri");
+        ASSERT_NE(uri, nullptr);
+        // the open importer and the imported file are the two files this fixture uses (§12.2)
+        if (uri->as_string() == panel_uri)
+            panel_sites++;
+        // the imported file carries the declaration and its own read (§12.2)
+        if (uri->as_string() == side_uri)
+            side_sites++;
+    }
+    // assert one site is in the open importer and two are in the imported file (§12.2)
+    EXPECT_EQ(panel_sites, 1U);
+    EXPECT_EQ(side_sites, 2U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspReferenceChecks, ReferencesIncludeAnOpenImporter) {
+    // arrange the same pair, both open, which is what a person sees while editing the imported file (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-references-importer";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, side_text, side_uri);
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the imported declaration, which only the importer's graph can see (§12.2)
+    const std::size_t declaration = side_text.find("title");
+    const core::Json result = references_at(server, line_at(side_text, declaration), column_at(side_text, declaration), side_uri);
+    // assert the declaration, the imported read and the importer's assignment are each answered once (§12.2)
+    ASSERT_EQ(result.kind(), core::Json::Kind::Array);
+    EXPECT_EQ(result.as_array().size(), 3U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspReferenceChecks, ReferencesOnABuiltinNameAnswerNothing) {
+    // arrange a builtin property, which the framework declares outside the file (§12.2)
+    const std::string text = "component Panel { Column { Label { text: \"hi\"; } } }";
+    LspServer server;
+    (void)did_open(server, text);
+    // act the request starts on the builtin name (§12.2)
+    const std::size_t builtin = text.find("text");
+    const core::Json result = references_at(server, 0, column_at(text, builtin), "file:///panel.ui");
+    // assert a name with no source declaration has nothing to reference (§12.2)
+    EXPECT_EQ(result.kind(), core::Json::Kind::Null);
+}
+
+TEST(LspRenameChecks, PrepareRenameReturnsTheRangeAndName) {
+    // arrange a property with one read, which are the two places a rename may start from (§12.2)
+    const std::string text = "component Panel {\n    in property<string> title: \"a\";\n    Column { Label { text: title; } }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the request starts on the declaration and then on the read (§12.2)
+    const std::size_t declaration = text.find("title");
+    const std::size_t use = text.find("title", declaration + 1);
+    const core::Json on_declaration = prepare_rename_at(server, line_at(text, declaration), column_at(text, declaration), uri);
+    const core::Json on_use = prepare_rename_at(server, line_at(text, use), column_at(text, use), uri);
+    // assert both name the property, which is what the rename box prefills (§12.2)
+    ASSERT_EQ(on_declaration.kind(), core::Json::Kind::Object);
+    ASSERT_EQ(on_use.kind(), core::Json::Kind::Object);
+    const core::Json* declaration_name = on_declaration.member("placeholder");
+    const core::Json* use_name = on_use.member("placeholder");
+    ASSERT_NE(declaration_name, nullptr);
+    ASSERT_NE(use_name, nullptr);
+    EXPECT_EQ(declaration_name->as_string(), "title");
+    EXPECT_EQ(use_name->as_string(), "title");
+    // assert each range starts where the cursor names the token (§12.2)
+    const core::Json* declaration_range = on_declaration.member("range");
+    const core::Json* use_range = on_use.member("range");
+    ASSERT_NE(declaration_range, nullptr);
+    ASSERT_NE(use_range, nullptr);
+    const core::Json* declaration_start = declaration_range->member("start");
+    const core::Json* use_start = use_range->member("start");
+    ASSERT_NE(declaration_start, nullptr);
+    ASSERT_NE(use_start, nullptr);
+    EXPECT_EQ(static_cast<int>(declaration_start->member("line")->as_number()), line_at(text, declaration));
+    EXPECT_EQ(static_cast<int>(use_start->member("line")->as_number()), line_at(text, use));
+}
+
+TEST(LspRenameChecks, RenameALocalPropertyRewritesDeclarationAndUses) {
+    // arrange a property with one read, which the rename must move together (§12.2)
+    const std::string text = "component Panel {\n    in property<string> title: \"a\";\n    Column { Label { text: title; } }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the request starts on the read and writes the new name (§12.2)
+    const std::size_t declaration = text.find("title");
+    const std::size_t use = text.find("title", declaration + 1);
+    const core::Json reply = rename_reply(server, line_at(text, use), column_at(text, use), "caption", uri);
+    // assert the edit was produced and names one document (§12.2)
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* changes = result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 1U);
+    const auto found = changes->as_object().find(uri);
+    ASSERT_NE(found, changes->as_object().end());
+    // assert the declaration and the read are both rewritten (§12.2)
+    ASSERT_EQ(found->second.as_array().size(), 2U);
+    // each edit writes the same name, because one declaration is renamed (§12.2)
+    for (const core::Json& edit : found->second.as_array()) {
+        // the text is what the editor writes in the range (§12.2)
+        const core::Json* new_text = edit.member("newText");
+        ASSERT_NE(new_text, nullptr);
+        EXPECT_EQ(new_text->as_string(), "caption");
+    }
+    // assert the first edit is the declaration, because the reply is sorted by position (§12.2)
+    const core::Json* first_range = found->second.as_array().at(0).member("range");
+    ASSERT_NE(first_range, nullptr);
+    EXPECT_EQ(static_cast<int>(first_range->member("start")->member("line")->as_number()), line_at(text, declaration));
+}
+
+TEST(LspRenameChecks, RenameAnImportedPropertyRewritesBothFiles) {
+    // arrange a side panel whose property the importer assigns, which the rename must move together (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-rename-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the importer's assignment (§12.2)
+    const std::size_t assignment = panel_text.find("title");
+    const core::Json reply = rename_reply(server, line_at(panel_text, assignment), column_at(panel_text, assignment), "caption", panel_uri);
+    // assert one workspace edit names both files, because the declaration lives in the import (§12.2)
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* changes = result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 2U);
+    const auto panel_changes = changes->as_object().find(panel_uri);
+    const auto side_changes = changes->as_object().find(side_uri);
+    ASSERT_NE(panel_changes, changes->as_object().end());
+    ASSERT_NE(side_changes, changes->as_object().end());
+    // assert the closed import is edited at its declaration and its own read (§12.2)
+    ASSERT_EQ(side_changes->second.as_array().size(), 2U);
+    // assert the importer is edited at its assignment (§12.2)
+    ASSERT_EQ(panel_changes->second.as_array().size(), 1U);
+    // each imported edit writes the same new name (§12.2)
+    for (const core::Json& edit : side_changes->second.as_array()) {
+        // the text is what the editor writes in the imported file (§12.2)
+        const core::Json* new_text = edit.member("newText");
+        ASSERT_NE(new_text, nullptr);
+        EXPECT_EQ(new_text->as_string(), "caption");
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspRenameChecks, RenameASignalKeepsTheHandlerPrefix) {
+    // arrange a side panel that raises a signal the importer attaches to and the component invokes (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-rename-signal";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    signal closed();\n    Column {\n        Button { on_clicked: { closed(); } }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { on_closed: { } }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the handler, which spells the signal with its prefix (§11.1)
+    const std::size_t handler = panel_text.find("on_closed");
+    const core::Json prepared = prepare_rename_at(server, line_at(panel_text, handler), column_at(panel_text, handler), panel_uri);
+    // assert the rename box prefills the bare signal name, because the prefix is not part of it (§11.1)
+    ASSERT_EQ(prepared.kind(), core::Json::Kind::Object);
+    ASSERT_NE(prepared.member("placeholder"), nullptr);
+    EXPECT_EQ(prepared.member("placeholder")->as_string(), "closed");
+    // act the rename writes the bare signal name, which every handler spells with its prefix (§11.1)
+    const core::Json reply = rename_reply(server, line_at(panel_text, handler), column_at(panel_text, handler), "dismissed", panel_uri);
+    // assert the handler keeps its prefix and the declaration and invocation take the bare name (§11.1)
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* changes = result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    const auto panel_changes = changes->as_object().find(panel_uri);
+    const auto side_changes = changes->as_object().find(side_uri);
+    ASSERT_NE(panel_changes, changes->as_object().end());
+    ASSERT_NE(side_changes, changes->as_object().end());
+    ASSERT_EQ(panel_changes->second.as_array().size(), 1U);
+    EXPECT_EQ(panel_changes->second.as_array().at(0).member("newText")->as_string(), "on_dismissed");
+    ASSERT_EQ(side_changes->second.as_array().size(), 2U);
+    // every imported edit writes the bare signal name, which the prefix is added to at the handler (§11.1)
+    for (const core::Json& edit : side_changes->second.as_array()) {
+        // the text is what the editor writes in the imported file (§12.2)
+        const core::Json* new_text = edit.member("newText");
+        ASSERT_NE(new_text, nullptr);
+        EXPECT_EQ(new_text->as_string(), "dismissed");
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspRenameChecks, RenameABaseComponentRewritesTheBaseAndInstances) {
+    // arrange a base used by a base clause and an instance, which are both written names (§11.1)
+    const std::string text = "component Holder {\n    in property<string> caption;\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        Holder { caption: \"x\"; }\n    }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the request starts on the base clause, which is the added form (§11.1)
+    const std::size_t declaration = text.find("Holder");
+    const std::size_t base = text.find("Holder", declaration + 1);
+    const core::Json references = references_at(server, line_at(text, base), column_at(text, base), uri);
+    // assert the declaration, the base clause and the instance are all answered (§12.2)
+    ASSERT_EQ(references.kind(), core::Json::Kind::Array);
+    EXPECT_EQ(references.as_array().size(), 3U);
+    // act the rename moves the base and its instance together (§11.1)
+    const core::Json reply = rename_reply(server, line_at(text, base), column_at(text, base), "Section", uri);
+    // assert every site is rewritten, because a component name is one declaration (§11.1)
+    const core::Json* result = reply.member("result");
+    ASSERT_NE(result, nullptr);
+    const core::Json* changes = result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    const auto found = changes->as_object().find(uri);
+    ASSERT_NE(found, changes->as_object().end());
+    ASSERT_EQ(found->second.as_array().size(), 3U);
+    // each edit writes the new component name (§12.2)
+    for (const core::Json& edit : found->second.as_array()) {
+        // the text is what the editor writes in the range (§12.2)
+        const core::Json* new_text = edit.member("newText");
+        ASSERT_NE(new_text, nullptr);
+        EXPECT_EQ(new_text->as_string(), "Section");
+    }
+}
+
+TEST(LspRenameChecks, RenameRefusesTheExportedComponent) {
+    // arrange a saved root whose component is named after its file, which the build depends on (§11.1, §14.2)
+    const std::string text = "component Panel { Column {} }";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the editor asks to prepare a rename on the exported name (§12.2)
+    const std::size_t name = text.find("Panel");
+    const core::Json prepared = prepare_rename_at(server, 0, column_at(text, name), uri);
+    // assert the prepare request answers nothing, because renaming it would need the file renamed too (§11.1, §14.2)
+    EXPECT_EQ(prepared.kind(), core::Json::Kind::Null);
+    // act the client asks anyway, which the server refuses with its reason (§12.2)
+    const core::Json reply = rename_reply(server, 0, column_at(text, name), "Dialog", uri);
+    // assert the refusal names the file-stem rule (§11.1, §14.2)
+    const core::Json* error = reply.member("error");
+    ASSERT_NE(error, nullptr);
+    const core::Json* message = error->member("message");
+    ASSERT_NE(message, nullptr);
+    EXPECT_NE(message->as_string().find("named after its file"), std::string::npos);
+}
+
+TEST(LspRenameChecks, RenameRefusesABuiltinOrAnIdentity) {
+    // arrange a builtin property and an author id, which are the two names with no source declaration (§12.2, AD-11)
+    const std::string text = "component Panel {\n    Column {\n        Label { id: action; text: \"hi\"; }\n    }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the editor asks to prepare a rename on the builtin and on the identity (§12.2)
+    const std::size_t builtin = text.find("text");
+    const std::size_t identity = text.find("action");
+    const core::Json builtin_prepared = prepare_rename_at(server, line_at(text, builtin), column_at(text, builtin), uri);
+    const core::Json identity_prepared = prepare_rename_at(server, line_at(text, identity), column_at(text, identity), uri);
+    // assert neither name is a rename target, because neither is a source declaration (§12.2, AD-11)
+    EXPECT_EQ(builtin_prepared.kind(), core::Json::Kind::Null);
+    EXPECT_EQ(identity_prepared.kind(), core::Json::Kind::Null);
+    // act the client asks for the identity anyway, which must not become an implicit-key rename (§12.2, AD-11)
+    const core::Json reply = rename_reply(server, line_at(text, identity), column_at(text, identity), "other", uri);
+    // assert the refusal states that no declaration was named (§12.2)
+    const core::Json* error = reply.member("error");
+    ASSERT_NE(error, nullptr);
+    const core::Json* message = error->member("message");
+    ASSERT_NE(message, nullptr);
+    EXPECT_NE(message->as_string().find("no renameable declaration"), std::string::npos);
+}
+
+TEST(LspRenameChecks, RenameRefusesAnAmbiguousDeclaration) {
+    // arrange a property declared twice, which the compiler reports and no use can disambiguate (§11.1)
+    const std::string text = "component Panel {\n    in property<string> title: \"a\";\n    in property<string> title: \"b\";\n    Column {}\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the editor asks to prepare a rename on the first declaration (§12.2)
+    const std::size_t first = text.find("title");
+    const core::Json prepared = prepare_rename_at(server, line_at(text, first), column_at(text, first), uri);
+    // assert an ambiguous name prepares nothing, because one spelling resolves once (§11.1)
+    EXPECT_EQ(prepared.kind(), core::Json::Kind::Null);
+    // act the client asks anyway, which the server refuses rather than editing the first (§12.2)
+    const core::Json reply = rename_reply(server, line_at(text, first), column_at(text, first), "caption", uri);
+    // assert the refusal says the name is ambiguous (§11.1)
+    const core::Json* error = reply.member("error");
+    ASSERT_NE(error, nullptr);
+    const core::Json* message = error->member("message");
+    ASSERT_NE(message, nullptr);
+    EXPECT_NE(message->as_string().find("ambiguous"), std::string::npos);
+}
+
+TEST(LspRenameChecks, RenameRefusesACollidingName) {
+    // arrange a component with a second property and the common property set (§11.1, §8.2)
+    const std::string text = "component Panel {\n    in property<string> title;\n    in property<string> subtitle;\n    Column {}\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the rename targets another declared member, which would duplicate a slot (§11.1)
+    const std::size_t title = text.find("title");
+    const core::Json member = rename_reply(server, line_at(text, title), column_at(text, title), "subtitle", uri);
+    // assert the collision is refused rather than silently declaring two members (§11.1)
+    const core::Json* member_error = member.member("error");
+    ASSERT_NE(member_error, nullptr);
+    EXPECT_NE(member_error->member("message")->as_string().find("already a member"), std::string::npos);
+    // act the rename targets a common property, which the declaration would shadow (§11.1, §8.2)
+    const core::Json common = rename_reply(server, line_at(text, title), column_at(text, title), "tooltip", uri);
+    // assert the shadowing collision is refused too, because an existing spelling would resolve differently (§11.1)
+    const core::Json* common_error = common.member("error");
+    ASSERT_NE(common_error, nullptr);
+    EXPECT_NE(common_error->member("message")->as_string().find("common element property"), std::string::npos);
+}
+
+TEST(LspReferenceChecks, ASharedNameInAnotherDocumentIsNotAReference) {
+    // arrange two open documents that declare the same property name, which is not the same declaration (§12.2)
+    const std::string left_text = "component Left { in property<string> title; Column { Label { text: title; } } }";
+    const std::string right_text = "component Right { in property<string> title; Column { Label { text: title; } } }";
+    const std::string left_uri = "file:///left.ui";
+    const std::string right_uri = "file:///right.ui";
+    LspServer server;
+    (void)did_open(server, left_text, left_uri);
+    (void)did_open(server, right_text, right_uri);
+    // act the request starts on the left declaration, whose name is spelled the same in the right document (§12.2)
+    const std::size_t declaration = left_text.find("title");
+    const core::Json result = references_at(server, line_at(left_text, declaration), column_at(left_text, declaration), left_uri);
+    // assert the declaration and the left read are answered, and the right document is untouched (§12.2)
+    ASSERT_EQ(result.kind(), core::Json::Kind::Array);
+    ASSERT_EQ(result.as_array().size(), 2U);
+    // every location is in the document the request named, because a name alone is not identity (§12.2)
+    for (const core::Json& location : result.as_array()) {
+        // the uri names the file the site is written in (§12.2)
+        const core::Json* uri = location.member("uri");
+        ASSERT_NE(uri, nullptr);
+        EXPECT_EQ(uri->as_string(), left_uri);
+    }
+    // act the rename writes the left declaration only (§12.2)
+    const core::Json reply = rename_reply(server, line_at(left_text, declaration), column_at(left_text, declaration), "caption", left_uri);
+    // assert one document is edited, because the right one declares a different symbol (§12.2)
+    const core::Json* reply_result = reply.member("result");
+    ASSERT_NE(reply_result, nullptr);
+    const core::Json* changes = reply_result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 1U);
+    EXPECT_NE(changes->as_object().find(left_uri), changes->as_object().end());
+    EXPECT_EQ(changes->as_object().find(right_uri), changes->as_object().end());
+}
+
+TEST(LspReferenceChecks, AnUntitledBufferIsAnsweredUnderItsOwnUri) {
+    // arrange a side panel shared by a saved root and an untitled buffer, which both assign the same property (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-reference-untitled";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    // the untitled buffer imports the saved file by its absolute path, which is the only way it can share it (§11.1)
+    const std::string side_import = (root / "side_panel.ui").generic_string();
+    const std::string untitled_text = "import \"" + side_import + "\";\n\ncomponent Notes {\n    Column {\n        SidePanel { title: \"n\"; }\n    }\n}\n";
+    // the saved files are addressed by their file uris, which an editor routes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    // the untitled buffer has no path, so its editor uri is its whole identity (§12.2)
+    const std::string untitled_uri = "untitled:notes.ui";
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    (void)did_open(server, untitled_text, untitled_uri);
+    // act the request starts on the saved root's assignment, which is one of three uses of the property (§12.2)
+    const std::size_t assignment = panel_text.find("title");
+    const core::Json result = references_at(server, line_at(panel_text, assignment), column_at(panel_text, assignment), panel_uri);
+    // assert the declaration, the imported read and both assignments are each answered once (§12.2)
+    ASSERT_EQ(result.kind(), core::Json::Kind::Array);
+    ASSERT_EQ(result.as_array().size(), 4U);
+    std::size_t panel_sites = 0;
+    std::size_t side_sites = 0;
+    std::size_t untitled_sites = 0;
+    // each location belongs to the file it was written in, because a range is meaningless in another buffer (§12.2)
+    for (const core::Json& location : result.as_array()) {
+        // the uri names the file the site is written in (§12.2)
+        const core::Json* uri = location.member("uri");
+        ASSERT_NE(uri, nullptr);
+        // the three files are counted separately, because mixing them would put a range in the wrong document (§12.2)
+        if (uri->as_string() == panel_uri)
+            panel_sites++;
+        // the imported file carries the declaration and its own read (§12.2)
+        if (uri->as_string() == side_uri)
+            side_sites++;
+        // the untitled buffer carries its own assignment, which must keep its own uri (§12.2)
+        if (uri->as_string() == untitled_uri)
+            untitled_sites++;
+    }
+    // assert the untitled site is never reported under the asking document's uri (§12.2)
+    EXPECT_EQ(panel_sites, 1U);
+    EXPECT_EQ(side_sites, 2U);
+    EXPECT_EQ(untitled_sites, 1U);
+    // act the rename writes each file under its own uri, including the untitled buffer (§12.2)
+    const core::Json reply = rename_reply(server, line_at(panel_text, assignment), column_at(panel_text, assignment), "caption", panel_uri);
+    // assert three documents are edited, because three files write the property (§12.2)
+    const core::Json* reply_result = reply.member("result");
+    ASSERT_NE(reply_result, nullptr);
+    const core::Json* changes = reply_result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 3U);
+    const auto untitled_changes = changes->as_object().find(untitled_uri);
+    ASSERT_NE(untitled_changes, changes->as_object().end());
+    // assert the untitled buffer is edited once, in its own coordinates (§12.2)
+    EXPECT_EQ(untitled_changes->second.as_array().size(), 1U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspRenameChecks, RenameAnOpenImportedPropertyKeysItsOpenUri) {
+    // arrange the imported file open beside its importer, which is what a person sees while editing both (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-rename-open-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string side_text = "component SidePanel {\n    in property<string> title;\n    Column {\n        Label { text: title; }\n    }\n}\n";
+    std::ofstream(root / "side_panel.ui") << side_text;
+    const std::string panel_text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel { title: \"x\"; }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << panel_text;
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string side_path = (root / "side_panel.ui").generic_string();
+    const std::string side_uri = "file://" + std::string(side_path.starts_with('/') ? "" : "/") + side_path;
+    LspServer server;
+    (void)did_open(server, side_text, side_uri);
+    (void)did_open(server, panel_text, panel_uri);
+    // act the request starts on the importer's assignment (§12.2)
+    const std::size_t assignment = panel_text.find("title");
+    const core::Json reply = rename_reply(server, line_at(panel_text, assignment), column_at(panel_text, assignment), "caption", panel_uri);
+    // assert the imported file is keyed by the uri the editor opened, not a file uri beside it (§12.2)
+    const core::Json* reply_result = reply.member("result");
+    ASSERT_NE(reply_result, nullptr);
+    const core::Json* changes = reply_result->member("changes");
+    ASSERT_NE(changes, nullptr);
+    ASSERT_EQ(changes->as_object().size(), 2U);
+    EXPECT_NE(changes->as_object().find(side_uri), changes->as_object().end());
+    EXPECT_NE(changes->as_object().find(panel_uri), changes->as_object().end());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspRenameChecks, RenameRefusesADeclarationOutsideTheSymbolSet) {
+    // arrange a global, a function parameter and a repeat item, which name values rather than component members (§11.1)
+    const std::string text = "global limit: int = 3;\nfn clamp(value: int): int { return value; }\ncomponent Panel {\n    in property<vector<string>> rows: [\"a\"];\n    Column {\n        Repeat(row in rows) {\n            Label { text: row; }\n        }\n    }\n}\n";
+    const std::string uri = "file:///panel.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the editor asks to prepare a rename on each name, which none of them declares a renameable surface (§12.2)
+    const std::size_t global = text.find("limit");
+    const std::size_t parameter = text.find("value");
+    const std::size_t parameter_read = text.find("value", parameter + 1);
+    const std::size_t repeat = text.find("Repeat(");
+    const std::size_t item = text.find("row", repeat);
+    const std::size_t item_read = text.find("row", text.find("Label", item));
+    // assert a value declaration and a binding never open a rename box, because only component symbols do (§12.2)
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, global), column_at(text, global), uri).kind(), core::Json::Kind::Null);
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, parameter), column_at(text, parameter), uri).kind(), core::Json::Kind::Null);
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, parameter_read), column_at(text, parameter_read), uri).kind(), core::Json::Kind::Null);
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, item), column_at(text, item), uri).kind(), core::Json::Kind::Null);
+    EXPECT_EQ(prepare_rename_at(server, line_at(text, item_read), column_at(text, item_read), uri).kind(), core::Json::Kind::Null);
+    // act the client asks to rename the repeat read, which has no declaration the feature edits (§12.2)
+    const core::Json reply = rename_reply(server, line_at(text, item_read), column_at(text, item_read), "entry", uri);
+    // assert the refusal is stated rather than producing an edit (§12.2)
+    const core::Json* error = reply.member("error");
+    ASSERT_NE(error, nullptr);
+    EXPECT_NE(error->member("message")->as_string().find("no renameable declaration"), std::string::npos);
+}
+
+TEST(LspRenameChecks, RenameRefusesACatalogTypeOrADeclaredComponent) {
+    // arrange a base beside its export, which are the two names a component rename could collide with (§11.1)
+    const std::string text = "component Holder {\n    Column { @children }\n}\n\ncomponent Dashboard : Holder {\n    Column {}\n}\n";
+    const std::string uri = "file:///dashboard.ui";
+    LspServer server;
+    (void)did_open(server, text, uri);
+    // act the rename targets a catalog type, which a declared name would shadow (§11.1)
+    const std::size_t holder = text.find("Holder");
+    const core::Json catalog = rename_reply(server, line_at(text, holder), column_at(text, holder), "Column", uri);
+    // assert the shadowing collision is refused before an edit is produced (§11.1)
+    const core::Json* catalog_error = catalog.member("error");
+    ASSERT_NE(catalog_error, nullptr);
+    EXPECT_NE(catalog_error->member("message")->as_string().find("builtin or manifest type"), std::string::npos);
+    // act the rename targets the file's other component, which would declare one name twice (§11.1)
+    const core::Json declared = rename_reply(server, line_at(text, holder), column_at(text, holder), "Dashboard", uri);
+    // assert the duplicate declaration is refused too (§11.1)
+    const core::Json* declared_error = declared.member("error");
+    ASSERT_NE(declared_error, nullptr);
+    EXPECT_NE(declared_error->member("message")->as_string().find("already declared in this file"), std::string::npos);
+}
+
+TEST(LspImportRefreshChecks, SavingAnImportedBufferRecompilesTheOpenRoot) {
+    // arrange a window that imports a saved panel, with both buffers open in the editor (§11.1, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-save-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the panel declares one property a window sets, which is what the import carries (§11.1)
+    const std::string panel_text = R"(component Panel { in property<string> label_text: "Panel"; Column { Label { text: label_text; } } })";
+    std::ofstream(root / "panel.ui") << panel_text;
+    // the window imports the panel and assigns its property, which is the cross-file form (§11.1)
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel { label_text: "Shared"; } } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, window_text, window_uri);
+    (void)did_open(server, panel_text, panel_uri);
+    // act the panel is saved, which must recompile the window that imports it (§11.1, §12.2)
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":)") + core::Json(panel_uri).to_string() + "}}}";
+    const Exchange saved = server.handle_line(line);
+    // assert the saved panel and the importing window are both republished (§12.2, §11.1)
+    bool saved_panel = false;
+    bool refreshed_window = false;
+    for (const Notification& notification : saved.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        // a payload without a string uri names no routed file, so it is skipped (§12.2)
+        if (uri == nullptr || uri->kind() != core::Json::Kind::String)
+            continue;
+        // the saved document is republished as its own root, because the editor still holds its buffer (§12.2)
+        if (uri->as_string() == panel_uri)
+            saved_panel = true;
+        // the importer is republished too, which is what the save notification has to trigger (§11.1, §12.2)
+        if (uri->as_string() == window_uri) {
+            refreshed_window = true;
+            // the window is clean, so its publication clears every squiggle it had (§16)
+            const core::Json* entries = payload.member("diagnostics");
+            ASSERT_NE(entries, nullptr);
+            EXPECT_TRUE(entries->as_array().empty());
+        }
+    }
+    EXPECT_TRUE(saved_panel);
+    EXPECT_TRUE(refreshed_window);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, AChangedWatchedImportRefreshesTheOpenRoot) {
+    // arrange a window that imports a saved panel, with both files clean on disk (§11.1, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-change";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::string panel_text = R"(component Panel { Column {} })";
+    std::ofstream(root / "panel.ui") << panel_text;
+    // the window imports the panel and instantiates it, which is the cross-file form (§11.1)
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, window_text, window_uri);
+    // act the panel changes on disk, which the client reports as a changed watched file (§11.1, §12.2)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":2}]}})";
+    const Exchange changed = server.handle_line(line);
+    // assert the imported file is republished with the unknown widget it now declares (§16)
+    bool saw_broken_panel = false;
+    for (const Notification& notification : changed.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the import (§12.2)
+        if (uri == nullptr || entries == nullptr || uri->as_string() != panel_uri)
+            continue;
+        saw_broken_panel = true;
+        EXPECT_FALSE(entries->as_array().empty());
+    }
+    EXPECT_TRUE(saw_broken_panel);
+    // act the panel is fixed on disk and reported again, which must clear the stale publication (§12.2, §16)
+    std::ofstream(root / "panel.ui") << panel_text;
+    const Exchange restored = server.handle_line(line);
+    // assert the imported file now carries an empty publication, which clears the old squiggle (§12.2, §16)
+    bool saw_clean_panel = false;
+    for (const Notification& notification : restored.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the import (§12.2)
+        if (uri == nullptr || entries == nullptr || uri->as_string() != panel_uri)
+            continue;
+        saw_clean_panel = true;
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    EXPECT_TRUE(saw_clean_panel);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, AnUnsavedImportedBufferWinsOverTheDiskOnAWatchedChange) {
+    // arrange a broken panel on disk and a clean panel buffer, which is what an editor holds before saving (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-buffer";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the disk copy names an unknown widget, which would fail if the server read it (§16)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string panel_text = R"(component Panel { Column {} })";
+    // the window imports the panel and instantiates it, which reads the open buffer (§11.1, §12.2)
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    (void)did_open(server, window_text, window_uri);
+    ASSERT_EQ(server.last_diagnostic_count(), 0U);
+    // act the disk copy is reported as changed, which must not replace the unsaved buffer (§12.2)
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":2}]}})";
+    const Exchange changed = server.handle_line(line);
+    // assert the root is republished clean, because the buffer still wins over the disk (§12.2)
+    ASSERT_FALSE(changed.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    for (const Notification& notification : changed.notifications) {
+        // the payload is parsed, because the diagnostics are what this assertion reads (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* entries = payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr);
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, ACreatedWatchedImportRefreshesTheRootThatNamedIt) {
+    // arrange a window that imports a panel which does not exist yet (§11.1, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-create";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    LspServer server;
+    const Exchange opened = did_open(server, window_text, window_uri);
+    // assert the missing import is the window's only diagnostic (§11.1, §16)
+    ASSERT_EQ(opened.notifications.size(), 1U);
+    const core::Json opened_payload = core::Json::parse(opened.notifications.at(0).payload).value_or(core::Json());
+    const core::Json* opened_entries = opened_payload.member("diagnostics");
+    ASSERT_NE(opened_entries, nullptr);
+    EXPECT_FALSE(opened_entries->as_array().empty());
+    // act the panel is created on disk, which the client reports as a created watched file (§11.1, §12.2)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column {} })";
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":1}]}})";
+    const Exchange created = server.handle_line(line);
+    // assert the root is republished clean, because the import now resolves (§11.1, §16)
+    ASSERT_FALSE(created.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    bool saw_clean_window = false;
+    for (const Notification& notification : created.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the root (§12.2)
+        if (uri == nullptr || entries == nullptr || uri->as_string() != window_uri)
+            continue;
+        saw_clean_window = true;
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    EXPECT_TRUE(saw_clean_window);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, ADeletedWatchedImportRefreshesTheRootAndClearsItsOwnDiagnostics) {
+    // arrange a window that imports a broken saved panel, which publishes the panel's diagnostic (§16)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-delete";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the panel is broken, which is what the window's first compile reads (§11.1, §16)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    const Exchange opened = did_open(server, window_text, window_uri);
+    // assert the panel diagnostic was published against the imported file (§16)
+    ASSERT_EQ(opened.notifications.size(), 2U);
+    // act the panel is deleted on disk, which the client reports as a deleted watched file (§11.1, §12.2)
+    std::error_code removed;
+    std::filesystem::remove(root / "panel.ui", removed);
+    ASSERT_FALSE(removed);
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":3}]}})";
+    const Exchange deleted = server.handle_line(line);
+    // assert the root now carries the missing import, because the file can no longer be read (§11.1, §16)
+    bool saw_broken_window = false;
+    bool saw_cleared_panel = false;
+    for (const Notification& notification : deleted.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the deletion (§12.2)
+        if (uri == nullptr || entries == nullptr)
+            continue;
+        // the importer is republished with the missing import, which is the new problem (§11.1, §16)
+        if (uri->as_string() == window_uri) {
+            saw_broken_window = true;
+            EXPECT_FALSE(entries->as_array().empty());
+        }
+        // the deleted file's own publication is cleared, because no root still diagnoses it (§12.2, §16)
+        if (uri->as_string() == panel_uri) {
+            saw_cleared_panel = true;
+            EXPECT_TRUE(entries->as_array().empty());
+        }
+    }
+    EXPECT_TRUE(saw_broken_window);
+    EXPECT_TRUE(saw_cleared_panel);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, AWatchedFileNoRootReadsChangesNothing) {
+    // arrange an open root that imports no file, so no path is a reverse edge for it (§11.1, §12.2)
+    LspServer server;
+    (void)did_open(server, R"(component Panel { Column {} })");
+    // act the client reports a change to a ui file no root imported (§12.2)
+    const std::string line = R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":"file:///unrelated.ui","type":2}]}})";
+    const Exchange watched = server.handle_line(line);
+    // assert nothing is republished, because no root read the changed path (§12.2)
+    EXPECT_TRUE(watched.notifications.empty());
+}
+
+TEST(LspImportRefreshChecks, SavingKeepsTheEditorBufferAuthoritativeOverTheDiskAndTheSaveText) {
+    // arrange a panel that is clean in the editor and broken on disk, with a window that imports it (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-save-buffer";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the disk copy is broken, which a server that reads it instead of the buffer would publish (§12.2, §16)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string panel_text = R"(component Panel { Column {} })";
+    // the window imports the panel and instantiates it, which is the cross-file form (§11.1)
+    const std::string window_text = R"(import "panel.ui"; component Window { Column { Panel {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, panel_text, panel_uri);
+    (void)did_open(server, window_text, window_uri);
+    ASSERT_EQ(server.last_diagnostic_count(), 0U);
+    // act the panel is saved with a broken text member, which the server must not adopt (§12.2)
+    const std::string text = core::Json(std::string(R"(component Panel { Column { Nope {} } })")).to_string();
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":)") + core::Json(panel_uri).to_string() + R"(},"text":)" + text + "}}";
+    const Exchange saved = server.handle_line(line);
+    // assert the buffer still wins, so no publication carries a diagnostic (§12.2, §16)
+    ASSERT_FALSE(saved.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    EXPECT_EQ(server.document_count(), 2U);
+    for (const Notification& notification : saved.notifications) {
+        // the payload is parsed, because the diagnostics are what this assertion reads (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* entries = payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr);
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, AWatchedImportChangeRepublishesEachOpenRootOnce) {
+    // arrange two windows that import the same clean panel, with both windows open (§11.1, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-two-roots";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column {} })";
+    // each window imports the panel and instantiates it, so both windows read the one path (§11.1)
+    const std::string left_text = R"(import "panel.ui"; component Left { Column { Panel {} } })";
+    std::ofstream(root / "left.ui") << left_text;
+    const std::string right_text = R"(import "panel.ui"; component Right { Column { Panel {} } })";
+    std::ofstream(root / "right.ui") << right_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string panel_path = (root / "panel.ui").generic_string();
+    const std::string panel_uri = "file://" + std::string(panel_path.starts_with('/') ? "" : "/") + panel_path;
+    const std::string left_path = (root / "left.ui").generic_string();
+    const std::string left_uri = "file://" + std::string(left_path.starts_with('/') ? "" : "/") + left_path;
+    const std::string right_path = (root / "right.ui").generic_string();
+    const std::string right_uri = "file://" + std::string(right_path.starts_with('/') ? "" : "/") + right_path;
+    LspServer server;
+    (void)did_open(server, left_text, left_uri);
+    (void)did_open(server, right_text, right_uri);
+    // act the panel breaks on disk, which both open windows read through the import (§11.1, §12.2)
+    std::ofstream(root / "panel.ui") << R"(component Panel { Column { Nope {} } })";
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(panel_uri).to_string() + R"(,"type":2}]}})";
+    const Exchange changed = server.handle_line(line);
+    // assert each root is republished once, because the set a notification invalidates is deduped (§12.2)
+    std::size_t left_count = 0;
+    std::size_t right_count = 0;
+    bool saw_broken_panel = false;
+    for (const Notification& notification : changed.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the import (§12.2)
+        if (uri == nullptr || entries == nullptr)
+            continue;
+        // each importer is counted, because one compile per root is what the dedupe guarantees (§12.2)
+        if (uri->as_string() == left_uri)
+            left_count++;
+        else if (uri->as_string() == right_uri)
+            right_count++;
+        // the broken import is published at least once, because it is what the recompile found (§16)
+        if (uri->as_string() == panel_uri && !entries->as_array().empty())
+            saw_broken_panel = true;
+    }
+    EXPECT_EQ(left_count, 1U);
+    EXPECT_EQ(right_count, 1U);
+    EXPECT_TRUE(saw_broken_panel);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspImportRefreshChecks, ATransitiveImportChangeRefreshesTheRootThatReadIt) {
+    // arrange a window whose import reads a second import, with all three files open on disk (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-watch-transitive";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / "b.ui") << R"(component B { Column {} })";
+    // a.ui imports b.ui, which the window never names directly (§11.1)
+    std::ofstream(root / "a.ui") << R"(import "b.ui"; component A { Column { B {} } })";
+    // the window imports a.ui, so b.ui is a dependency only through the loader's graph (§11.1)
+    const std::string window_text = R"(import "a.ui"; component Window { Column { A {} } })";
+    std::ofstream(root / "window.ui") << window_text;
+    // the uri carries a leading slash before a windows drive, which is what the server decodes (§12.2)
+    const std::string b_path = (root / "b.ui").generic_string();
+    const std::string b_uri = "file://" + std::string(b_path.starts_with('/') ? "" : "/") + b_path;
+    const std::string window_path = (root / "window.ui").generic_string();
+    const std::string window_uri = "file://" + std::string(window_path.starts_with('/') ? "" : "/") + window_path;
+    LspServer server;
+    (void)did_open(server, window_text, window_uri);
+    // act the second import breaks on disk, which only the transitive dependency set names (§11.1, §12.2)
+    std::ofstream(root / "b.ui") << R"(component B { Column { Nope {} } })";
+    const std::string line = std::string(R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":)") + core::Json(b_uri).to_string() + R"(,"type":2}]}})";
+    const Exchange changed = server.handle_line(line);
+    // assert the window is recompiled and the broken second import is published (§11.1, §16)
+    bool recompiled_window = false;
+    bool saw_broken_b = false;
+    for (const Notification& notification : changed.notifications) {
+        // the payload is parsed, because the uri and the diagnostics are what this test routes against (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        const core::Json* uri = payload.member("uri");
+        const core::Json* entries = payload.member("diagnostics");
+        // a payload that names another file carries no evidence about the graph (§12.2)
+        if (uri == nullptr || entries == nullptr)
+            continue;
+        // the root publication is what proves the transitive reverse edge was followed (§11.1, §12.2)
+        if (uri->as_string() == window_uri)
+            recompiled_window = true;
+        // the broken file is published with its unknown widget (§16)
+        if (uri->as_string() == b_uri && !entries->as_array().empty())
+            saw_broken_b = true;
+    }
+    EXPECT_TRUE(recompiled_window);
+    EXPECT_TRUE(saw_broken_b);
     std::filesystem::remove_all(root, ignored);
 }
