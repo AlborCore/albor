@@ -654,9 +654,9 @@ TEST(LspServerChecks, ARequestForAClosedDocumentIsRefused) {
 namespace
 {
     // ask for completions at a position, which is what an editor does when a person types (§12.2)
-    std::vector<std::string> complete_at(LspServer& server, int line, int character) {
+    std::vector<std::string> complete_at(LspServer& server, int line, int character, const std::string& uri = "file:///panel.ui") {
         // the document is open already, so the request names it (§12.2)
-        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///panel.ui\"},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
         // the request is handled, which is the whole of the exchange (§12.2)
         const Exchange exchange = server.handle_line(request);
         // a reply is always produced for a request (§12.2)
@@ -683,9 +683,9 @@ namespace
     }
 
     // ask for a hover at a position, which is what an editor shows when a pointer rests (§12.2)
-    std::string hover_at(LspServer& server, int line, int character) {
+    std::string hover_at(LspServer& server, int line, int character, const std::string& uri = "file:///panel.ui") {
         // the request names the open document and the position (§12.2)
-        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///panel.ui\"},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
         // the request is handled (§12.2)
         const Exchange exchange = server.handle_line(request);
         // a reply is always produced for a request (§12.2)
@@ -806,6 +806,287 @@ TEST(LspCompletionChecks, ACompletionRequestWithoutAPositionIsRefused) {
     // assert it is refused rather than answered from nowhere (§12.2)
     ASSERT_TRUE(exchange.reply.has_value());
     EXPECT_NE(exchange.reply->find("no position"), std::string::npos);
+}
+
+TEST(LspComponentCompletionChecks, CompletionOffersOwnComponentsThenImportsThenCatalog) {
+    // arrange a panel that declares a base and imports a side panel, which are two component kinds (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-order";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the component the panel instantiates from another file (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the hidden file sits on disk unimported, so it is outside the panel's visible scope (§12.2)
+    std::ofstream(root / "hidden.ui") << R"(component Hidden { Column { } })";
+    // the empty line inside the column is where a child element may begin (§11.1)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    signal tapped();\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        Holder {\n            caption: \"x\";\n            on_tapped: { }\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the cursor rests on the empty line inside the column (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> labels = complete_at(server, 14, 8, uri);
+    // assert the file's own components come first, in declaration order (§11.1)
+    ASSERT_GE(labels.size(), 4U);
+    EXPECT_EQ(labels.at(0), "Holder");
+    EXPECT_EQ(labels.at(1), "Panel");
+    // assert the imported component follows the file's own (§11.1)
+    EXPECT_EQ(labels.at(2), "SidePanel");
+    // assert the catalog follows the imports, because it resolves last (§11.1, §11.2)
+    const auto label = std::find(labels.begin(), labels.end(), "Label");
+    ASSERT_NE(label, labels.end());
+    EXPECT_GT(std::distance(labels.begin(), label), 2);
+    // assert a file that is on disk but not imported is never offered (§12.2)
+    EXPECT_EQ(std::find(labels.begin(), labels.end(), "Hidden"), labels.end());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, CompletionOnALocalInstanceOffersItsMembers) {
+    // arrange a panel whose base is instantiated inside its own content (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-local-members";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file is present because the panel imports it, so its members are in scope elsewhere (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the property and the handler sit on the lines the requests below address (§12.2)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    signal tapped();\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        Holder {\n            caption: \"x\";\n            on_tapped: { }\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the requests sit after the property colon and after the handler prefix (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> properties = complete_at(server, 11, 20, uri);
+    const std::vector<std::string> signals = complete_at(server, 12, 15, uri);
+    // assert the local instance offers the property it declares (§11.1)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "caption"), properties.end());
+    // assert a common property is offered too, because every node arranges (§11.1, §8.2)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "tooltip"), properties.end());
+    // assert the handler prefix offers the local signal with its prefix (§11.1)
+    EXPECT_NE(std::find(signals.begin(), signals.end(), "on_tapped"), signals.end());
+    // assert the imported component's members are not offered on a local instance (§12.2)
+    EXPECT_EQ(std::find(properties.begin(), properties.end(), "title"), properties.end());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, CompletionOnAnImportedInstanceOffersItsMembers) {
+    // arrange a panel that instantiates the component its import declares (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-imported-members";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the property and the signal the instance writes (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the local component declares a member of its own, which must not leak onto the imported instance (§12.2)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    signal tapped();\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        SidePanel {\n            title: \"x\";\n            on_closed: { }\n        }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the requests sit after the property colon and after the handler prefix (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> properties = complete_at(server, 11, 18, uri);
+    const std::vector<std::string> signals = complete_at(server, 12, 15, uri);
+    // assert the imported instance offers the property its interface declares (§11.1)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "title"), properties.end());
+    // assert a common property is offered too, because every node arranges (§11.1, §8.2)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "tooltip"), properties.end());
+    // assert the handler prefix offers the imported signal with its prefix (§11.1)
+    EXPECT_NE(std::find(signals.begin(), signals.end(), "on_closed"), signals.end());
+    // assert the local component's members are not offered on an imported instance (§12.2)
+    EXPECT_EQ(std::find(properties.begin(), properties.end(), "caption"), properties.end());
+    EXPECT_EQ(std::find(signals.begin(), signals.end(), "on_tapped"), signals.end());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, HoverNamesALocalComponentAndItsMembers) {
+    // arrange a panel whose base is instantiated inside its own content (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-local-hover";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file is present because the panel imports it, so the scope is the real one (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the instance, its property and its handler sit on the lines the hovers below address (§12.2)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    signal tapped();\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n        Holder {\n            caption: \"x\";\n            on_tapped: { }\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the pointer rests on the instance, its property and its handler (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::string component = hover_at(server, 10, 10, uri);
+    const std::string property = hover_at(server, 11, 14, uri);
+    const std::string signal = hover_at(server, 12, 16, uri);
+    // assert the instance is named as the component it builds (§11.1, §12.2)
+    EXPECT_EQ(component, "Holder component");
+    // assert the property names the component it belongs to and its type (§11.1)
+    EXPECT_NE(property.find("Holder.caption"), std::string::npos);
+    EXPECT_NE(property.find("string"), std::string::npos);
+    // assert the handler names the signal it attaches to (§11.1)
+    EXPECT_EQ(signal, "Holder.tapped signal");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, HoverNamesAnImportedComponentAndItsMembers) {
+    // arrange a panel that instantiates the component its import declares (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-imported-hover";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the property and the signal the instance writes (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the instance, its property and its handler sit on the lines the hovers below address (§12.2)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    Column {\n        SidePanel {\n            title: \"x\";\n            on_closed: { }\n        }\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the pointer rests on the instance, its property and its handler (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::string component = hover_at(server, 4, 10, uri);
+    const std::string property = hover_at(server, 5, 14, uri);
+    const std::string signal = hover_at(server, 6, 16, uri);
+    // assert the instance is named as the imported component it builds (§11.1, §12.2)
+    EXPECT_EQ(component, "SidePanel component");
+    // assert the property names the imported component it belongs to and its type (§11.1)
+    EXPECT_NE(property.find("SidePanel.title"), std::string::npos);
+    EXPECT_NE(property.find("string"), std::string::npos);
+    // assert the handler names the signal it attaches to (§11.1)
+    EXPECT_EQ(signal, "SidePanel.closed signal");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, ALocalComponentShadowsTheImportedName) {
+    // arrange a local component named like the imported one, which the resolver prefers (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-shadow";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the same name, which the local declaration shadows (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the local interface redeclares the shared property with another type, which is how shadowing is observable (§11.1)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent SidePanel {\n    in property<string> tint;\n    in property<float> title;\n    signal pressed();\n    Column { @children }\n}\n\ncomponent Panel : SidePanel {\n    Column {\n        SidePanel {\n            tint: \"red\";\n            title: 1.0;\n            on_pressed: { }\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the requests ask for elements, the property, the signal and two hovers (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> elements = complete_at(server, 17, 8, uri);
+    const std::vector<std::string> properties = complete_at(server, 12, 17, uri);
+    const std::vector<std::string> signals = complete_at(server, 14, 15, uri);
+    const std::string tint_hover = hover_at(server, 12, 14, uri);
+    const std::string title_hover = hover_at(server, 13, 14, uri);
+    // assert the shared name is offered once, because the local declaration wins (§11.1)
+    EXPECT_EQ(std::count(elements.begin(), elements.end(), "SidePanel"), 1);
+    // assert the instance resolves the local property, because the local interface shadows the import (§11.1)
+    EXPECT_NE(std::find(properties.begin(), properties.end(), "tint"), properties.end());
+    // assert the local signal wins for the same reason (§11.1)
+    EXPECT_NE(std::find(signals.begin(), signals.end(), "on_pressed"), signals.end());
+    EXPECT_EQ(std::find(signals.begin(), signals.end(), "on_closed"), signals.end());
+    // assert the hover reads the local member, because the local declaration wins (§11.1)
+    EXPECT_EQ(tint_hover, "SidePanel.tint : string");
+    // assert a shared name reads the local type rather than the hidden import's (§11.1)
+    EXPECT_EQ(title_hover, "SidePanel.title : float");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, AChangedImportStopsCompletingAndACloseRefusesTheDocument) {
+    // arrange a panel that declares a base and imports a side panel (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-replaced";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the component the first text names (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the first text names a local base and the import, which both must complete (§11.1)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Holder {\n    in property<string> caption;\n    Column { @children }\n}\n\ncomponent Panel : Holder {\n    Column {\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the first compile is asked for the two component names (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> before = complete_at(server, 9, 8, uri);
+    // assert both kinds are offered before the edit (§11.1)
+    EXPECT_NE(std::find(before.begin(), before.end(), "Holder"), before.end());
+    EXPECT_NE(std::find(before.begin(), before.end(), "SidePanel"), before.end());
+    // act the editor drops the local base and the import, which replaces the surface (§12.2)
+    const std::string changed = "component Panel {\n    Column {\n\n    }\n}\n";
+    (void)did_change(server, changed, 2, uri);
+    const std::vector<std::string> after = complete_at(server, 2, 8, uri);
+    // assert a removed component and a removed import stop completing (§11.1, §12.2)
+    EXPECT_EQ(std::find(after.begin(), after.end(), "Holder"), after.end());
+    EXPECT_EQ(std::find(after.begin(), after.end(), "SidePanel"), after.end());
+    // assert the catalog still answers, because only the file's own surface was replaced (§11.2, AD-17)
+    EXPECT_NE(std::find(after.begin(), after.end(), "Label"), after.end());
+    // act the editor closes the document, which drops the retained surface (§12.2)
+    const std::string close = "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "}}}";
+    (void)server.handle_line(close);
+    const Exchange exchange = server.handle_line("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":" + core::Json(uri).to_string() + "},\"position\":{\"line\":2,\"character\":8}}}");
+    // assert a closed document is refused rather than answered from a stale surface (§12.2)
+    ASSERT_TRUE(exchange.reply.has_value());
+    EXPECT_NE(exchange.reply->find("not open"), std::string::npos);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, AComponentThatShadowsACatalogNameIsOfferedOnce) {
+    // arrange a local component named like a builtin widget, which §11.1 resolves before the catalog (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-catalog-shadow";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the base declares its own property, which the builtin Label does not have (§11.1)
+    const std::string text = "component Label {\n    in property<string> tint;\n    Column { @children }\n}\n\ncomponent Panel : Label {\n    Column {\n        Label {\n            tint: \"red\";\n        }\n\n    }\n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because a saved root follows the file stem rule (§11.1, §14.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the completion asks inside the column and the hover rests on the instance (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> elements = complete_at(server, 11, 8, uri);
+    const std::string described = hover_at(server, 7, 10, uri);
+    // assert the name is offered once, because the local declaration shadows the builtin (§11.1)
+    EXPECT_EQ(std::count(elements.begin(), elements.end(), "Label"), 1);
+    // assert the hover names a component rather than the builtin widget it hides (§11.1, §12.2)
+    EXPECT_EQ(described, "Label component");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspComponentCompletionChecks, AComponentBodyOffersTheVisibleComponents) {
+    // arrange a panel that imports a component, which its own body may instantiate (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-component-declaration";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the imported file declares the component the body may name (§11.1)
+    std::ofstream(root / "side_panel.ui") << R"(component SidePanel { in property<string> title; signal closed(); Column { } })";
+    // the indented empty line is the top level of the component body, where a child may begin (§11.1)
+    const std::string text = "import \"side_panel.ui\";\n\ncomponent Panel {\n    \n}\n";
+    std::ofstream(root / "panel.ui") << text;
+    // the uri names the saved file, because an import resolves relative to it (§11.1, §12.2)
+    const std::string path = (root / "panel.ui").generic_string();
+    const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+    // act the cursor sits at the top level of the component body (§12.2)
+    LspServer server;
+    (void)did_open(server, text, uri);
+    const std::vector<std::string> labels = complete_at(server, 3, 4, uri);
+    // assert a declaration keyword is offered, because the body holds declarations (§11.1)
+    EXPECT_NE(std::find(labels.begin(), labels.end(), "signal"), labels.end());
+    // assert the imported component is offered, because the body may instantiate it (§11.1)
+    EXPECT_NE(std::find(labels.begin(), labels.end(), "SidePanel"), labels.end());
+    std::filesystem::remove_all(root, ignored);
 }
 
 namespace

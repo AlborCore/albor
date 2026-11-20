@@ -133,6 +133,12 @@ editor as they do in the build (AD-17, §11.2). A client that saves a manifest e
 `workspace/didChangeWatchedFiles`; the server rebuilds the catalog and recompiles every open
 root, which clears stale diagnostics.
 
+Completion and hover resolve an element the way the checker does: the components the open file
+declares come first, the components its imports declare follow, and the catalog comes last, so a
+local declaration shadows an imported or manifest name of the same spelling. An instance of either
+kind completes its declared properties and its `on_` signals, and hover names the component, the
+property with its type, or the signal.
+
 `tools/albor-vscode` is the VS Code client. It registers `.ui` as the `albor` language and
 launches `albor-lsp` over stdio with the server's full document sync, so diagnostics,
 completion and hover work without a custom client. `albor.lsp.executable` names the binary

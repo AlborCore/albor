@@ -581,6 +581,9 @@ namespace albor::compiler
         std::map<std::string, ElementType> m_imported_component_types;
     };
 
+    // build the element type one component declares, which an instance resolves against wherever it is checked (§11.1)
+    [[nodiscard]] ElementType component_element_type(std::string name, const std::vector<CheckedProperty>& properties, const std::vector<CheckedSignal>& signals);
+
     // register the structs a file declares, turning each into a record the catalog resolves before the check (§11.1)
     void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics);
 

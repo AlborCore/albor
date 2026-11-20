@@ -11,6 +11,7 @@
 #include "albor/compiler/source_index.h"
 #include "albor/compiler/value_type.h"
 #include "albor/language-server/lsp_document.h"
+#include "albor/language-server/lsp_support.h"
 
 namespace albor::language_server
 {
@@ -68,6 +69,9 @@ namespace albor::language_server
 
         // the catalog every compile, completion and hover resolves against, which carries the manifests (§11.2, AD-17)
         compiler::ElementCatalog m_catalog = compiler::ElementCatalog::with_builtins();
+
+        // the components each open root resolves, which completion and hover answer from (§11.1, §12.2)
+        std::map<std::string, ComponentSurface, std::less<>> m_component_surfaces;
 
         // the documents the editor has open, which every request is answered from (§12.2)
         DocumentStore m_documents;

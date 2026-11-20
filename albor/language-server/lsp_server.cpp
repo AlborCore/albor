@@ -226,7 +226,27 @@ namespace albor::language_server
 
             // the editor index of the root, which is absent when no typed tree was produced (§12.2)
             std::optional<compiler::SourceIndex> index;
+
+            // the components the root sees, which completion and hover resolve an instance against (§11.1, §12.2)
+            ComponentSurface components;
         };
+
+        // the surface a checked file exposes to an editor, which is its own components and imports (§11.1, §12.2)
+        ComponentSurface component_surface(const compiler::CheckedFile& checked) {
+            // the surface accumulates in declaration order, which is the order completion offers (§12.2)
+            ComponentSurface surface;
+            // each component the file declares is visible to the whole file, so its declared members are retained (§11.1)
+            for (const compiler::CheckedComponent& component : checked.components)
+                surface.local.push_back(compiler::component_element_type(component.name, component.properties, component.signals));
+            // each imported interface is visible too, so an instance of it completes and hovers (§11.1)
+            for (const compiler::ImportedComponent& component : checked.imported_components)
+                surface.imported.push_back(compiler::component_element_type(component.name, component.properties, component.signals));
+            // the bounded surface is what the editor sees, because no other file's components belong to this root (§12.2)
+            return surface;
+        }
+
+        // the surface an open root carries before its first compile, which offers no component name (§12.2)
+        const ComponentSurface EMPTY_COMPONENT_SURFACE;
 
         // run the compiler over one document's text and every open import buffer (§16)
         CompileResult compile_text(const std::string& text, const DocumentStore& documents, const std::filesystem::path& source_path, const compiler::ElementCatalog& base_catalog) {
@@ -285,7 +305,7 @@ namespace albor::language_server
                 (void)generator.generate(*checked);
             }
             // the diagnostics and files read are returned, which the editor and a later change need (§16, §12.2)
-            return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies(), .index = std::move(index)};
+            return CompileResult{.diagnostics = std::move(diagnostics), .dependencies = loader.dependencies(), .index = std::move(index), .components = component_surface(*checked)};
         }
 
         // encode a path as a file uri, which is how an editor routes a diagnostic for an imported file (§12.2)
@@ -570,6 +590,8 @@ namespace albor::language_server
             m_source_indexes[document_uri] = std::move(*result.index);
         else
             m_source_indexes.erase(document_uri);
+        // the surface replaces the previous run, so a removed component or import stops completing (§11.1, §12.2)
+        m_component_surfaces[document_uri] = std::move(result.components);
         // the previous publications are what a clean import has to clear (§12.2, §16)
         std::vector<std::string> previous;
         if (const auto found = m_root_publications.find(document_uri); found != m_root_publications.end())
@@ -968,6 +990,8 @@ namespace albor::language_server
                         m_documents.close(closed_uri);
                         // the index is dropped with the buffer, because a closed file must not answer a request (§12.2)
                         m_source_indexes.erase(closed_uri);
+                        // the surface is dropped with the buffer, because a closed file must not complete (§12.2)
+                        m_component_surfaces.erase(closed_uri);
                         // the publications of the closed root are cleared unless another root still owns them (§12.2)
                         std::vector<Notification> publications;
                         close_root(closed_uri, publications);
@@ -1145,12 +1169,16 @@ namespace albor::language_server
             const auto column = static_cast<std::size_t>(std::max(0.0, character_value->as_number()));
             // the catalog is the client one, because a manifest type completes like a builtin (§11.2, AD-17)
             const compiler::ElementCatalog& catalog = m_catalog;
+            // the root's own components and imports are what an instance completes and hovers from (§11.1, §12.2)
+            const auto surface = m_component_surfaces.find(*uri);
+            // an open root always carries a surface, and an empty one answers a request that arrives before it (§12.2)
+            const ComponentSurface& components = surface == m_component_surfaces.end() ? EMPTY_COMPONENT_SURFACE : surface->second;
             // a completion offers whatever may be written at this position (§12.2)
             if (method->as_string() == "textDocument/completion") {
                 // the items are rendered as the protocol's item objects (§12.2)
                 std::vector<core::Json> rendered;
                 // each item carries its label, kind and detail, which is what an editor shows (§12.2)
-                for (const CompletionItem& item : completions_at(document, catalog, row, column)) {
+                for (const CompletionItem& item : completions_at(document, catalog, components, row, column)) {
                     // an item is an object, because the protocol describes it that way (§12.2)
                     core::Json entry;
                     // the label is what a person accepts and inserts (§12.2)
@@ -1166,7 +1194,7 @@ namespace albor::language_server
                 return Exchange{.reply = envelope(reply_id, core::Json(std::move(rendered))).to_string(), .notifications = {}};
             }
             // a hover describes what the cursor is on, and says nothing when it is on nothing (§12.2)
-            const std::optional<std::string> described = hover_at(document, catalog, row, column);
+            const std::optional<std::string> described = hover_at(document, catalog, components, row, column);
             // an empty hover is a null result, which is what the protocol spells for nothing to say (§12.2)
             if (!described)
                 return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
