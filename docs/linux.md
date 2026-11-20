@@ -128,7 +128,7 @@ adapter, because the desktop portals answer on the session bus:
 | `libxkbcommon-dev` | key and modifier mapping |
 | `libxcb1-dev` | the Tier 2 X11 window and XCB WSI |
 | `libvulkan-dev` | Vulkan headers and the loader |
-| `mesa-vulkan-drivers` | the lavapipe device the CI windowed suite runs on |
+| `mesa-vulkan-drivers` | the lavapipe device the CI windowed suite runs on; its ICD is named `lvp_icd.json` from mesa 25 and `lvp_icd.x86_64.json` before it |
 | `xvfb` | the headless X server the X11 suite runs under |
 | `libpango1.0-dev`, `libcairo2-dev` | the libdecor Cairo frame |
 | `libdbus-1-dev` | the desktop portal file chooser and colour scheme |

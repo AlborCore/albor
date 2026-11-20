@@ -188,20 +188,14 @@ jobs:
             enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-            # the software vulkan driver the unit suite loads, which the runner image installs but never selects (AD-22)
-            vulkan-icd: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
             # wayland-protocols and libdecor are vendored, so the job installs the frame's system libraries instead (AD-16)
             # the vulkan loader and lavapipe carry the gpu backend, and xvfb runs the tier two x11 suite (AD-22)
-            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
+            setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
           - name: linux-debug
             os: ubuntu-24.04
             enable: true
             preset: debug
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-            # the software vulkan driver the unit suite loads, which the runner image installs but never selects (AD-22)
-            vulkan-icd: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-            # wayland-protocols and libdecor are vendored, so the job installs the frame's system libraries instead (AD-16)
-            # the vulkan loader and lavapipe carry the gpu backend, and xvfb runs the tier two x11 suite (AD-22)
             setup: sudo apt-get update && sudo apt-get install -y ccache libwayland-dev libxkbcommon-dev libpango1.0-dev libcairo2-dev libdbus-1-dev libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb weston pkg-config libgl1-mesa-dri libegl1 autoconf autoconf-archive automake libtool
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -216,6 +210,24 @@ jobs:
       - name: platform setup
         if: matrix.enable
         run: ${{ matrix.setup }}
+
+      - name: resolve the software vulkan driver
+        if: matrix.enable && runner.os == 'Linux'
+        run: |
+          # mesa 25 names the lavapipe icd lvp_icd.json, older releases name it lvp_icd.x86_64.json (AD-22)
+          icd=""
+          for candidate in /usr/share/vulkan/icd.d/lvp_icd*.json; do
+            if [ -f "$candidate" ]; then
+              icd="$candidate"
+              break
+            fi
+          done
+          # a step that runs without a driver must fail here rather than skip every vulkan test (§6.3)
+          if [ -z "$icd" ]; then
+            echo "no lavapipe icd under /usr/share/vulkan/icd.d" >&2
+            exit 1
+          fi
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
 
       - name: msvc environment
         if: matrix.enable && runner.os == 'Windows'
@@ -285,9 +297,6 @@ jobs:
       - name: unit tests
         if: matrix.enable
         working-directory: .build-${{ matrix.preset }}/tests
-        env:
-          # the linux gpu suites need the software vulkan driver, which the runner does not select by default (§6.3)
-          VK_ICD_FILENAMES: ${{ matrix.vulkan-icd }}
         run: ./albor-tests && ./albor-generated-font-checks
 
       # the vscode client is a node package, so its toolchain is pinned like cmake and vcpkg are (§12.2)
@@ -330,7 +339,6 @@ jobs:
             exit 1
           fi
           export WAYLAND_DISPLAY=wayland-0
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           ./albor-linux-tests --gtest_filter='-X11Platform.*'
 
       - name: linux wayland tests at scale 2
@@ -355,7 +363,6 @@ jobs:
           fi
           export WAYLAND_DISPLAY=wayland-scale
           export ALBOR_EXPECT_SCALE=2
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           ./albor-linux-tests --gtest_filter='-X11Platform.*'
 
       # the linux platform font resolver is tracked in #235, so the selection check waits for it
@@ -381,7 +388,6 @@ jobs:
           export DISPLAY=:99
           unset WAYLAND_DISPLAY
           unset XDG_SESSION_TYPE
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           ./albor-linux-tests --gtest_filter='X11Platform.*:AlborVulkanWindowChecks.*'
 
       - name: linux example smoke on wayland
@@ -401,7 +407,6 @@ jobs:
             sleep 0.1
           done
           export WAYLAND_DISPLAY=wayland-example
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           set +e
           timeout 5 ./examples/hello-world/hello-world-albor
           status=$?
@@ -425,7 +430,6 @@ jobs:
           export DISPLAY=:98
           unset WAYLAND_DISPLAY
           unset XDG_SESSION_TYPE
-          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
           set +e
           timeout 5 ./examples/hello-world/hello-world-albor
           status=$?
