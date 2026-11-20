@@ -45,7 +45,7 @@ Read what the change is bound by, not the whole repository:
 - The **Non-negotiable Boundaries** of `AGENTS.md`. A change that crosses one is a
   stop condition, not a judgment call.
 - `STYLE-GUIDE.md` before proposing C++.
-- `macos-windows.md` when the change reaches a platform source.
+- `docs/status.md` for the current per-platform support levels.
 - The owning module's `CMakeLists.txt` and public header, to see its current shape.
 
 ## 3. Explore before planning
@@ -72,8 +72,8 @@ It contains:
 3. **Work items** — files to add or change, grouped by module, each with what
    changes and why.
 4. **Tests** — the test per acceptance criterion, and the suite that owns it.
-5. **Parity** — the Windows counterpart of every macOS touch (and vice versa), the
-   Metal/Direct3D pair, and the `macos-windows.md` entry.
+5. **Parity** — the counterparts of every platform touch on the other two platforms,
+   and the Metal/Direct3D/Vulkan trio.
 6. **Risks** — what could break, what the plan deliberately does not cover, and any
    spec ambiguity the plan resolves.
 7. **Acceptance map** — each criterion from the issue paired with the work item and
@@ -135,10 +135,10 @@ bash build/snapshot.sh gh-<number>
 
 - Minimal change in the module the Architecture Map names. Do not refactor
   neighboring code the issue did not ask about.
-- **Platform parity in the same change** (`§5.3`, AD-16): a macOS source carries its
-  Windows twin (`*.macos.mm` ↔ `*.win32.c++`), the same tests, and an updated
-  `macos-windows.md`. Native render backends are symmetric too (`§6.3`, AD-05):
-  Metal and Direct3D 11 move together.
+- **Platform parity in the same change** (`§5.3`, AD-16): a platform source carries its
+  twins on the other two platforms (`*.macos.mm` ↔ `*.win32.c++` ↔ `*.linux.c++`), with
+  the same tests. Native render backends are symmetric too (`§6.3`, AD-05):
+  Metal, Direct3D 11 and Vulkan move together.
 - File names follow the platform-infix rule; a source that reaches a platform API
   carries that platform's infix, and the module `CMakeLists.txt` and every `#include`
   are updated with it.
@@ -275,7 +275,7 @@ user approved.
 - [ ] `bash build/check-format.sh` passes.
 - [ ] `./.build-debug/tests/albor-tests` was run and passes, with no test skipped.
 - [ ] Platform parity is satisfied, or the change is provably portable.
-- [ ] `macos-windows.md` is current when a platform source changed.
+- [ ] All three platforms stay in sync when a platform source changed.
 - [ ] The read-only review ran, and every finding was fixed or declined with a reason.
 - [ ] No boundary in `AGENTS.md` was crossed.
 - [ ] The uncommitted solution was approved before the commit.

@@ -17,8 +17,8 @@ The framework and its compiler are **C++20**. The Windows build declares the Win
 1809 target (`WINVER`, `_WIN32_WINNT`, `NTDDI_VERSION`) so a newer API cannot slip in, and
 the macOS build stamps the 13.3 deployment floor into the shaders and the package. The
 Linux artifacts are checked against the glibc and libstdc++ floor with
-`build/check-linux-floor.sh`; [Linux](linux.md) carries the baseline. The Windows and macOS
-pins are recorded in the parity ledger (`macos-windows.md` §6).
+`build/check-linux-floor.sh`; [Linux](linux.md) carries the baseline. The platform pins are
+recorded in [CI build tools](#ci-build-tools).
 
 ## CI build tools
 
@@ -36,7 +36,7 @@ versions CI actually uses; the floors a consumer needs are in
 | compiler | Xcode 16.4 (Apple Clang) | MSVC 14.44 toolset, SDK 10.0.22621.0 | image GCC for debug and release, clang-18 for coverage |
 
 The Windows job pins the MSVC **toolset** and SDK through `msvc-dev-cmd`, not the Visual Studio
-minor version: the 17.14 release named above and in the parity ledger is the matching release on
+minor version: the 17.14 release named above is the matching release on
 the `windows-2022` image, so it follows from the toolset pin rather than being pinned on its own.
 
 An application names a window and a component. A normal application links `albor`

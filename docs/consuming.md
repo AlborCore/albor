@@ -315,7 +315,7 @@ design (AD-04, AD-10). See [Tooling](tooling.md#hot-reload) and
   Microsoft Visual C++ 2015-2022 Redistributable for the Windows targets; RHEL/Alma 9 or
   newer (glibc 2.34, GLIBCXX 3.4.29, CXXABI 1.3.13, Wayland 1.21) for the Linux targets. The build images
   and toolchains behind those floors are pinned in CI and recorded in
-  [Status and platforms](status.md) and `macos-windows.md` §6. On Windows the workflow pins the
+  [Status and platforms](status.md). On Windows the workflow pins the
   MSVC toolset (14.44) and SDK (10.0.22621.0); the Visual Studio 17.14 release named there is the
   matching image release, not an independently pinned input.
 - On Linux, the Wayland, xkbcommon and Pango/Cairo/D-Bus development packages. libdecor and
