@@ -56,7 +56,7 @@
                         "type": "string"
                     },
                     "default": [],
-                    "description": "Paths to .ui-manifest files sent to the language server at initialize. The server resolves their native components and records once the manifest catalog lands; relative paths resolve against the first workspace folder."
+                    "description": "Paths to .ui-manifest files sent to the language server at initialize. The server resolves their records, native components and native data types; relative paths resolve against the first workspace folder."
                 }
             }
         }

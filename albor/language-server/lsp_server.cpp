@@ -6,10 +6,12 @@
 #include <filesystem>
 #include <optional>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include "albor/compiler/codegen/codegen.h"
 #include "albor/compiler/diagnostic.h"
+#include "albor/compiler/lexer.h"
 #include "albor/compiler/source_index.h"
 #include "albor/compiler/type_checker.h"
 #include "albor/compiler/ui_loader.h"
@@ -17,6 +19,7 @@
 #include "albor/core/file_bytes.h"
 #include "albor/core/json.h"
 #include "albor/language-server/lsp_support.h"
+#include "albor/manifest/manifest.h"
 
 namespace albor::language_server
 {
@@ -140,6 +143,78 @@ namespace albor::language_server
             return std::filesystem::current_path() / "untitled.ui";
         }
 
+        // name the workspace root the initialize params carry, which is what a relative manifest resolves against (§11.2)
+        std::filesystem::path workspace_root(const core::Json* params) {
+            // a handshake without parameters names no workspace, so the process directory answers (§12.2)
+            if (params == nullptr || !params->is_object())
+                return {};
+            // the first workspace folder is the root, because a protocol workspace may hold several (§12.2)
+            const core::Json* folders = params->member("workspaceFolders");
+            // a folder list names the root first, which is what a relative path resolves against (§12.2)
+            if (folders != nullptr && folders->kind() == core::Json::Kind::Array && !folders->as_array().empty()) {
+                // the uri is decoded because a client writes the folder as a file uri (§12.2)
+                const std::optional<std::string> uri = string_member(folders->as_array().front(), "uri");
+                // a file uri names the workspace directory, which is where a relative manifest sits (§12.2)
+                if (uri) {
+                    // the decoded path is the directory a manifest resolves beside (§11.2, §12.2)
+                    const std::filesystem::path path = document_path(*uri);
+                    // a workspace the uri cannot decode falls through to the older root uri (§12.2)
+                    if (!path.empty())
+                        return path;
+                }
+            }
+            // an older client names its single root through rootUri, which is the same directory (§12.2)
+            if (const std::optional<std::string> root = string_member(*params, "rootUri"); root)
+                return document_path(*root);
+            // a handshake that names no root leaves the resolution to the process directory (§12.2)
+            return {};
+        }
+
+        // read the manifests the initialization options carry, which is how a client supplies its catalog (§11.2, AD-17)
+        std::vector<std::filesystem::path> manifest_paths(const core::Json* params) {
+            // the paths accumulate in the order the client wrote them, because that order decides a duplicate name (§11.2)
+            std::vector<std::filesystem::path> paths;
+            // a handshake without parameters configures no manifest, which leaves the builtins alone (§11.2, AD-17)
+            if (params == nullptr || !params->is_object())
+                return paths;
+            // the initialization options are where a client names its workspace configuration (§12.2)
+            const core::Json* options = params->member("initializationOptions");
+            // options that are absent or not an object carry no manifest list (§12.2)
+            if (options == nullptr || !options->is_object())
+                return paths;
+            // the manifest list is the catalog source the server reads at the handshake (§11.2, AD-17)
+            const core::Json* manifests = options->member("manifests");
+            // a list that is absent or not an array configures no manifest (§12.2)
+            if (manifests == nullptr || manifests->kind() != core::Json::Kind::Array)
+                return paths;
+            // a relative path resolves against the workspace, because that is where the build reads it (§11.2)
+            const std::filesystem::path workspace = workspace_root(params);
+            // each entry is a filesystem path, because a client resolves its settings to a path (§11.2, §12.2)
+            for (const core::Json& entry : manifests->as_array()) {
+                // an entry that is not a string names no file, so it contributes nothing (§12.2)
+                if (entry.kind() != core::Json::Kind::String)
+                    continue;
+                // an empty entry is a setting the user left blank, which names no manifest (§11.2)
+                if (entry.as_string().empty())
+                    continue;
+                // the written path is decoded as utf-8, which a windows code page would otherwise corrupt (§12.2)
+                const std::filesystem::path written = path_from_utf8(entry.as_string());
+                // an absolute path is used as written, because the client already resolved it (§11.2)
+                if (written.is_absolute()) {
+                    // the normalized spelling is what a watched file change is compared against (§12.2)
+                    paths.push_back(written.lexically_normal());
+                    // the entry is complete, so the next one follows (§11.2)
+                    continue;
+                }
+                // a relative path resolves against the workspace folder, which is where the build reads it (§11.2)
+                const std::filesystem::path base = workspace.empty() ? std::filesystem::current_path() : workspace;
+                // the joined path is normalized, because a later change and a compile spell it the same way (§12.2)
+                paths.push_back((base / written).lexically_normal());
+            }
+            // the paths are returned in the order the client wrote them (§11.2)
+            return paths;
+        }
+
         // what one compile produced, which is the diagnostics and the files the root read (§11.1, §16)
         struct CompileResult
         {
@@ -154,11 +229,11 @@ namespace albor::language_server
         };
 
         // run the compiler over one document's text and every open import buffer (§16)
-        CompileResult compile_text(const std::string& text, const DocumentStore& documents, const std::filesystem::path& source_path) {
+        CompileResult compile_text(const std::string& text, const DocumentStore& documents, const std::filesystem::path& source_path, const compiler::ElementCatalog& base_catalog) {
             // the diagnostics accumulate, because the server publishes what the compiler found (§16)
             compiler::DiagnosticList diagnostics;
-            // the builtin catalog is what a ui file may use without a manifest (§11.1, §8)
-            compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
+            // the run starts from the client catalog, because a manifest type resolves like a builtin (§11.2, AD-17)
+            compiler::ElementCatalog catalog = base_catalog;
             // the root is named even for an unsaved buffer, because an import resolves against a directory (§11.1)
             const std::filesystem::path root = root_path(source_path);
             // the normalized root is what the reader compares against, because the loader normalizes its keys (§11.1)
@@ -199,6 +274,8 @@ namespace albor::language_server
                 index = compiler::index_source(text, *root_source, *checked);
             // the generator runs too, because a diagnostic may come only from codegen (§11.3)
             compiler::CodeGenerator generator(diagnostics);
+            // the catalog is handed over, because a native element constructs through its factory (§11.2, AD-17)
+            generator.set_catalog(&catalog);
             // a document with a file path resolves its assets beside itself, which is what the build does (§12.2, §6.4)
             if (!source_path.empty())
                 generator.set_source_path(source_path);
@@ -485,7 +562,7 @@ namespace albor::language_server
         // the root key is normalized, because the loader reports every path that way (§11.1)
         const std::string root_key = root_path(source_path).lexically_normal().generic_string();
         // the front end checks the root and every imported file, which is what carries cross-file diagnostics (§11.1)
-        CompileResult result = compile_text(document->text(), m_documents, source_path);
+        CompileResult result = compile_text(document->text(), m_documents, source_path, m_catalog);
         // the count is kept, which is what an agreement test reads (§16)
         m_last_diagnostics = result.diagnostics.count();
         // the index of the root replaces the previous run, so a jump never lands in stale source (§12.2)
@@ -618,6 +695,60 @@ namespace albor::language_server
         }
     }
 
+    void LspServer::reload_catalog() {
+        // the builtins are the fallback, because a project without a manifest keeps the editor it has (§11.1, AD-17)
+        compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
+        // the parsed files are kept until every record is registered, because a component may name one (§11.2, AD-17)
+        std::vector<manifest::ManifestFile> parsed;
+        // the manifest problems are collected here, because the catalog reads declarations rather than reports (§11.2)
+        compiler::DiagnosticList diagnostics;
+        // every configured manifest is read from disk, because the build reads the saved file too (§11.2, AD-17)
+        for (const std::filesystem::path& path : m_manifests) {
+            // a manifest the editor names is opened as a regular file, which is what the build requires as well (§11.2)
+            const std::optional<std::vector<std::uint8_t>> bytes = core::read_regular_file(path);
+            // a file that cannot be read contributes no declaration, which leaves the builtins in place (§11.2, AD-17)
+            if (!bytes)
+                continue;
+            // the bytes become the source text, because the scanner takes characters rather than a file (§11.1)
+            const std::string text(bytes->begin(), bytes->end());
+            // the module is the file stem, which is the generated header directory a record names (§11.2, AD-17)
+            const std::string module = path.stem().string();
+            // the tokens live until the parse returns, because the parser borrows the stream (§11.2)
+            const std::vector<compiler::Token> tokens = compiler::Lexer(text, diagnostics).tokenize();
+            // the file joins the parsed set, because records register before components across manifests (§11.2, AD-17)
+            parsed.push_back(manifest::ManifestParser(tokens, diagnostics).parse(module));
+        }
+        // every record joins first, because a component property in any manifest may name one (§11.2, AD-17, AD-13)
+        for (const manifest::ManifestFile& file : parsed)
+            manifest::register_records(file, catalog);
+        // the components join next, which is what makes a manifest element name resolve and construct (§11.2, AD-17)
+        for (const manifest::ManifestFile& file : parsed)
+            manifest::register_components(file, catalog);
+        // the catalog replaces the previous one, because an edit must not leave a stale type behind (§11.2, §12.2)
+        m_catalog = std::move(catalog);
+    }
+
+    bool LspServer::is_manifest_path(const std::filesystem::path& path) const {
+        // a path that cannot be decoded names no configured file, so nothing is refreshed (§12.2)
+        if (path.empty())
+            return false;
+        // the path is normalized, because an editor uri and a configured path may spell one file differently (§12.2)
+        const std::filesystem::path changed = path.lexically_normal();
+        // each configured manifest is compared, because one match is enough to reload the catalog (§11.2, AD-17)
+        for (const std::filesystem::path& manifest : m_manifests) {
+            // a spelling match is the cheap answer, because most clients report the path they resolved (§12.2)
+            if (manifest.lexically_normal() == changed)
+                return true;
+            // a case difference or a symlink is one file, which the filesystem resolves to one identity (§12.2)
+            std::error_code error;
+            // a deleted manifest has no identity, so the spelling comparison above is the only answer it gets (§12.2)
+            if (std::filesystem::equivalent(manifest, changed, error))
+                return true;
+        }
+        // no configured manifest names this file, so the change is not a catalog edit (§11.2)
+        return false;
+    }
+
     Exchange LspServer::handle_line(std::string_view line) {
         // the line is parsed, because a request is a json document (§12.2)
         const std::optional<core::Json> parsed = core::Json::parse(line);
@@ -643,6 +774,10 @@ namespace albor::language_server
 
         // the initialize handshake advertises what this server can do, and reaches no document (§12.2)
         if (method->as_string() == "initialize") {
+            // the client names its manifests in the initialization options, which the build shares (§11.2, AD-17)
+            m_manifests = manifest_paths(params);
+            // the catalog is rebuilt before the reply, because the first document may name a manifest type (§11.2, AD-17)
+            reload_catalog();
             // a handshake carries no identifier in practice, but it is answered either way (§12.2)
             core::Json result;
             // the version is the one this server speaks (§12.2)
@@ -695,6 +830,41 @@ namespace albor::language_server
             m_exit_requested = true;
             // exit produces no reply, because the protocol answers nothing to a notification (§12.2)
             return Exchange{.reply = {}, .notifications = {}};
+        }
+
+        // a watched manifest change reloads the catalog and recompiles every open root (§11.2, §12.2)
+        if (method->as_string() == "workspace/didChangeWatchedFiles") {
+            // the change list names the files the client watched, which is where a manifest edit arrives (§11.2, §12.2)
+            const core::Json* changes = params == nullptr ? nullptr : params->member("changes");
+            // the flag records whether a configured manifest changed, because other files leave the catalog alone (§11.2)
+            bool affected = false;
+            // a notification that names no change list changes nothing, so nothing is recompiled (§12.2)
+            if (changes != nullptr && changes->kind() == core::Json::Kind::Array) {
+                // each change names one file, which is compared against the configured manifest paths (§11.2, §12.2)
+                for (const core::Json& change : changes->as_array()) {
+                    // a change without a uri names no file, so it cannot be a manifest edit (§12.2)
+                    const std::optional<std::string> uri = string_member(change, "uri");
+                    // a file outside the configured manifests is not a catalog source (§11.2, AD-17)
+                    if (uri && is_manifest_path(document_path(*uri)))
+                        affected = true;
+                }
+            }
+            // a change to any other watched file produces neither a reply nor a publication (§12.2)
+            if (!affected)
+                return Exchange{.reply = {}, .notifications = {}};
+            // the catalog is rebuilt first, because every recompile below must resolve the new declarations (§11.2, AD-17)
+            reload_catalog();
+            // the publications accumulate across every open root, because a manifest is global (§12.2, §16)
+            std::vector<Notification> publications;
+            // every open root is recompiled, because any of them may name a type the manifest declares (§11.2, §16)
+            for (const std::string& root : m_documents.uris()) {
+                // the compile publishes the root and its imports, and clears what it no longer owns (§12.2, §16)
+                Exchange compiled = compile_root(root);
+                // the publications join the one exchange the notification returns (§12.2)
+                append_publications(publications, std::move(compiled.notifications));
+            }
+            // a notification produces no reply, and the publications carry every refreshed root (§12.2)
+            return Exchange{.reply = {}, .notifications = std::move(publications)};
         }
 
         // an opened or changed document is stored and compiled, which is the whole of the loop (§12.2, §16)
@@ -973,8 +1143,8 @@ namespace albor::language_server
             const auto row = static_cast<std::size_t>(std::max(0.0, line_value->as_number()));
             // the column is read the same way, because a negative position is a client bug (§12.2)
             const auto column = static_cast<std::size_t>(std::max(0.0, character_value->as_number()));
-            // the catalog is the builtin one a ui file may use without a manifest (§11.1, §8)
-            const compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
+            // the catalog is the client one, because a manifest type completes like a builtin (§11.2, AD-17)
+            const compiler::ElementCatalog& catalog = m_catalog;
             // a completion offers whatever may be written at this position (§12.2)
             if (method->as_string() == "textDocument/completion") {
                 // the items are rendered as the protocol's item objects (§12.2)

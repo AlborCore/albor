@@ -114,28 +114,34 @@ the link.
 ## Language server
 
 `language-server/` implements the Language Server Protocol for `.ui` files: parse, type and
-codegen diagnostics, completion, and hover. The editor experience is served by the same
-frontend, so a diagnostic in the editor is the diagnostic the build produces.
+codegen diagnostics, completion, hover, definition, document outline and semantic tokens. The
+editor experience is served by the same frontend, so a diagnostic in the editor is the
+diagnostic the build produces.
 
 `albor-lsp`, built under `tools/albor-lsp`, is the stdio host an editor launches. It reads
 `Content-Length`-framed JSON-RPC 2.0 from stdin, gives each request to the server, and writes
 the reply and every `textDocument/publishDiagnostics` notification back to stdout. It takes no
-arguments, and exits when stdin closes or the editor sends `exit`. The server advertises full
-document sync, completion, hover and diagnostics; it does not implement go-to-definition,
-references, or semantic highlighting yet. The host currently uses the built-in element
-catalog, so manifest-provided native components are not resolved in the editor until that
-catalog is wired into the host.
+arguments, and exits when stdin closes or the editor sends `exit`.
+
+The element catalog is the builtin widgets plus the manifests the client names in
+`initialize.initializationOptions.manifests`. Each entry is a filesystem path to a
+`.ui-manifest`; a relative path resolves against the first workspace folder (`workspaceFolders`,
+falling back to `rootUri`, then the process directory). An absent or empty list leaves the
+builtin catalog. The manifests go through the same `manifest/` front end the build uses, so
+their records, native components, properties, signals and native data types resolve in the
+editor as they do in the build (AD-17, §11.2). A client that saves a manifest edit sends
+`workspace/didChangeWatchedFiles`; the server rebuilds the catalog and recompiles every open
+root, which clears stale diagnostics.
 
 `tools/albor-vscode` is the VS Code client. It registers `.ui` as the `albor` language and
 launches `albor-lsp` over stdio with the server's full document sync, so diagnostics,
 completion and hover work without a custom client. `albor.lsp.executable` names the binary
 (default `albor-lsp`, resolved through `PATH`) and `albor.manifests` lists `.ui-manifest`
 files, resolved against the first workspace folder. The client sends the manifests in
-`initialize.initializationOptions.manifests`; the server resolves them with the manifest
-front end once [#126](https://github.com/AlborCore/albor/issues/126) lands, and until then
-the built-in catalog answers. The extension is not part of the CMake build: its TypeScript
-compiles with npm, and its smoke test drives the built `albor-lsp` binary in CI. See
-`tools/albor-vscode/README.md` for development and packaging.
+`initialize.initializationOptions.manifests` and watches `**/*.ui-manifest`, so a saved edit
+refreshes the open roots without restarting the server. The extension is not part of the CMake
+build: its TypeScript compiles with npm, and its smoke test drives the built `albor-lsp` binary
+in CI. See `tools/albor-vscode/README.md` for development and packaging.
 
 ## Preview
 

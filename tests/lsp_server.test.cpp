@@ -6,16 +6,20 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include "albor/compiler/codegen/codegen.h"
 #include "albor/compiler/diagnostic.h"
+#include "albor/compiler/lexer.h"
 #include "albor/compiler/type_checker.h"
 #include "albor/compiler/ui_loader.h"
+#include "albor/core/file_bytes.h"
 #include "albor/core/json.h"
 #include "albor/language-server/lsp_server.h"
+#include "albor/manifest/manifest.h"
 
 using namespace albor;
 using namespace albor::language_server;
@@ -23,11 +27,35 @@ using namespace albor::language_server;
 namespace
 {
     // run the compiler the way a build does, which is what the language server must agree with (§16)
-    std::vector<compiler::Diagnostic> compiler_diagnostics(const std::string& text) {
+    std::vector<compiler::Diagnostic> compiler_diagnostics(const std::string& text, const std::vector<std::filesystem::path>& manifests = {}) {
         // the diagnostics accumulate, because the server publishes what the compiler found (§16)
         compiler::DiagnosticList diagnostics;
-        // the builtin catalog is what a ui file may use without a manifest (§11.1, §8)
+        // the catalog starts with the builtin widgets, which every ui file may instantiate (§11.1, §8)
         compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
+        // every manifest is parsed first, because a declaration in one may name a record another declares (§11.2, AD-17)
+        std::vector<manifest::ManifestFile> parsed_manifests;
+        // each manifest is read, because its records and native components are what the catalog resolves (§11.2, AD-17)
+        for (const std::filesystem::path& manifest : manifests) {
+            // the manifest text is read whole, because its declarations are known before the ui file is checked (§11.2)
+            const std::optional<std::vector<std::uint8_t>> manifest_bytes = core::read_regular_file(manifest);
+            // a manifest that cannot be read contributes no declaration, which is what the server does as well (§11.2)
+            if (!manifest_bytes)
+                continue;
+            // the module name is the file stem, which is what the glue generator names the directory after (§11.2)
+            const std::string module = manifest.stem().string();
+            // the bytes become the source text, because the scanner takes characters rather than a file (§11.1)
+            const std::string manifest_text(manifest_bytes->begin(), manifest_bytes->end());
+            // the manifest's own problems join the run, because a bad declaration is the author's problem too (§11.2)
+            const std::vector<compiler::Token> manifest_tokens = compiler::Lexer(manifest_text, diagnostics).tokenize();
+            // the manifest is parsed into declarations, which is where the records and the components live (§11.2, AD-17)
+            parsed_manifests.push_back(manifest::ManifestParser(manifest_tokens, diagnostics).parse(module));
+        }
+        // every record joins first, because a component property in any manifest may name one (§11.2, AD-17, AD-13)
+        for (const manifest::ManifestFile& parsed : parsed_manifests)
+            manifest::register_records(parsed, catalog);
+        // the components join next, which is what makes a native element constructible (§11.2, AD-17)
+        for (const manifest::ManifestFile& parsed : parsed_manifests)
+            manifest::register_components(parsed, catalog);
         // the root buffer is answered by name, because a saved file is what a build compiles (§11.1)
         const auto reader = [&text](const std::filesystem::path& path) -> std::optional<std::string> {
             // the corpus has no imports, so only the root name answers (§11.1)
@@ -41,7 +69,11 @@ namespace
         if (!checked.has_value())
             return diagnostics.diagnostics();
         // the generator runs too, because codegen reports its own diagnostics (§11.3)
-        (void)compiler::CodeGenerator(diagnostics).generate(*checked);
+        compiler::CodeGenerator generator(diagnostics);
+        // the catalog is handed over, because a native element constructs through its factory (§11.2, AD-17)
+        generator.set_catalog(&catalog);
+        // the generated output is discarded, because the agreement compares the diagnostics (§11.3)
+        (void)generator.generate(*checked);
         // the diagnostics are returned, which is what the agreement compares (§16)
         return diagnostics.diagnostics();
     }
@@ -67,6 +99,72 @@ namespace
         const std::string line = std::string(R"({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":)") + core::Json(uri).to_string() + R"(,"version":)" + std::to_string(version) + R"(},"contentChanges":[{"text":)" + core::Json(text).to_string() + "}]}}";
         // the line is handled, which is the whole of the loop (§12.2)
         return server.handle_line(line);
+    }
+
+    // perform the handshake with a manifest list, which is how a client supplies its catalog (§11.2, §12.2)
+    Exchange did_initialize(LspServer& server, const std::vector<std::filesystem::path>& manifests, const std::string& workspace_uri = {}) {
+        // the paths become json strings, because the protocol carries them as text (§12.2)
+        std::vector<core::Json> entries;
+        // each configured path is written the way a client writes a setting (§11.2)
+        for (const std::filesystem::path& manifest : manifests)
+            entries.push_back(core::Json(manifest.generic_string()));
+        // the initialization options carry the manifest list, which is the channel the server reads (§11.2, §12.2)
+        core::Json options;
+        // the list is an array of strings, which is what the server expects (§12.2)
+        options.set("manifests", core::Json(std::move(entries)));
+        // the parameters carry the options and, when given, the workspace a relative manifest resolves against (§12.2)
+        core::Json params;
+        // the options are the catalog source the handshake names (§11.2, AD-17)
+        params.set("initializationOptions", std::move(options));
+        // a workspace uri is what a relative manifest resolves against, which the documentation promises (§11.2, §12.2)
+        if (!workspace_uri.empty()) {
+            // the first folder is the root a relative path joins to (§12.2)
+            core::Json folder;
+            // the uri names the directory the manifest sits in (§12.2)
+            folder.set("uri", core::Json(workspace_uri));
+            // the folder list carries the one workspace this test names (§12.2)
+            params.set("workspaceFolders", core::Json(std::vector<core::Json>{std::move(folder)}));
+        }
+        // the request is an object, because every protocol request is (§12.2)
+        core::Json request;
+        // the version identifies the protocol (§12.2)
+        request.set("jsonrpc", core::Json(std::string("2.0")));
+        // the identifier is what the reply echoes (§12.2)
+        request.set("id", core::Json(1.0));
+        // the method is the handshake, which is what configures the catalog (§12.2)
+        request.set("method", core::Json(std::string("initialize")));
+        // the parameters join the request, which is where the options live (§12.2)
+        request.set("params", std::move(params));
+        // the handshake is handled, which is the whole of the exchange (§12.2)
+        return server.handle_line(request.to_string());
+    }
+
+    // report a watched manifest edit, which is how a client refreshes the catalog (§11.2, §12.2)
+    Exchange did_change_watched_manifest(LspServer& server, const std::filesystem::path& manifest) {
+        // the path becomes the file uri the protocol carries (§12.2)
+        const std::string path = manifest.generic_string();
+        // an absolute path yields a uri with a third slash after the scheme (§12.2)
+        const std::string uri = "file://" + std::string(path.starts_with('/') ? "" : "/") + path;
+        // the change is a file event, which is what the watched notification carries (§12.2)
+        core::Json change;
+        // the uri names the manifest the editor saw change (§11.2, §12.2)
+        change.set("uri", core::Json(uri));
+        // the type is changed, because the file exists before and after the edit (§12.2)
+        change.set("type", core::Json(2.0));
+        // the change list carries the one event this helper raises (§12.2)
+        core::Json params;
+        // the list is an array, because the protocol groups changes that way (§12.2)
+        params.set("changes", core::Json(std::vector<core::Json>{std::move(change)}));
+        // the message is an object, because every protocol message is (§12.2)
+        core::Json message;
+        // the version identifies the protocol (§12.2)
+        message.set("jsonrpc", core::Json(std::string("2.0")));
+        // the method is the watched file notification, which is what a client sends (§12.2)
+        message.set("method", core::Json(std::string("workspace/didChangeWatchedFiles")));
+        // the parameters join the notification, which is where the change lives (§12.2)
+        message.set("params", std::move(params));
+        // the notification is handled, which is the whole of the exchange (§12.2)
+        return server.handle_line(message.to_string());
     }
 
     // the published diagnostics, returned by value because a caller must not outlive this parse (§12.2)
@@ -1278,5 +1376,324 @@ TEST(LspNavigationChecks, AChangeToAnImportedBufferRefreshesTheImporterIndex) {
     const core::Json* character = start->member("character");
     ASSERT_NE(character, nullptr);
     EXPECT_EQ(character->as_number(), static_cast<double>(std::string("component ").size()));
+    std::filesystem::remove_all(root, ignored);
+}
+
+namespace
+{
+    // the manifest fixture, which declares a native component, its data type and a record (§11.2, AD-17)
+    constexpr std::string_view MANIFEST_FIXTURE = R"(
+native component WaveformView {
+    in property<Snapshot<WaveformData>> data;
+    in property<color> line_color: #00FF00;
+    signal selection_changed(float time_pos);
+}
+
+record Task {
+    key: string;
+    title: string;
+    done: bool = false;
+}
+)";
+
+    // the ui fixture, which uses the manifest component and record the way an application does (§11.2, AD-17)
+    constexpr std::string_view MANIFEST_UI = R"(component Panel {
+    in property<Snapshot<WaveformData>> data;
+    inout property<vector<Task>> tasks;
+
+    Column {
+        WaveformView {
+            data: data;
+        }
+
+        Repeat(task in tasks) {
+            Label { text: task.title; }
+        }
+    }
+})";
+} // namespace
+
+TEST(LspManifestChecks, AManifestComponentAndRecordResolveInTheEditor) {
+    // arrange a manifest that declares the component, its data type and the record the file names (§11.2, AD-17)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-clean";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // act the editor supplies the manifest at initialize and opens a file that uses it (§11.2, §12.2)
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    const Exchange exchange = did_open(server, std::string(MANIFEST_UI));
+    // assert the compile resolves the manifest declarations, because that is the build catalog (§11.2, AD-17, §16)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    const core::Json payload = published(exchange);
+    const core::Json* entries = payload.member("diagnostics");
+    ASSERT_NE(entries, nullptr);
+    EXPECT_TRUE(entries->as_array().empty());
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, CompletionAndHoverOfferManifestNames) {
+    // arrange a file whose cursor positions name the manifest component, property and signal (§11.2, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-completion";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // the text keeps the manifest names on lines the requests below address (§12.2)
+    const std::string text = "component Panel {\n    in property<Snapshot<WaveformData>> data;\n    Column {\n        WaveformView {\n            line_color: #00FF00;\n            on_selection_changed: { }\n        }\n    }\n}";
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    (void)did_open(server, text);
+    // act the request asks inside the column, after the colon and after the handler prefix (§12.2)
+    const std::vector<std::string> elements = complete_at(server, 3, 8);
+    const std::vector<std::string> properties = complete_at(server, 4, 23);
+    const std::vector<std::string> signals = complete_at(server, 5, 15);
+    // assert the component, its property and its signal are offered by name (§11.2, AD-17)
+    EXPECT_TRUE(std::find(elements.begin(), elements.end(), "WaveformView") != elements.end());
+    EXPECT_TRUE(std::find(properties.begin(), properties.end(), "line_color") != properties.end());
+    EXPECT_TRUE(std::find(signals.begin(), signals.end(), "on_selection_changed") != signals.end());
+    // act the hover requests rest on the component, the property and the signal (§12.2)
+    const std::string component = hover_at(server, 3, 10);
+    const std::string property = hover_at(server, 4, 20);
+    const std::string signal = hover_at(server, 5, 20);
+    // assert each hover carries the manifest name, which is what the editor shows (§11.2, §12.2)
+    EXPECT_NE(component.find("WaveformView"), std::string::npos);
+    EXPECT_NE(property.find("line_color"), std::string::npos);
+    EXPECT_NE(property.find("color"), std::string::npos);
+    EXPECT_NE(signal.find("selection_changed"), std::string::npos);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, AManifestEditRefreshesOpenRootsAndClearsStaleDiagnostics) {
+    // arrange a manifest that declares nothing, so the open file cannot resolve its names yet (§11.2, AD-17)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-reload";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << "";
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    // act the editor opens a file that needs the declarations the empty manifest does not carry (§12.2)
+    const Exchange opened = did_open(server, std::string(MANIFEST_UI));
+    // assert the unresolved names are reported, because the catalog holds no such declaration (§11.2, AD-17)
+    ASSERT_EQ(opened.notifications.size(), 1U);
+    ASSERT_GT(server.last_diagnostic_count(), 0U);
+    // act the manifest gains the declarations and the client reports the saved edit (§11.2, §12.2)
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    const Exchange refreshed = did_change_watched_manifest(server, manifest);
+    // assert the open root is republished clean, which clears the stale unknown-type diagnostics (§12.2, §16)
+    ASSERT_FALSE(refreshed.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    bool cleared = false;
+    for (const Notification& notification : refreshed.notifications) {
+        // a publication names one file, which is what this test routes against the root (§12.2)
+        if (notification.method != "textDocument/publishDiagnostics")
+            continue;
+        // the payload is parsed, because the diagnostics are the answer under test (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        // a publication for another file carries no evidence about the root (§12.2)
+        const core::Json* uri = payload.member("uri");
+        // a payload without a uri names no routed file, so it is skipped (§12.2)
+        if (uri == nullptr || uri->kind() != core::Json::Kind::String || uri->as_string() != "file:///panel.ui")
+            continue;
+        // the root publication is the one this assertion reads (§12.2)
+        cleared = true;
+        // the entries are the squiggles an editor shows, which must now be gone (§16)
+        const core::Json* entries = payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr);
+        EXPECT_TRUE(entries->as_array().empty());
+    }
+    EXPECT_TRUE(cleared);
+    // act the declarations are removed again, which is a manifest edit in the other direction (§11.2, §12.2)
+    std::ofstream(manifest) << "";
+    const Exchange broken = did_change_watched_manifest(server, manifest);
+    // assert the root is recompiled against the empty catalog and the unknown names return (§11.2, §16)
+    ASSERT_FALSE(broken.notifications.empty());
+    EXPECT_GT(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, ARelativeManifestResolvesAgainstTheFirstWorkspaceFolder) {
+    // arrange a workspace folder holding the manifest, which a client may name relative to it (§11.2, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-relative";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / "waveform.ui-manifest") << MANIFEST_FIXTURE;
+    // the workspace uri names the folder the relative path resolves against (§12.2)
+    const std::string folder = root.generic_string();
+    const std::string workspace_uri = "file://" + std::string(folder.starts_with('/') ? "" : "/") + folder;
+    // act the client names only the file name, which joins the first workspace folder (§11.2, §12.2)
+    LspServer server;
+    (void)did_initialize(server, {std::filesystem::path("waveform.ui-manifest")}, workspace_uri);
+    const Exchange exchange = did_open(server, std::string(MANIFEST_UI));
+    // assert the resolved manifest supplied the catalog, because the file compiles cleanly (§11.2, AD-17)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, TheServerAgreesWithTheCompilerOnAManifestBackedCorpus) {
+    // this is the suite section 16 defines, run over a corpus that names manifest declarations (§16)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-agreement";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // the corpus covers the names the manifest supplies and the mistakes a reader makes with them (§16)
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"a clean manifest component and record", std::string(MANIFEST_UI)},
+        {"an unknown manifest property", R"(component Panel { Column { WaveformView { nope: 1; } } })"},
+        {"an unknown record field", R"(component Panel { inout property<vector<Task>> tasks; Column { Repeat(task in tasks) { Label { text: task.nope; } } } })"},
+    };
+    for (const auto& [name, text] : cases) {
+        // arrange the editor opens the case with the manifest the build uses (§11.2, §16)
+        LspServer server;
+        (void)did_initialize(server, {manifest});
+        const Exchange exchange = did_open(server, text);
+        // act the compiler is run separately, which is the other side of the comparison (§16)
+        const std::vector<compiler::Diagnostic> expected = compiler_diagnostics(text, {manifest});
+        // assert the server published exactly what the compiler reported (§16)
+        const core::Json published_payload = published(exchange);
+        const core::Json* entries = published_payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr) << name;
+        EXPECT_EQ(entries->as_array().size(), expected.size()) << name;
+        // assert each code matches in order, because a count alone would pass a mismatched set (§16)
+        for (std::size_t index = 0; index < expected.size() && index < entries->as_array().size(); index++) {
+            // the code is what an editor filters by, so it is the stable identity of a diagnostic (§11.1, §16)
+            const core::Json* code = entries->as_array().at(index).member("code");
+            ASSERT_NE(code, nullptr) << name;
+            EXPECT_EQ(code->as_string(), expected.at(index).code) << name;
+        }
+        // assert the server's own counter agrees too, which is what the suite reads (§16)
+        EXPECT_EQ(server.last_diagnostic_count(), expected.size()) << name;
+    }
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, AManifestEditRefreshesEveryOpenRoot) {
+    // arrange a manifest and two open roots that both name its component (§11.2, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-every-root";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    const std::string first = R"(component First { Column { WaveformView { line_color: #00FF00; } } })";
+    const std::string second = R"(component Second { Column { WaveformView { line_color: #00FF00; } } })";
+    (void)did_open(server, first, "file:///first.ui");
+    (void)did_open(server, second, "file:///second.ui");
+    // act the manifest loses the component, which leaves both roots unresolved (§11.2, §12.2)
+    std::ofstream(manifest) << "";
+    const Exchange refreshed = did_change_watched_manifest(server, manifest);
+    // assert every open root is republished, not only the last one the store hands out (§12.2, §16)
+    bool first_published = false;
+    bool second_published = false;
+    for (const Notification& notification : refreshed.notifications) {
+        // a publication for another file carries no evidence about either root (§12.2)
+        if (notification.method != "textDocument/publishDiagnostics")
+            continue;
+        // the payload is parsed, because the uri and the diagnostics are what the assertion reads (§16)
+        const core::Json payload = core::Json::parse(notification.payload).value_or(core::Json());
+        // a payload without a string uri names no routed file, so it is skipped (§12.2)
+        const core::Json* uri = payload.member("uri");
+        // a payload that names no file carries no evidence about a root (§12.2)
+        if (uri == nullptr || uri->kind() != core::Json::Kind::String)
+            continue;
+        // the entries are what the editor paints for that file (§16)
+        const core::Json* entries = payload.member("diagnostics");
+        ASSERT_NE(entries, nullptr);
+        // each root is republished with the unknown name, which is what a refresh must show (§16)
+        if (uri->as_string() == "file:///first.ui") {
+            first_published = true;
+            EXPECT_FALSE(entries->as_array().empty());
+        }
+        // the second root is the one a first-root-only loop would leave stale (§12.2)
+        if (uri->as_string() == "file:///second.ui") {
+            second_published = true;
+            EXPECT_FALSE(entries->as_array().empty());
+        }
+    }
+    EXPECT_TRUE(first_published);
+    EXPECT_TRUE(second_published);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, AWatchedFileOutsideTheManifestListChangesNothing) {
+    // arrange a configured manifest and an open root that resolves through it (§11.2, AD-17)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-unrelated";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // the second manifest is on disk but not configured, so it is not a catalog source (§11.2, AD-17)
+    const std::filesystem::path other = root / "other.ui-manifest";
+    std::ofstream(other) << "native component OtherView {}\n";
+    LspServer server;
+    (void)did_initialize(server, {manifest});
+    (void)did_open(server, std::string(MANIFEST_UI));
+    ASSERT_EQ(server.last_diagnostic_count(), 0U);
+    // act the client reports an edit to a manifest that was never configured (§12.2)
+    const Exchange watched = did_change_watched_manifest(server, other);
+    // assert nothing is reloaded or republished, because the catalog did not change (§11.2, §12.2)
+    EXPECT_TRUE(watched.notifications.empty());
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, ARelativeManifestRefreshesFromAnAbsoluteUri) {
+    // arrange a workspace folder and a relative manifest, which resolve at the handshake (§11.2, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-relative-refresh";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path manifest = root / "waveform.ui-manifest";
+    std::ofstream(manifest) << MANIFEST_FIXTURE;
+    // the workspace uri names the folder the relative path resolves against (§12.2)
+    const std::string folder = root.generic_string();
+    const std::string workspace_uri = "file://" + std::string(folder.starts_with('/') ? "" : "/") + folder;
+    LspServer server;
+    (void)did_initialize(server, {std::filesystem::path("waveform.ui-manifest")}, workspace_uri);
+    (void)did_open(server, std::string(MANIFEST_UI));
+    ASSERT_EQ(server.last_diagnostic_count(), 0U);
+    // act the manifest is emptied and the client reports its absolute file uri (§12.2)
+    std::ofstream(manifest) << "";
+    const Exchange refreshed = did_change_watched_manifest(server, root / "waveform.ui-manifest");
+    // assert the resolved relative path still matches the event, so the root is recompiled (§12.2, §16)
+    ASSERT_FALSE(refreshed.notifications.empty());
+    EXPECT_GT(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspManifestChecks, ARecordAndAComponentResolveFromSeparateManifests) {
+    // arrange a component in the first manifest and the record it names in the second (§11.2, AD-17)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-manifest-separate";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path component_manifest = root / "component.ui-manifest";
+    std::ofstream(component_manifest) << "native component TaskView {\n    in property<vector<Task>> tasks;\n}\n";
+    const std::filesystem::path record_manifest = root / "record.ui-manifest";
+    std::ofstream(record_manifest) << "record Task {\n    key: string;\n    title: string;\n}\n";
+    // the ui file names the record as its own property and as the component's property (§11.2, AD-17)
+    const std::string text = R"(component Panel { inout property<vector<Task>> tasks; Column { TaskView { tasks: tasks; } } })";
+    // act the editor supplies both manifests, with the record declared in the one listed second (§11.2, AD-17)
+    LspServer server;
+    (void)did_initialize(server, {component_manifest, record_manifest});
+    const Exchange exchange = did_open(server, text);
+    // assert the record resolves before the component's surface is registered, because records join first (§11.2, AD-17)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    // assert the compiler resolves the same pair, because the editor and the build agree (§16)
+    EXPECT_TRUE(compiler_diagnostics(text, {component_manifest, record_manifest}).empty());
     std::filesystem::remove_all(root, ignored);
 }

@@ -108,10 +108,10 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_FRAMEWORK_INCLUDE_DIR="${PR
 # GTest::gtest_main already publishes GTest::gtest as part of its interface, so naming gtest here as
 # well would hand the linker the same archive twice. Naming only the entry point keeps one copy (§2.2)
 #
-# albor-manifest is named explicitly because it is a tool the framework itself never includes:
-# nothing inside core, ui or render may reach it, because a production build links no parser and
-# no interpreter (AD-01, §2.1). It publishes albor-compiler publicly, so the suites reach the
-# frontend through it and naming albor-compiler as well would hand the linker the same archive twice (§11.2)
+# albor-manifest is named by the language server, which resolves the manifest a client configures, so
+# its archive reaches this link through that module and naming it again would hand the linker the same
+# archive twice. Nothing inside core, ui or render may reach it, because a production build links no
+# parser and no interpreter (AD-01, §2.1, §11.2)
 #
 # albor-alloc-probe is linked because the binary counts its heap traffic, which is how a steady state frame and a
 # cached measure are measured rather than assumed (§2.2). A shipping build never links it, so the probe is excluded
@@ -119,7 +119,7 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_FRAMEWORK_INCLUDE_DIR="${PR
 #
 # albor-resources is not named here, because every render and text module that builds on it hands it to the final
 # link already. Naming it again would put the same archive on the link line twice, which the linker ignores (§3.2)
-target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d albor-render-albor GTest::gtest_main)
+target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d albor-render-albor GTest::gtest_main)
 
 if(ALBOR_DEV)
     target_sources(albor-tests PRIVATE "./conditional/devrt.test.cpp")

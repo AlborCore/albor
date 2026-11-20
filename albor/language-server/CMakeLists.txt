@@ -11,4 +11,4 @@ target_include_directories(albor-language-server PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-language-server PUBLIC cxx_std_20)
 
 # the server runs the same compiler the build runs, which is what makes its diagnostics the compiler's (§16)
-target_link_libraries(albor-language-server PUBLIC albor-compiler albor-core)
+target_link_libraries(albor-language-server PUBLIC albor-compiler albor-core PRIVATE albor-manifest)

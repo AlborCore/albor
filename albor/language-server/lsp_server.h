@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
@@ -8,6 +9,7 @@
 #include <vector>
 
 #include "albor/compiler/source_index.h"
+#include "albor/compiler/value_type.h"
 #include "albor/language-server/lsp_document.h"
 
 namespace albor::language_server
@@ -54,6 +56,18 @@ namespace albor::language_server
 
         // forget a closed root and clear the publications no other root still owns (§12.2)
         void close_root(std::string_view uri, std::vector<Notification>& notifications);
+
+        // rebuild the catalog from the builtins and the configured manifests (§11.2, AD-17)
+        void reload_catalog();
+
+        // report whether a changed path is a configured manifest, which a refresh keys on (§11.2, §12.2)
+        [[nodiscard]] bool is_manifest_path(const std::filesystem::path& path) const;
+
+        // the manifest paths the client configured, which is the catalog source the build uses too (§11.2, AD-17)
+        std::vector<std::filesystem::path> m_manifests;
+
+        // the catalog every compile, completion and hover resolves against, which carries the manifests (§11.2, AD-17)
+        compiler::ElementCatalog m_catalog = compiler::ElementCatalog::with_builtins();
 
         // the documents the editor has open, which every request is answered from (§12.2)
         DocumentStore m_documents;
