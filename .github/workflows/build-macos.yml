@@ -107,6 +107,10 @@ jobs:
         working-directory: .build-${{ matrix.preset }}/tests
         run: ./albor-tests && ./albor-generated-font-checks
 
+      - name: link boundary (release)
+        if: matrix.enable && matrix.preset == 'release'
+        run: bash build/check-link-boundary.sh
+
       - name: lcov coverage report
         if: matrix.enable && matrix.preset == 'coverage'
         run: |

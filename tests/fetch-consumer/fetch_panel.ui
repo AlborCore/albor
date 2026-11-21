@@ -1,0 +1,13 @@
+component FetchPanel {
+    inout property<int> count: 0;
+
+    Column {
+        spacing: 8px;
+        Label { text: "Fetched from GitHub"; }
+        Button {
+            id: bump;
+            text: "Increment";
+            on_clicked: { count = count + 1; }
+        }
+    }
+}

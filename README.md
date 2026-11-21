@@ -20,7 +20,7 @@ conventional desktop controls with first-class support for high-throughput custo
 rendering (schematics, CAD views, waveforms, plots), real multi-window behavior with
 modality, and a two-stage render pipeline that never blocks the UI thread on drawing.
 
-> **Status: under heavy development.** macOS (AppKit + Metal) and Windows
+> **Status: pre-release, under active development.** The current external target is a pre-release; a stable tag is withheld while the blockers in [Status](docs/status.md#pre-release-scope) remain open. macOS (AppKit + Metal) and Windows
 > (Win32 + Direct3D) are implemented and built in CI; Linux ships Wayland (Tier 1) and
 > X11 (Tier 2) with `render-albor` on Vulkan, built with lavapipe and Weston/Xvfb in CI.
 > `render-albor`, the in-repo GPU 2D renderer, draws shapes, retained

@@ -11,7 +11,7 @@ interpreter="python3"
 command -v python3 >/dev/null 2>&1 || interpreter="python"
 
 "$interpreter" - "$root_dir" <<'PYEOF'
-import json, os, pathlib, re, sys, urllib.error, urllib.request
+import json, os, pathlib, re, sys, time, urllib.error, urllib.request
 
 
 root = pathlib.Path(sys.argv[1])
@@ -134,15 +134,31 @@ ref = match.group(1)
 if ref.startswith("0") and len(set(ref)) == 1:
     issue("ports/albor/portfile.cmake carries a placeholder REF; the release automation must write the real one")
 
-try:
-    pinned = urllib.request.urlopen(f"https://github.com/{repository}/commit/{ref}", timeout=10)
-except urllib.error.HTTPError as error:
-    if error.code == 404:
-        issue(f"the pinned commit {ref[:12]}... does not exist on {repository}: HTTP 404")
-    print(f"note: GitHub returned HTTP {error.code} for the pinned commit, so the pin stays unverified this run")
-    sys.exit(0)
-except Exception as error:
-    print(f"note: the pinned commit could not be checked from here ({error}); the pin stays unverified this run")
-    sys.exit(0)
+# an unreachable GitHub must not turn the pin check into a no-op; offline work opts out explicitly
+offline_ok = os.environ.get("ALBOR_PORT_ALLOW_UNVERIFIED") == "1"
+
+def unverified(reason):
+    if offline_ok:
+        print(f"note: {reason}; ALBOR_PORT_ALLOW_UNVERIFIED=1 keeps the pin unverified")
+        sys.exit(0)
+    issue(f"{reason}; set ALBOR_PORT_ALLOW_UNVERIFIED=1 only for offline work")
+
+# a transient 5xx is common on GitHub, so retry briefly before declaring the pin unverified
+last_error = None
+for attempt in range(3):
+    try:
+        urllib.request.urlopen(f"https://github.com/{repository}/commit/{ref}", timeout=10)
+        last_error = None
+        break
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            issue(f"the pinned commit {ref[:12]}... does not exist on {repository}: HTTP 404")
+        last_error = f"GitHub returned HTTP {error.code} for the pinned commit {ref[:12]}..."
+    except Exception as error:
+        last_error = f"the pinned commit could not be checked from here ({error})"
+    if attempt < 2:
+        time.sleep(2)
+if last_error:
+    unverified(last_error)
 print(f"pinned commit {ref[:12]}... exists on {repository}")
 PYEOF

@@ -1,8 +1,48 @@
 # Status
 
-Albor's five implementation phases are complete. This page reflects what is shipped and
-what is not, so a reader knows what a code sample will do today. The authoritative
-architecture and acceptance contract is [`framework-design.md`](framework-design.md).
+Albor's five implementation phases delivered their runtime surfaces. One Phase 5 tooling
+deliverable, the Python automation compatibility harness (GAP-01, #25), is still open, so this
+page distinguishes what a pre-release consumer can use from what a stable tag requires. The
+authoritative architecture and acceptance contract is [`framework-design.md`](framework-design.md).
+
+## Pre-release scope
+
+The current external target is a **pre-release**. A stable tag is deliberately withheld while
+the stable-tag blockers below remain open; tracking is in #263. An accepted item is a documented
+limitation of the pre-release, not a defect that may be raised by a change.
+
+| Contract gap | Pre-release | Rationale |
+| --- | --- | --- |
+| GAP-01 (#25) automation compatibility harness | blocks stable | §13.2 names the suite; Phase 5 deliverable 2 is not delivered |
+| GAP-02 (#98, #99) RTL mirroring and bidi | blocks stable | i18n is described as shipped; the limitation must be closed before a stable claim |
+| GAP-03 out-of-process dev service | accepted | Dev-only reload path, independent of the shipped application |
+| GAP-04 full LSP component-aware completion | accepted | Dev tooling; standard definition, symbols and tokens ship |
+| GAP-05 input coalescing, touch/pen, focus scopes | accepted | mouse/keyboard normalization and focus are complete |
+| GAP-06 script coverage of non-Latin golden corpus | accepted | pixel-identity budgets are not claimed by the pre-release |
+| GAP-07 per-argument handler `invoke()` values | accepted | signals and handlers carry their declared arguments today |
+| GAP-08 subtree-level relayout | accepted | damage-region repaint ships; this is a performance follow-up |
+
+| Issue | Pre-release | Rationale |
+| --- | --- | --- |
+| #95 retained pictures drop embedded text | blocks stable | embedded text in a retained picture is a documented use of custom rendering |
+| #7 manifest consistency suite | blocks stable | §13.2 requires the glue/descriptor/preview-stub agreement check |
+| #11 physical pixel lengths | accepted | AD-27 defers density to the surface; codegen refuses the unit deliberately |
+| #97 devrt/preview font-selection properties | accepted | Dev/Test tooling only, excluded from Release at link time |
+| #117 occluded capture can block the UI thread | blocks stable | a hang is not an acceptable pre-release limitation for an application |
+| #112 PNG encode stalls a frame | blocks stable | frame pacing is a load-bearing promise of §6.1 |
+| #257 Codecov coverage | neither | already delivered in #258; the issue is stale and closed |
+| #20, #31–#36, #89, #114, #119–#122, #232 | accepted | enhancements, benchmarks and documentation outside the pre-release contract |
+
+A consumer of the pre-release should read the platform tables below for the current per-platform
+levels; "Full" there means implemented and covered by the suites that run today, not that every
+gap above is closed.
+
+The pre-release's consumption evidence runs in CI on every `main` push and nightly: the `port`
+workflow builds the installed package against `tests/consumer` and the `FetchContent` source route
+against `tests/fetch-consumer`. The `link boundary` step in the macOS and Linux Release jobs runs
+`build/check-link-boundary.sh` over the shipping archives; on Windows the same boundary is held by
+the Release link itself (a reference to an excluded dev symbol fails to link, BDG-03), with a
+native symbol scan tracked in #263.
 
 ## Platforms
 

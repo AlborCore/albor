@@ -38,8 +38,14 @@ directly rather than through `ctest`:
 ```sh
 ./.build-debug/tests/albor-tests
 bash build/check-format.sh
-bash build/check-link-boundary.sh
+bash build/check-link-boundary.sh   # scans .build-release/albor after a release build
 ```
+
+The link-boundary check verifies BDG-03 and BDG-04: the shipping Release archives carry no dev
+runtime symbol. With no argument it inspects every shipping archive under `.build-release/albor`;
+set `ALBOR_RELEASE_DIR` for a different tree, or pass a single static library to inspect one unit.
+The check refuses to report a pass when its dev-only pattern no longer matches a Debug dev runtime
+library, so a stale symbol cannot turn the gate into a no-op.
 
 ### AddressSanitizer
 
