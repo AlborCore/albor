@@ -21,12 +21,15 @@ component Panel {
 }
 ```
 
-A component carries, in this order:
+A component carries:
 
 1. **properties** — typed state with optional defaults ([Properties](properties.md))
 2. **signals** — named events the host can subscribe to
    ([Signals and handlers](handlers.md))
-3. **a root element** — exactly one; a component that declares none is rejected
+3. **commands** — `command save "Save";` declares a shared action
+4. **a root element** — exactly one; a component that declares none is rejected
+
+The declaration kinds may be written in any order.
 
 A file exports one component: the one whose name is its file stem in PascalCase. It may declare
 further components only as same-file bases for that export
@@ -105,8 +108,8 @@ The rules:
   next, and the catalog is the last resort. The same shadow rule the type resolver follows
   applies to elements.
 - **A base is inherited, not instantiated.** A same-file base has no pair the build compiles,
-  so naming it as an element fails at link time. Use it after `:` in a component declaration
-  and instantiate the exported component instead.
+  so naming it as an element fails at compile time when the generated base header is missing.
+  Use it after `:` in a component declaration and instantiate the exported component instead.
 - **Composition may cross a file boundary.** A file imports another file's component with a
   quoted path, resolved relative to the importing file. The path uses `/` on every platform,
   because it names a portable source path:

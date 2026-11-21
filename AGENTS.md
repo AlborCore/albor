@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Albor is a cross-platform declarative UI framework for C++ (architecture: `albor-design-v4.md`).
+Albor is a cross-platform declarative UI framework for C++ (architecture: [`docs/framework-design.md`](docs/framework-design.md)).
 This document is the agent contract for this repository. Everything here is mandatory.
 
 ## Language
@@ -24,14 +24,14 @@ Mandatory rules for a source that reaches a platform API (`AppKit`, `Metal`, `Co
 - The file carries the infix of the platform it targets, so `render/render-albor/albor_metal_backend.macos.mm` is correct and `albor_metal_backend.mm` is not
 - The base name never repeats the platform, so the file is `platform_window.macos.mm` and not `macos_platform_window.mm`; the platform is already carried by the infix and by the directory
 - A source that reaches no platform API stays portable, even inside a platform module, so `render/render-blend2d/blend2d_render_context.cpp` stays `.cpp` because it only calls blend2d
-- A header stays portable whenever it can: the module's public header carries no platform type (§3.5, AD-05), so it is `platform/macos/platform_window.h` and not `platform_window.macos.h`
+- A header stays portable whenever it can: the module's public header carries no platform type (BDG-08), so it is `platform/macos/platform_window.h` and not `platform_window.macos.h`
 - A header that cannot be portable, because it declares platform types or imports platform headers, carries the infix as well, for example `native_surface.macos.h`
 - The infix is part of the file's identity: renaming a file is a build change, so the module `CMakeLists.txt` and every `#include` are updated in the same change
 
 A shader is `<name>.metal`, for example `render/render-albor/albor_shaders.metal`, or its direct3d twin
 `<name>.hlsl`, for example `render/render-albor/albor_shaders.hlsl`. The compiled artifact (`<name>.metallib`,
 `<name>.dxbc` or the vulkan container `<name>.spv`) and a `.sha256` stamp of the pair are **committed build inputs**, because a framework consumer
-must not need the shader toolchain to build (§6.3, AD-16): every platform build embeds the artifact and verifies the stamp, so a
+must not need the shader toolchain to build (§4, BDG-10): every platform build embeds the artifact and verifies the stamp, so a
 shader change without regeneration fails. `bash build/shaders.sh [--d3d|--vulkan|--all] --write` regenerates them, and is the only place the
 toolchain runs. A shader is not a C++ source: clang-format does not rewrite it, and the comment sweep in
 `build/check-format.sh` checks its comment length and adjacency like any other file.
@@ -42,29 +42,29 @@ pattern in `build/check-format.sh` in the same change.
 
 ## Source of Truth
 
-- `albor-design-v4.md` is the architecture specification. It outranks any implementation habit.
-- `macos-windows.md` is the shared macOS/Windows parity ledger; keep it current with every platform change.
-- Architectural decisions are settled (**Decided**, §13) with modular hardware and subsystem abstraction layers. Do not reopen settled decisions without a documented revision.
+- [`docs/framework-design.md`](docs/framework-design.md) is the architecture and acceptance contract. It outranks any implementation habit.
+- All three platforms — macOS, Windows and Linux — stay at the same level; a platform change carries its equivalents on the other two in the same change. `docs/status.md` is the shared per-abstraction support table.
+- Architectural decisions are settled in the framework design contract. Do not reopen a settled boundary without a documented revision of that contract.
 - Do not weaken a boundary the spec draws. The load-bearing ones are listed under **Non-negotiable Boundaries** below.
-- Reference sections as `§N` / `AD-NN` in commit messages, code comments and reviews so decisions stay traceable.
+- Reference contract clauses as `BDG-NN`, gaps as `GAP-NN`, and section numbers as `§N` of `docs/framework-design.md` in commit messages, code comments and reviews so decisions stay traceable.
 
 ## Non-negotiable Boundaries
 
 Violating any of these is a defect, not a style issue.
 
-- **No interpreter in Release** (AD-01, §2.1): production builds contain no `.ui` parser, no IR evaluator, no type registry, no property-by-name reflection, no automation channel.
-- **Layout invariance** (AD-02, §2.3): runtime class layout and virtual interfaces are identical in Release, Dev and Test. Dev/Test features attach only through registration hooks that exist in every build, side tables keyed by node identity, and separately linked/generated translation units. Never change class layout or inline code under `#ifdef`.
-- **Dev/Test-only code is excluded at link time, never with `#ifdef`** (AD-04, §2.3). Keep the source byte-identical across configurations, put the feature in its own linked target, and install it through the registration hook. A Release reference to an excluded symbol must fail the link, not compile away silently.
-- **Automation is excluded from Release at compile/link time** (AD-10, §10.3), not by a runtime flag. Local-only transport, per-session token, application allow-list, off unless explicitly enabled. The embedded host is linked via the whole-archive umbrella when `ALBOR_AUTOMATION` is on, and is independent of the dev runtime extension (AD-02, §10.3).
-- **MCP is an adapter over the automation layer only** (AD-20, §10.3). It must not reach commands or runtime internals directly.
-- **Identity is explicit** (AD-11, §18.1): a node's `id:` is its identity; compiler-generated implicit keys are correlation hints for live reload and must never be used by automation selectors or semantic keys.
-- **Two-stage frame** (AD-18, §10.2): scene build runs on the UI thread and produces an immutable `FrameScene`; render execution may run on a render thread and must never call application code.
-- **Immutable snapshots cross threads** (§10.5, §13.2): application data reaches custom nodes and bindings as `std::shared_ptr<const T>` in an observable `Snapshot<T>`. `Observable<T>::post_set` is the thread-safe path; `set` is UI-thread only.
-- **The manifest is the single source of truth for native components** (AD-17, §11.2): C++ glue is generated from the manifest, and the compiler never parses C++ headers.
-- **No platform or renderer types in public headers** (§3.5, AD-05, AD-19).
-- **Native backend parity** (§6.3, AD-05): `render-albor` ships three native GPU backends, Metal on macOS, Direct3D 11 on Windows and Vulkan on Linux, and they stay at the same level. Every capability, fix and optimization is applied to all three in the same change: the same retained resources, cache policy, base-vertex handling, profiling coverage and tests. A change carried by one backend only is a defect, not a follow-up, and the backends that cannot be built on the host are verified in CI before the change is done.
-- **Platform parity** (§5.3, AD-16): macOS and Windows stay at the same level. Any change to a macOS-specific source (`*.macos.mm`, AppKit, CoreText, CoreVideo, Metal, NSAccessibility) carries its Windows equivalent (`*.win32.c++`, Win32, DirectWrite, Direct3D, UI Automation) in the same change, with the same tests; the reverse holds too. A change carried by one platform only is a defect, not a follow-up. The platform that cannot be built on the host is verified in CI before the change is done, and `macos-windows.md` is updated with the new status. Linux is the third platform: Wayland is Tier 1 and X11 is Tier 2 (AD-22), and both adapters carry the same tests.
-- **The compiler is not the runtime, and development tooling is not the production application** (§2).
+- **No interpreter in Release** (BDG-01): production builds contain no `.ui` parser, no IR evaluator, no type registry, no property-by-name reflection, no automation channel.
+- **Layout invariance** (BDG-02): runtime class layout and virtual interfaces are identical in Release, Dev and Test. Dev/Test features attach only through registration hooks that exist in every build, side tables keyed by node identity, and separately linked/generated translation units. Never change class layout or inline code under `#ifdef`.
+- **Dev/Test-only code is excluded at link time, never with `#ifdef`** (BDG-03). Keep the source byte-identical across configurations, put the feature in its own linked target, and install it through the registration hook. A Release reference to an excluded symbol must fail the link, not compile away silently.
+- **Automation is excluded from Release at compile/link time** (BDG-04), not by a runtime flag. Local-only transport, per-session token, application allow-list, off unless explicitly enabled. The embedded host is linked via the whole-archive umbrella when `ALBOR_AUTOMATION` is on, and is independent of the dev runtime extension (BDG-03).
+- **MCP is an adapter over the automation layer only** (BDG-04). It must not reach commands or runtime internals directly.
+- **Identity is explicit** (BDG-05): a node's `id:` is its identity; compiler-generated implicit keys are correlation hints for live reload and must never be used by automation selectors or semantic keys.
+- **Two-stage frame** (BDG-06): scene build runs on the UI thread and produces an immutable `FrameScene`; render execution may run on a render thread and must never call application code.
+- **Immutable snapshots cross threads** (BDG-06): application data reaches custom nodes and bindings as `std::shared_ptr<const T>` in an observable `Snapshot<T>`. `Observable<T>::post_set` is the thread-safe path; `set` is UI-thread only.
+- **The manifest is the single source of truth for native components** (BDG-07): C++ glue is generated from the manifest, and the compiler never parses C++ headers.
+- **No platform or renderer types in public headers** (BDG-08).
+- **Native backend parity** (BDG-09): `render-albor` ships three native GPU backends, Metal on macOS, Direct3D 11 on Windows and Vulkan on Linux, and they stay at the same level. Every capability, fix and optimization is applied to all three in the same change: the same retained resources, cache policy, base-vertex handling, profiling coverage and tests. A change carried by one backend only is a defect, not a follow-up, and the backends that cannot be built on the host are verified in CI before the change is done.
+- **Platform parity** (BDG-10): macOS, Windows and Linux stay at the same level. Any change to a platform-specific source (`*.macos.mm`, AppKit, CoreText, CoreVideo, Metal, NSAccessibility; `*.win32.c++`, Win32, DirectWrite, Direct3D, UI Automation; `*.linux.c++`, Wayland, X11) carries its equivalents on the other two platforms in the same change, with the same tests; a change carried by one platform only is a defect, not a follow-up. The platforms that cannot be built on the host are verified in CI before the change is done. Wayland is Tier 1 and X11 is Tier 2 (§5.3 of the design contract), and both adapters carry the same tests.
+- **The compiler is not the runtime, and development tooling is not the production application** (BDG-11).
 
 ## Recovery Points
 
@@ -83,7 +83,7 @@ Violating any of these is a defect, not a style issue.
 - Dependencies: `vcpkg` (manifest mode, pinned in `vcpkg.json`)
 - Unit Tests, avoid running unit tests using `ctest`. Execute unit tests by executing the process: `./.build-debug/tests/albor-tests`
 - Unit tests must be self-contained: no helper functions, no test utilities, no external fixtures. The only shared object is the test double.
-- Debug builds define `ALBOR_DEV` and link the dev runtime extension; Test builds define `ALBOR_TEST` and link the automation core and the software renderer (§2.2).
+- Debug builds define `ALBOR_DEV` and link the dev runtime extension and automation host; Test builds define `ALBOR_TEST` and link the automation core and the software renderer (§4).
 
 ## Workflow
 
@@ -94,7 +94,13 @@ Before editing:
 3. Follow conventions in `STYLE-GUIDE.md` and the surrounding code
 4. Make minimal changes
 
-A macOS-specific change is not complete without its Windows counterpart: update both platform sources, both test suites, and `macos-windows.md` in the same change.
+**Documentation is mandatory for every feature.** Any change that adds or alters a feature must
+include a task that updates the affected documentation in the same change: the relevant page under
+`docs/`, `docs/status.md` when an implementation level changes, and `docs/framework-design.md` when
+a contract or gap changes. A change that implements a `GAP-NN` item must close that gap in the
+contract. A feature without its documentation task is incomplete, not a follow-up.
+
+A platform-specific change is not complete without its counterparts on the other two platforms: update all three platform sources and their test suites in the same change.
 
 After editing:
 
@@ -107,7 +113,7 @@ After editing:
 
 ## Repository Layout
 
-The layout follows §3.2. Module directories map to runtime modules and must stay synchronized with them.
+The layout follows §3.1 of the design contract. Module directories map to runtime modules and must stay synchronized with them.
 
 ```text
 albor/ (every framework module lives under this include folder, so consumers
@@ -123,61 +129,63 @@ build/ docs/ ports/ third-party/ tools/ examples/ tests/
 ```
 
 - Phase 0 prototype code lives exclusively on the `prototypes` git branch for historical reference. The implementation branch (branched out of `main`) contains only clean production modules and tests; no `prototypes/` directory exists here.
-- `devrt/`, `automation/` and `inspector/` are linked only in Dev and Test configurations. A `core/`, `ui/`, `window/` or `render/` file that references them breaks AD-10.
+- `devrt/`, `automation/` and `inspector/` are linked only in Dev and Test configurations. A `core/`, `ui/`, `window/` or `render/` file that references them violates BDG-04.
 
 ## Architecture Map
 
 Where each subsystem is specified, so that changes land in the right module.
 
-| Area | Spec | Module | Phase |
-| --- | --- | --- | --- |
-| Application, event loop, tasks, timers, lifetime tokens | §4 | `application/` | 1 |
-| Window roles, modality, `WindowHandle`, close request | §5 | `window/` | 1 |
-| Platform abstraction, macOS/Win32/Wayland HAL | §5.3 | `platform/` | 1 |
-| Render surface, metrics, scale factor | §5, §6 | `render/` | 1 |
-| Frame pipeline, two-stage frame, scheduler | §6.1 | `render/` | 1 |
-| Custom rendering: `CustomRenderNode`, `RenderContext`, retained resources | §6.4 | `render/` | 1 |
-| Reactive properties, eager-push bindings, `Property<T>` | §7 | `ui/`, `runtime/` | 2 |
-| UI tree, `UiNode`, components, event routing | §8.1 | `ui/` | 2 |
-| Semantic tree, explicit/implicit keys, `SemanticProvider` | §10.1 | `semantics/` | 2 |
-| Input normalization, coalescing, focus | §8.3 | `input/`, `focus/` | 3 |
-| Layout contract: measure & arrange, containers | §8.2 | `layout/` | 3 |
-| Text, measurement, Unicode shaping, HarfBuzz | §9.1 | `text/` | 3 |
-| Standard widgets (Button, Label, Slider, Canvas) | §8 | `widgets/` | 3 |
-| Animation core & frame scheduler integration | §7.3 | `animation/` | 3 |
-| Compiler frontend, .ui parser, AST, typed IR | §11.1 | `compiler/` | 4 |
-| Manifest parser, validator, glue generator | §11.2 | `manifest/` | 4 |
-| C++ code generator, concrete facade emission | §11.3 | `compiler/` | 4 |
-| Dev runtime extension, IR loader, reload adapter | §12.1 | `devrt/` | 5 |
-| LSP, preview host, inspector diagnostics | §12.2 | `language-server/`, `preview/`, `inspector/` | 5 |
-| Automation core (Dev/Test only), MCP server adapter | §10.3 | `automation/` | 5 |
-| Platform accessibility adapters (NSAccessibility, UIA, AT-SPI) | §10.2 | `accessibility/` | 5 |
+Section numbers refer to [`docs/framework-design.md`](docs/framework-design.md).
+
+| Area | Design contract | Module |
+| --- | --- | --- |
+| Application, event loop, tasks, timers, lifetime tokens | §5.1 | `application/` |
+| Window roles, modality, `WindowHandle`, close request | §5.2 | `window/` |
+| Platform abstraction, macOS/Win32/Wayland/X11 HAL | §5.3 | `platform/` |
+| Render surface, metrics, scale factor | §6 | `render/` |
+| Frame pipeline, two-stage frame, scheduler | §6.1 | `render/` |
+| Custom rendering: `CustomRenderNode`, `RenderContext`, retained resources | §6.2 | `render/` |
+| Reactive properties, eager-push bindings, `Property<T>` | §7 | `ui/`, `runtime/` |
+| UI tree, `UiNode`, components, event routing | §8.1 | `ui/` |
+| Semantic tree, explicit/implicit keys, `SemanticProvider` | §10.1 | `semantics/` |
+| Input normalization, focus | §8.3 | `input/`, `focus/` |
+| Layout contract: measure & arrange, containers | §8.2 | `layout/` |
+| Text, measurement, Unicode shaping, HarfBuzz | §9 | `text/` |
+| Standard widgets (Button, Label, Slider, Canvas) | §8 | `widgets/` |
+| Animation core & frame scheduler integration | §3.1 | `animation/` |
+| Compiler frontend, .ui parser, AST, typed IR | §11 | `compiler/` |
+| Manifest parser, validator, glue generator | §11 | `manifest/` |
+| C++ code generator, concrete facade emission | §11 | `compiler/` |
+| Dev runtime extension, IR loader, reload adapter | §12 | `devrt/` |
+| LSP, preview host, inspector diagnostics | §12 | `language-server/`, `preview/`, `inspector/` |
+| Automation core (Dev/Test only), MCP server adapter | §10.3 | `automation/` |
+| Platform accessibility adapters (NSAccessibility, UIA, AT-SPI) | §10.2 | `accessibility/` |
 
 ## Codegen Conventions
 
-For generated C++ (§14) and any hand-written stand-in for it:
+For generated C++ (§11 of the design contract) and any hand-written stand-in for it:
 
-- `.ui` compiles to native C++. A property binding is a **plain static function** plus **declared dependencies as `PropertyId`s**. No `std::function` per binding, no per-binding heap allocation (§13.3).
-- Generated public headers expose a **concrete, non-virtual facade** over an opaque implementation: stable interface, private body (§14.1, AD-03). Never generate an abstract base with virtual dispatch.
-- The generator writes a generated file **only when its content changes** (§14.2).
-- Editing a `.ui` body must rebuild only that component's generated `.cpp`; changing a declared interface rebuilds the header and its includers (§14.3).
+- `.ui` compiles to native C++. A property binding is a **plain static function** plus **declared dependencies as `PropertyId`s**. No `std::function` per binding, no per-binding heap allocation (§7).
+- Generated public headers expose a **concrete, non-virtual facade** over an opaque implementation: stable interface, private body (§11). Never generate an abstract base with virtual dispatch.
+- The generator writes a generated file **only when its content changes** (§11).
+- Editing a `.ui` body must rebuild only that component's generated `.cpp`; changing a declared interface rebuilds the header and its includers (§13).
 - Generated headers follow the `.h` extension and the include order of `STYLE-GUIDE.md`; the codegen must produce files that already pass `bash build/check-format.sh`.
 
 ## Testing
 
-C++ uses Google Test; Python uses `unittest` (see `STYLE-GUIDE.md`). Beyond per-file unit tests, the architecture defines cross-cutting suites (§16):
+C++ uses Google Test; Python uses `unittest` (see `STYLE-GUIDE.md`). Beyond per-file unit tests, the design contract defines cross-cutting suites (§13.2):
 
-- **Dual-engine conformance**: one `.ui` corpus through compiled output and the dev IR evaluator, same observable behavior (AD-25). This is what makes §2.4 true.
-- **GPU/software parity**: every Level 2 resource kind and primitive behaves the same in both renderers within tolerance (§11.7, AD-26). The software renderer is the screenshot reference.
-- **Native backend parity**: every behavior or performance guarantee proven in the Metal suite is proven in the Direct3D and Vulkan suites, and vice versa; the three suites stay mirrored, so a backend-only test gap is a defect (§6.3, AD-05).
-- **Platform parity**: every macOS-specific behavior is proven in the Windows suite and vice versa; a platform-only test gap is a defect, and `macos-windows.md` records the current parity ledger (§5.3, AD-16).
-- **LSP/compiler agreement**: same corpus, same diagnostics (§16).
+- **Dual-engine conformance**: one `.ui` corpus through compiled output and the dev IR evaluator, same observable behavior (§13.2).
+- **GPU/software parity**: every resource kind and primitive behaves the same in the GPU backends and the software reference within tolerance (§13.2). The software renderer is the screenshot reference.
+- **Native backend parity**: every behavior or performance guarantee proven in the Metal suite is proven in the Direct3D and Vulkan suites, and vice versa; the three suites stay mirrored, so a backend-only test gap is a defect (BDG-09).
+- **Platform parity**: every platform-specific behavior is proven in the suites of the other two platforms; a platform-only test gap is a defect, and `docs/status.md` records the per-platform support levels (BDG-10).
+- **LSP/compiler agreement**: same corpus, same diagnostics (§13.2).
 - **Manifest consistency**: generated glue, descriptor tables and preview stubs agree with the manifest.
 - **Semantic tree tests**: role, name, states and actions of every widget; a widget is not done without them.
-- **Build-scope tests**: a scripted check that a `.ui` body edit rebuilds only the expected translation units (§14.3).
-- **Automation compatibility**: the reference test in Appendix B runs against a sample application.
+- **Build-scope tests**: a scripted check that a `.ui` body edit rebuilds only the expected translation units (§13).
+- **Automation compatibility**: the reference test runs against a sample application (§13.2).
 
 ## Implementation Phasing
 
-Implementation follows §14 (Phases 1 through 5). Phase 0 exploratory prototyping is concluded; all Phase 0 code is preserved on the `prototypes` git branch for reference.
+All five implementation phases are complete; the current architecture is described in [`docs/framework-design.md`](docs/framework-design.md). Phase 0 exploratory prototyping is concluded; all Phase 0 code is preserved on the `prototypes` git branch for reference.
 The implementation codebase branched from `main` is clean: only production modules, runtime libraries, tooling, and unit tests exist.

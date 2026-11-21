@@ -25,6 +25,7 @@ jobs:
     outputs:
       has_pr: ${{ steps.check.outputs.has_pr }}
     steps:
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/check-pr
         id: check
         env:

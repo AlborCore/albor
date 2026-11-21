@@ -65,19 +65,13 @@ namespace
 
 } // namespace
 
-// the bridge every accessibility check runs over, which skips where the platform installs no adapter (§10.2, AD-08)
+// the bridge every accessibility check runs over, which every desktop platform now provides (§10.2, BDG-10)
 class AccessibilityBridge : public ::testing::Test
 {
 protected:
     void SetUp() override {
-#if defined(_WIN32) || defined(__APPLE__)
-        // the two windowed platforms must provide a bridge, so a missing one fails rather than skips (§10.2, AD-16)
+        // the three desktop platforms must provide a bridge, so a missing one fails rather than skips (§10.2, BDG-10)
         ASSERT_TRUE(accessibility::AccessibilityAdapter::available()) << "this platform must install the accessibility adapter";
-#else
-        // a platform with no bridge is the quiet default, which the portable suite records rather than fails (§10.2)
-        if (!accessibility::AccessibilityAdapter::available())
-            GTEST_SKIP() << "this platform installs no accessibility adapter yet";
-#endif
     }
 };
 

@@ -208,6 +208,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_compile_definitions(albor-tests PRIVATE ALBOR_HAVE_FONTCONFIG=1)
         target_link_libraries(albor-tests PRIVATE Fontconfig::Fontconfig)
     endif()
+    # the accessibility suite speaks at-spi to the bridge on a private bus, which only a build with the bridge carries (§10.2)
+    if(ALBOR_ATSPI_FOUND)
+        target_sources(albor-tests PRIVATE "./conditional/accessibility_role.test.linux.c++")
+        target_link_libraries(albor-tests PRIVATE PkgConfig::ATSPI_DBUS_PC)
+    endif()
 endif()
 
 

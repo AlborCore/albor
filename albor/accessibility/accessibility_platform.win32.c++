@@ -230,6 +230,34 @@ namespace albor::accessibility::platform
             return array;
         }
 
+        // collect the nodes without a parent, which are the roots the window announces (§10.2)
+        std::vector<std::size_t> root_indices(const SemanticTree& tree) {
+            std::vector<std::size_t> roots;
+            for (std::size_t index = 0; index < tree.size(); index++)
+                if (tree.parent_of(index) == SemanticTree::NO_PARENT)
+                    roots.push_back(index);
+            return roots;
+        }
+
+        // build the interface array the selection pattern hands out, which ui automation reads chosen children from (§10.2)
+        SAFEARRAY* provider_array(const std::vector<IRawElementProviderSimple*>& providers) {
+            // the array holds one entry per chosen child, which the pattern reports as one set (§10.2)
+            SAFEARRAY* array = SafeArrayCreateVector(VT_UNKNOWN, 0, static_cast<ULONG>(providers.size()));
+            // an array the allocator refused leaves the selection unreadable (§10.2)
+            if (array == nullptr)
+                return nullptr;
+            for (LONG index = 0; index < static_cast<LONG>(providers.size()); index++) {
+                // an interface array holds the pointer itself, which the array takes over (§10.2)
+                IUnknown* element = providers[static_cast<std::size_t>(index)];
+                // a refused write releases the array rather than handing over a partial set (§10.2)
+                if (FAILED(SafeArrayPutElement(array, &index, element))) {
+                    SafeArrayDestroy(array);
+                    return nullptr;
+                }
+            }
+            return array;
+        }
+
         // build the four doubles a bounding rectangle carries, which ui automation reads in screen pixels (§10.2)
         SAFEARRAY* rectangle_array(const UiaRect& rectangle) {
             // the array holds left, top, width and height in that order, which the property contract fixes (§10.2)
@@ -629,7 +657,7 @@ namespace albor::accessibility::platform
         };
 
         // one published semantic node, which is the unit assistive technology reads and acts on (§10.2)
-        class NodeProvider final : public IRawElementProviderSimple, public IRawElementProviderFragment, public IInvokeProvider, public IToggleProvider, public IValueProvider, public ISelectionItemProvider, public IExpandCollapseProvider, public IRangeValueProvider
+        class NodeProvider final : public IRawElementProviderSimple, public IRawElementProviderFragment, public IInvokeProvider, public IToggleProvider, public IValueProvider, public ISelectionItemProvider, public ISelectionProvider, public IExpandCollapseProvider, public IRangeValueProvider
         {
         public:
             // the node reads one index of one immutable publication, which the bridge owns for as long as it lives (§10.2)
@@ -684,6 +712,8 @@ namespace albor::accessibility::platform
                     *result = static_cast<IValueProvider*>(this);
                 else if (interface_id == __uuidof(ISelectionItemProvider) && node() != nullptr && (node()->role() == SemanticRole::ListItem || node()->role() == SemanticRole::TabItem || node()->role() == SemanticRole::RadioButton))
                     *result = static_cast<ISelectionItemProvider*>(this);
+                else if (interface_id == __uuidof(ISelectionProvider) && node() != nullptr && node()->role() == SemanticRole::RadioGroup)
+                    *result = static_cast<ISelectionProvider*>(this);
                 else
                     return E_NOINTERFACE;
                 // the handed out interface owns one reference, which com expects the caller to release (§10.2)
@@ -740,6 +770,11 @@ namespace albor::accessibility::platform
                     // a list row, a tab item and a radio button carry a selection, which the pattern mapping fixes (§10.1)
                     if (published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton)
                         *result = static_cast<IUnknown*>(static_cast<ISelectionItemProvider*>(this));
+                    break;
+                case UIA_SelectionPatternId:
+                    // a radio group carries the selection its choices are read from (§10.1)
+                    if (published->role() == SemanticRole::RadioGroup)
+                        *result = static_cast<IUnknown*>(static_cast<ISelectionProvider*>(this));
                     break;
                 default:
                     break;
@@ -863,6 +898,20 @@ namespace albor::accessibility::platform
                     return S_OK;
                 case UIA_IsSelectionItemPatternAvailablePropertyId:
                     set_variant_bool(result, published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton);
+                    return S_OK;
+                case UIA_IsSelectionPatternAvailablePropertyId:
+                    // the group pattern belongs to the container that owns the choice, which is the radio group (§10.1)
+                    set_variant_bool(result, published->role() == SemanticRole::RadioGroup);
+                    return S_OK;
+                case UIA_SelectionCanSelectMultiplePropertyId:
+                    // a radio group holds one choice, which the single selection pattern states (§10.1)
+                    if (published->role() == SemanticRole::RadioGroup)
+                        set_variant_bool(result, false);
+                    return S_OK;
+                case UIA_SelectionIsSelectionRequiredPropertyId:
+                    // a radio group always keeps one choice, because a radio button cannot be deselected (§10.1)
+                    if (published->role() == SemanticRole::RadioGroup)
+                        set_variant_bool(result, true);
                     return S_OK;
                 case UIA_BoundingRectanglePropertyId: {
                     // the property carries the four rectangle doubles, which the array helper builds (§10.2)
@@ -1242,6 +1291,59 @@ namespace albor::accessibility::platform
                 return S_OK;
             }
 
+            // hand out the chosen children of the group, which the selection pattern reads (§10.1, §10.2)
+            HRESULT STDMETHODCALLTYPE GetSelection(SAFEARRAY** result) override {
+                // a missing result cannot be written, which the pointer contract refuses (§10.2)
+                if (result == nullptr)
+                    return E_POINTER;
+                *result = nullptr;
+                // a group that was never published has no selection, which the empty result states (§10.2)
+                if (m_publication == nullptr)
+                    return S_OK;
+                // the chosen children are collected in tree order, which is the order a reader announces them (§10.2)
+                std::vector<IRawElementProviderSimple*> chosen;
+                for (std::size_t child : m_publication->tree.children_of(m_index)) {
+                    // a child that was not published carries no state, which the quiet default skips (§10.2)
+                    const SemanticNode* published = m_publication->tree.at(child);
+                    // a child that is not chosen belongs to no selection, which the pattern does not report (§10.2)
+                    if (published == nullptr || !published->selected())
+                        continue;
+                    IRawElementProviderFragment* fragment = make_node(child);
+                    // a child the bridge cannot hand out is left out of the set rather than reported dead (§10.2)
+                    if (fragment == nullptr)
+                        continue;
+                    IRawElementProviderSimple* simple = nullptr;
+                    // the fragment is asked for the simple interface, which the pattern hands over (§10.2)
+                    if (SUCCEEDED(fragment->QueryInterface(__uuidof(IRawElementProviderSimple), reinterpret_cast<void**>(&simple))) && simple != nullptr)
+                        chosen.push_back(simple);
+                    // the fragment reference is released, because the array owns the interface it took (§10.2)
+                    fragment->Release();
+                }
+                *result = provider_array(chosen);
+                // the array holds its own reference, so the one the query took is released here (§10.2)
+                for (IRawElementProviderSimple* simple : chosen)
+                    simple->Release();
+                return S_OK;
+            }
+
+            // report whether the group allows more than one choice, which a radio group refuses (§10.1, §10.2)
+            HRESULT STDMETHODCALLTYPE get_CanSelectMultiple(BOOL* result) override {
+                // a missing result cannot be written, which the pointer contract refuses (§10.2)
+                if (result == nullptr)
+                    return E_POINTER;
+                *result = FALSE;
+                return S_OK;
+            }
+
+            // report whether the group always keeps a choice, which a radio group does (§10.1, §10.2)
+            HRESULT STDMETHODCALLTYPE get_IsSelectionRequired(BOOL* result) override {
+                // a missing result cannot be written, which the pointer contract refuses (§10.2)
+                if (result == nullptr)
+                    return E_POINTER;
+                *result = TRUE;
+                return S_OK;
+            }
+
         private:
             // read the node this provider was published for, which is the single source of truth (§10.1)
             [[nodiscard]] const SemanticNode* node() const {
@@ -1314,14 +1416,17 @@ namespace albor::accessibility::platform
 
             // publish a rebuilt semantic tree, which ui automation reads as one immutable snapshot (§10.2)
             void publish(const SemanticTree& tree) override {
+                // the publication being replaced decides whether the structure changed, which a client re-reads (§10.2)
+                const std::shared_ptr<const Publication> previous = m_root->snapshot();
+                const bool changed = previous == nullptr || previous->tree.size() != tree.size() || root_indices(previous->tree) != root_indices(tree);
                 // the tree is copied into a publication, because the caller's tree may go away after this call (§10.2)
                 auto publication = std::make_shared<Publication>();
                 publication->tree = tree;
                 m_root->set_publication(publication);
                 // the count is the whole tree, which the portable coverage suite reads (§10.2)
                 m_count.store(tree.size());
-                // a window that is attached is told its children changed (§10.2)
-                if (m_window != nullptr)
+                // a window that is attached is told its children changed, which an unchanged tree does not (§10.2)
+                if (m_window != nullptr && changed)
                     (void)UiaRaiseStructureChangedEvent(m_root, StructureChangeType_ChildrenInvalidated, nullptr, 0);
             }
 

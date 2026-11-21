@@ -7,13 +7,22 @@
 
 #include <gtest/gtest.h>
 
+#include "accessibility_corpus.h"
+
 #include "albor/accessibility/accessibility_adapter.h"
 #include "albor/core/native_window_handle.h"
+#include "albor/runtime/binding_engine.h"
 #include "albor/semantics/semantic_provider.h"
+#include "albor/ui/semantic_tree_builder.h"
 
 // the settable query belongs to the informal accessibility protocol, which appkit routes a value write through (§10.2)
 @interface NSObject (AlborAccessibilityValueSettable)
 - (BOOL)accessibilityIsValueAttributeSettable;
+@end
+
+// the selected children query is part of the informal accessibility protocol, which appkit reads a selection with (§10.2)
+@interface NSObject (AlborAccessibilitySelectedChildren)
+- (NSArray*)accessibilitySelectedChildren;
 @end
 
 using namespace albor;
@@ -114,6 +123,55 @@ namespace
 
     // the announced children of the window's content view, which is where the published root appears (§10.2)
     NSArray* announced_children(NSWindow* window) { return window.contentView.accessibilityChildren; }
+
+    // the application kit role a semantic role must announce, which the corpus asserts one by one (§10.1, §10.2)
+    NSAccessibilityRole expected_role(SemanticRole role) {
+        switch (role) {
+        case SemanticRole::None:
+            return NSAccessibilityUnknownRole;
+        case SemanticRole::Button:
+            return NSAccessibilityButtonRole;
+        case SemanticRole::Checkbox:
+            return NSAccessibilityCheckBoxRole;
+        case SemanticRole::Heading:
+        case SemanticRole::Label:
+            return NSAccessibilityStaticTextRole;
+        case SemanticRole::Slider:
+            return NSAccessibilitySliderRole;
+        case SemanticRole::ProgressBar:
+            return NSAccessibilityProgressIndicatorRole;
+        case SemanticRole::TabView:
+            return NSAccessibilityTabGroupRole;
+        case SemanticRole::TabItem:
+            return NSAccessibilityRadioButtonRole;
+        case SemanticRole::RadioGroup:
+            return NSAccessibilityRadioGroupRole;
+        case SemanticRole::RadioButton:
+            return NSAccessibilityRadioButtonRole;
+        case SemanticRole::NumericStepper:
+            return NSAccessibilityIncrementorRole;
+        case SemanticRole::ScrollView:
+            return NSAccessibilityScrollAreaRole;
+        case SemanticRole::List:
+            return NSAccessibilityListRole;
+        case SemanticRole::MenuItem:
+            return NSAccessibilityMenuItemRole;
+        case SemanticRole::ComboBox:
+            return NSAccessibilityComboBoxRole;
+        case SemanticRole::Canvas:
+        case SemanticRole::Group:
+        case SemanticRole::ListItem:
+            return NSAccessibilityGroupRole;
+        case SemanticRole::TextField:
+            return NSAccessibilityTextFieldRole;
+        case SemanticRole::Image:
+            return NSAccessibilityImageRole;
+        case SemanticRole::Window:
+            return NSAccessibilityWindowRole;
+        }
+        // a role outside the enumeration announces nothing, which the quiet default states (§10.2)
+        return NSAccessibilityUnknownRole;
+    }
 } // namespace
 
 TEST(AccessibilityRole, TheAnnouncedRootCarriesTheSemanticRole) {
@@ -312,6 +370,8 @@ TEST(AccessibilityRole, AListAnnouncesAsAList) {
     NSArray* children = announced_children(fixture.window);
     ASSERT_EQ(children.count, 1U);
     EXPECT_EQ([(NSView*)children.firstObject accessibilityRole], NSAccessibilityListRole);
+    // assert a list announces no selected children, because the group pattern belongs to the radio group alone (§10.2)
+    EXPECT_EQ([(NSView*)children.firstObject accessibilitySelectedChildren], nil);
 }
 
 TEST(AccessibilityRole, ASelectedRowAnnouncesItsSelectedState) {
@@ -391,6 +451,10 @@ TEST(AccessibilityRole, ARadioGroupAnnouncesItsChoices) {
     NSString* value = (NSString*)choice.accessibilityValue;
     ASSERT_NE(value, nil);
     EXPECT_STREQ(value.UTF8String, "1");
+    // assert the group announces the chosen choice as its selected child, which is the container pattern (§10.2)
+    NSArray* selected = [(NSView*)roots.firstObject accessibilitySelectedChildren];
+    ASSERT_EQ(selected.count, 1U);
+    EXPECT_EQ(selected.firstObject, choices.firstObject);
 }
 
 TEST(AccessibilityRole, ANumericStepperAnnouncesItsValueAndStepping) {
@@ -526,4 +590,42 @@ TEST(AccessibilityRole, AnImageAnnouncesItsRoleNameAndDisabledState) {
     EXPECT_EQ(element.accessibilityRole, NSAccessibilityImageRole);
     EXPECT_STREQ(element.accessibilityLabel.UTF8String, "Company logo");
     EXPECT_FALSE([(id)element isAccessibilityEnabled]);
+}
+
+TEST(AccessibilityRole, TheWidgetCorpusAnnouncesEveryNodeEveryAdapterCarries) {
+    // arrange the shared corpus, which every platform adapter announces through its own api (§13.2, BDG-10)
+    WindowFixture fixture;
+    BindingEngine engine;
+    AccessibilityCorpus corpus(&engine, nullptr);
+    const SemanticTree tree = build_semantic_tree(corpus);
+    ASSERT_FALSE(tree.empty());
+    // act
+    fixture.adapter->publish(tree);
+    // assert the announced hierarchy is the published tree, which is the conformance the corpus proves (§13.2)
+    NSArray* roots = announced_children(fixture.window);
+    ASSERT_EQ(roots.count, 1U);
+    NSMutableArray* pending = [NSMutableArray array];
+    [pending addObject:roots.firstObject];
+    std::size_t position = 0;
+    while (pending.count > 0) {
+        NSView* element = (NSView*)pending.lastObject;
+        [pending removeLastObject];
+        // the announced node is the tree node at this position, because both walks are the same depth first order (§10.1)
+        ASSERT_LT(position, tree.size());
+        const SemanticNode* node = tree.at(position);
+        ASSERT_NE(node, nullptr);
+        // the announced role is the one the semantic role maps to, which is the conformance the corpus proves (§10.2)
+        EXPECT_TRUE([element.accessibilityRole isEqualToString:expected_role(node->role())]) << "role mismatch at position " << position;
+        // a named node announces its label, which is what a reader speaks (§10.1, §10.2)
+        if (!node->name().empty()) {
+            NSString* label = element.accessibilityLabel;
+            ASSERT_NE(label, nil);
+            EXPECT_STREQ(label.UTF8String, node->name().c_str());
+        }
+        position++;
+        // the children are pushed in reverse, so the walk visits them in tree order (§10.1)
+        for (NSView* child in [element.accessibilityChildren reverseObjectEnumerator])
+            [pending addObject:child];
+    }
+    EXPECT_EQ(position, tree.size());
 }

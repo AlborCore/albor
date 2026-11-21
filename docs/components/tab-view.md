@@ -138,8 +138,7 @@ header bounds and the `selected` state. The view exposes the actions `select_nex
 selected page exposes its content as semantic children.
 
 On macOS the roles map to `NSAccessibilityTabGroupRole` and `NSAccessibilityRadioButtonRole`. The
-Windows UI Automation mapping is `UIA_TabControlTypeId` and `UIA_TabItemControlTypeId` as the
-Windows bridge lands.
+Windows UI Automation mapping is `UIA_TabControlTypeId` and `UIA_TabItemControlTypeId`.
 
 ## Input
 

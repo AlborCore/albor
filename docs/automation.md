@@ -7,7 +7,7 @@ application commands, and captures the presented frame.
 
 The automation core is linked only in Dev and Test configurations. The MCP server
 is a thin adapter over it: every tool call becomes one automation command, and
-there is no second path into the runtime (AD-10, AD-20).
+there is no second path into the runtime (BDG-04).
 
 !!! note "Dev/Test only"
     A Release build contains no automation symbols. A Release link that references
@@ -277,7 +277,7 @@ Twenty tools are available:
 | command | `command.list`, `command.get`, `command.invoke`, `command.can_undo`, `command.undo`, `command.redo` |
 
 All selectors are author-assigned `id:` values. A name, a role or a tree position
-is never a selector (AD-11). An unidentified node appears in `semantic.tree` with
+is never a selector (BDG-05). An unidentified node appears in `semantic.tree` with
 the id `-` and cannot be addressed by any other command.
 
 ### semantic.tree

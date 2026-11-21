@@ -16,7 +16,7 @@ to `action` makes the button follow that command's label, enablement and click t
 | `disabled` | `bool` | refuses interaction while true |
 | `default` | `bool` | in a dialog, a plain Return runs this button when nothing else claimed it |
 | `cancel` | `bool` | in a dialog, a plain Escape runs this button when nothing else claimed it |
-| `action` | `command` | binds a shared command; the command's state drives the control |
+| `action` | `command` | binds a shared command; `command` is a synonym and the command's state drives the control |
 
 Plus the [common properties](index.md#common-properties).
 

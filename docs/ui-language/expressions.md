@@ -15,23 +15,22 @@ true                    // bool
 #0A82FF                 // colour: six hex digits, opaque
 #0A82FFCC               // colour: eight hex digits, with alpha
 12px                    // length: logical pixels, scale with display density
-12phx                   // length: physical device pixels, do not scale
+12phx                   // length: parsed, but refused by codegen (E0502)
 @image("logo.png")      // image: an embedded PNG beside the .ui file
 ```
 
 !!! note "Which unit when"
-    `px` is almost always the right choice: it is the unit the layout works in, and it
-    scales with the display. `phx` exists for work that must address device pixels exactly —
-    a 1-pixel hairline, for instance.
+    `px` is the unit the layout works in, and it scales with the display. `phx` is parsed but
+    codegen refuses it today, so a 1-pixel hairline is authored in `px`.
 
 ## Names
 
 A bare identifier resolves in a fixed order — the innermost scope wins:
 
-1. a signal parameter of the handler you are in
-2. a function parameter of the function you are in
+1. a function parameter of the function you are in
+2. a signal parameter of the handler you are in
 3. a repeat item (or repeat index) of the `Repeat` you are in
-4. a property of the component
+4. a property or command declaration of the component
 5. a module-scoped value (`global`, the last resort)
 
 An unknown name is a compile error, not a silent lookup at runtime.
@@ -44,15 +43,15 @@ the same name resolves before the repeat name, because it is the value the handl
 
 | operator | accepts | yields |
 | --- | --- | --- |
-| `+` | numbers; string `+` anything (concatenation) | number / string |
-| `-` `*` `/` `%` | numbers | number |
-| `==` `!=` | two values of the same type | bool |
+| `+` | numbers; `string + string` (concatenation) | number / string |
+| `-` `*` `/` `%` | numbers (a float operand makes the result float) | number |
+| `==` `!=` | two numbers or two values of the same type | bool |
 | `<` `<=` `>` `>=` | numbers | bool |
 | `&&` `\|\|` | bool | bool |
 | `!` | bool | bool |
 
-Nothing widens implicitly: `int` and `float` never convert on their own, so
-`string(click_count)` is how a label shows an integer.
+Assignment never widens `int` and `float`; an arithmetic operator with a float operand yields
+float. Convert explicitly for assignment — `string(click_count)` is how a label shows an integer.
 
 ```text
 Label { text: @tr("Count: ") + string(click_count); }

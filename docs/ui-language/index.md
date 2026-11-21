@@ -53,8 +53,10 @@ The component's name becomes the generated class; the file's name, lowered to sn
 becomes the generated unit. `greeting_panel.ui` containing `GreetingPanel` emits:
 
 ```text
-build/generated/<target>/greeting_panel.h    // the concrete facade
-build/generated/<target>/greeting_panel.cpp  // the implementation
+build/generated/<target>/greeting_panel.h         // the concrete facade
+build/generated/<target>/greeting_panel.cpp       // the implementation
+build/generated/<target>/greeting_panel_assets.h  // asset declarations
+build/generated/<target>/greeting_panel_assets.cpp // asset definitions
 ```
 
 The component the file is named after is the one the build compiles; a same-file base is
@@ -87,6 +89,7 @@ the `.cpp`.
 | font family, weight, fallback, embedded registration | [Fonts](fonts.md) |
 | signals, `on_` blocks, the four handler statements | [Signals and handlers](handlers.md) |
 | `if`, `visible`, `Repeat` | [Control flow](control-flow.md) |
+| `draw: { … }` blocks and their primitive calls | [Drawing in `.ui`: Canvas](../concepts/rendering.md#drawing-in-ui-canvas) |
 
 ## The boundary a handler may not cross
 

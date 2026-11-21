@@ -94,5 +94,5 @@ and the disabled state. It exposes `increment` and `decrement` actions.
 
 On macOS the role maps to `NSAccessibilityIncrementorRole`, the value is an `NSNumber`, and the
 bridge answers `accessibilityPerformIncrement` and `accessibilityPerformDecrement`. On Windows UI
-Automation the role maps to `UIA_SpinnerControlTypeId` and the value is exposed read-only through
-the value pattern; increment and decrement through UI Automation are not exposed yet.
+Automation the role maps to `UIA_SpinnerControlTypeId` and the writable RangeValue pattern
+exposes the value, step and large-change values; `SetValue` writes through the field's own path.

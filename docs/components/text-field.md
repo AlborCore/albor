@@ -16,6 +16,9 @@ Single-line by default; set `multiline` for a wrapping, scrolling editor.
 | `scrollbar` | `scrollbar` | when a bar is drawn on a multi-line field: `Scrollbar.as_needed`, `Scrollbar.off` or `Scrollbar.on` |
 | `disabled` | `bool` | refuses all interaction |
 | `font_size` | `float` | density-scaled; accepts `px` |
+| `font_family` | `string` | the face family, when a matching face is registered |
+| `font_weight` | `font_weight` | the face weight; a member of the `Weight` value set |
+| `font_fallback` | `vector<string>` | families tried when the first has no matching face |
 | `decorations` | `vector<TextDecoration>` | styled byte ranges for syntax highlighting and diagnostics |
 
 `TextDecoration` carries `start` and `end` byte offsets, an optional `foreground` colour, an
@@ -28,7 +31,7 @@ Plus the [common properties](index.md#common-properties).
 | signal | parameters | raised when |
 | --- | --- | --- |
 | `changed` | `value: string` | the text changes — per keystroke |
-| `committed` | `value: string` | the edit is committed — Enter, or focus leaving |
+| `committed` | `value: string` | the edit is committed — Enter |
 
 ## Children
 

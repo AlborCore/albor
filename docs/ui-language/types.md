@@ -54,13 +54,14 @@ unknown member or a member of the wrong set is a compile error that lists the cl
 
 ## The built-in value sets
 
-Two value sets ship with the language, and their members are what widget alignment and
-scrollbar policies are written with:
+Three value sets ship with the language, and their members are what widget alignment,
+scrollbar policies and font weights are written with:
 
 | set | members | used by |
 | --- | --- | --- |
 | `Align` | `start`, `center`, `end`, `stretch` | `horizontal_align`, `vertical_align` on every element |
 | `Scrollbar` | `as_needed`, `off`, `on` | the `scrollbar` policy on [ScrollView](../components/scroll-view.md) and [TextField](../components/text-field.md) |
+| `Weight` | `thin`, `light`, `regular`, `medium`, `semibold`, `bold`, `black` | `font_weight` on text elements ([Fonts](fonts.md)) |
 
 ```text
 Label { horizontal_align: Align.stretch; }

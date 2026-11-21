@@ -1,8 +1,8 @@
 # Status
 
-Albor is under active, phased implementation (§14). This page reflects what is shipped and
-what is not, so a reader knows what a code sample will do today. The authoritative plan is
-the architecture specification `albor-design-v4.md`.
+Albor's five implementation phases are complete. This page reflects what is shipped and
+what is not, so a reader knows what a code sample will do today. The authoritative
+architecture and acceptance contract is [`framework-design.md`](framework-design.md).
 
 ## Platforms
 
@@ -17,8 +17,8 @@ The framework and its compiler are **C++20**. The Windows build declares the Win
 1809 target (`WINVER`, `_WIN32_WINNT`, `NTDDI_VERSION`) so a newer API cannot slip in, and
 the macOS build stamps the 13.3 deployment floor into the shaders and the package. The
 Linux artifacts are checked against the glibc and libstdc++ floor with
-`build/check-linux-floor.sh`; [Linux](linux.md) carries the baseline. The Windows and macOS
-pins are recorded in the parity ledger (`macos-windows.md` §6).
+`build/check-linux-floor.sh`; [Linux](linux.md) carries the baseline. The platform pins are
+recorded in [CI build tools](#ci-build-tools).
 
 ## CI build tools
 
@@ -33,10 +33,10 @@ versions CI actually uses; the floors a consumer needs are in
 | Ninja | 1.13.2 | 1.13.2 | 1.13.2 |
 | vcpkg revision | `866e9e258a76437074a5cf02d4c2d71b53bff2f8` | `8c5c88430ac864cf4fe8de4be61f69f003d23ffe` | `866e9e258a76437074a5cf02d4c2d71b53bff2f8` |
 | ABI policy | `pinned-toolchain-v2` | `pinned-toolchain-v2` with `--x-abi-tools-use-exact-versions` | `pinned-toolchain-v2` |
-| compiler | Xcode 16.4 (Apple Clang) | MSVC 14.44 toolset, SDK 10.0.22621.0 | image GCC for debug and release, clang-18 for coverage |
+| compiler | Xcode 16.4 (Apple Clang) | MSVC 14.44 toolset, SDK 10.0.22621.0 | clang-18 for all Linux presets (debug, release, coverage) |
 
 The Windows job pins the MSVC **toolset** and SDK through `msvc-dev-cmd`, not the Visual Studio
-minor version: the 17.14 release named above and in the parity ledger is the matching release on
+minor version: the 17.14 release named above is the matching release on
 the `windows-2022` image, so it follows from the toolset pin rather than being pinned on its own.
 
 An application names a window and a component. A normal application links `albor`
@@ -60,20 +60,21 @@ are the framework's choice. The target map and advanced composition are on
 | Native file dialogs | Partial | XDG portal `FileChooser` over the session bus: open, save, title, filters, initial folder, proposed name and the exported parent window; a single selection, and a host without a portal refuses the panel |
 | Platform font resolution | Full | fontconfig resolves a family and weight and hands over its sfnt; embedded text never reaches it and a host without fontconfig degrades to embedded-only |
 | Renderer | Full | `render-albor` on Vulkan through Wayland and XCB WSI, with host-visible readback; Blend2D CPU through `wl_shm` remains the portable fallback |
-| Accessibility | Not yet | AT-SPI is #42 |
+| Accessibility | Full with gaps | AT-SPI over the D-Bus accessibility bus: application root and published nodes answer role, role name, name, description, interfaces, bounds and state; action, range, text, editable text and radio-group selection are exposed; a publish that changed the roots broadcasts `children-changed` on the root, and an unchanged one stays quiet. A client request is queued and run by the next publish, so application code never runs on the dispatch thread. The launcher is asked for the accessibility bus and a host without one keeps the session bus. Gaps shared with the other two adapters: only structure is announced, so state, name, selection and focus changes raise no event; a list and a tab view do not expose container selection yet; index-based object paths can go stale after a republish. On Linux alone the extents are the published logical bounds rather than screen coordinates (31 tests on a private bus) |
 
 The adapter builds only where the Wayland, xkbcommon and Pango/Cairo/D-Bus development
 packages exist. The libdecor frame and the Wayland protocol XMLs are vendored, so no
-libdecor package, plugin directory or `wayland-protocols` package is needed. The Linux CI
-jobs are temporarily disabled until a Linux host is available; the container workflow
-installs the packages and runs the platform suite under a headless Weston compositor.
+libdecor package, plugin directory or `wayland-protocols` package is needed. The Linux debug,
+release and coverage CI jobs are enabled with lavapipe; only the Alma 9 `linux-floor` job is
+disabled. The workflow installs the packages and runs the platform suite under a headless
+Weston compositor.
 [Linux](linux.md) records the workflow, the Alma 9 baseline and the current limits.
 
 ## Windows support
 
 Support levels: **Full** means implemented and covered by the Windows debug/release suites;
 **Partial** means implemented with a documented limitation; **Dev/Test** means linked only in
-those configurations (AD-10); **Not supported** means there is no Windows implementation.
+those configurations (BDG-04); **Not supported** means there is no Windows implementation.
 
 ### Runtime and platform
 
@@ -119,11 +120,12 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Dev runtime and hot swap | Dev/Test | excluded from Release at link time |
 | LSP, preview host and inspector | Dev/Test | excluded from Release at link time |
 | Automation core and MCP server | Dev/Test | named-pipe transport; 10 transport tests and a host MCP exchange test; layout bounds, pointer/key input and typed value, state and range reads |
-| Accessibility | Full with gaps | UI Automation; 21 role tests and 1 client test; range and text writes and expand/collapse patterns exposed; radio-group selection is not exposed |
+| Accessibility | Full with gaps | UI Automation; 25 suite tests including a client walk; range and text writes, expand/collapse and radio-group selection patterns exposed; a publish that changed the roots raises `ChildrenInvalidated` on the window; only structure is announced, so state, name, selection and focus changes raise no event |
 | Examples (`hello-world`, `form`, `vertical-slice`) | Full | all build on macOS; the vertical slice is driven end to end through the MCP automation host and captures PNG frames |
 
-Windows has no code-coverage job comparable to `macos-coverage`; the existing
-`windows-debug` and `windows-release` jobs cover both configurations.
+Windows has a `windows-coverage` job alongside `macos-coverage`: the instrumented suite runs
+under OpenCppCoverage and uploads a Cobertura report with the `windows` Codecov flag. The
+`windows-debug` and `windows-release` jobs remain the authority for allocation behaviour.
 
 ## Subsystems
 
@@ -132,16 +134,16 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 | Application, event loop, tasks, timers | `application/` | shipped |
 | Window roles, modality, close request | `window/` | shipped |
 | Native file dialogs | `application/`, `platform/` | shipped — appkit panels, shell dialogs, the XDG portal chooser and a scripted headless backend |
-| Platform abstraction (macOS, Windows, Linux Wayland, headless) | `platform/` | shipped |
+| Platform abstraction (macOS, Windows, Linux Wayland and X11, headless) | `platform/` | shipped |
 | Render surface, metrics, scale factor | `render/` | shipped |
 | Frame pipeline, two-stage frame | `render/` | shipped |
 | Custom rendering (`CustomRenderNode`) | `render/` | shipped |
 | Reactive properties, eager-push bindings | `ui/` | shipped |
 | UI tree, components, event routing | `ui/` | shipped |
 | Semantic tree, explicit/implicit keys | `semantics/` | shipped |
-| Input normalization, coalescing, focus | `input/`, `focus/` | shipped |
+| Input normalization, focus | `input/`, `focus/` | shipped; event coalescing is an open gap |
 | Layout: measure & arrange, containers | `layout/` | shipped |
-| Text, measurement, shaping | `text/` | baseline — HarfBuzz, embedded font registration and weight selection |
+| Text, measurement, shaping | `text/` | shipped — HarfBuzz shaping, embedded faces and platform font resolvers on all three platforms |
 | Standard widgets | `widgets/` | shipped — twenty-nine elements |
 | Animation core | `animation/` | baseline |
 | Compiler frontend, `.ui` parser, typed IR | `compiler/` | shipped |
@@ -150,7 +152,7 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 | Dev runtime extension, IR loader, hot swap | `devrt/` | Dev only |
 | LSP, preview host, inspector | `language-server/`, `preview/`, `inspector/` | Dev/Test only |
 | Automation core, MCP server | `automation/` | Dev/Test only — unix socket on macOS, named pipe on Windows; layout bounds, pointer/key input and typed value, state and range reads |
-| Platform accessibility adapters | `accessibility/` | shipped on macOS and Windows — NSAccessibility and UI Automation; AT-SPI planned |
+| Platform accessibility adapters | `accessibility/` | shipped on all three platforms — NSAccessibility, UI Automation and AT-SPI; the shared semantic tree is the single source of truth (§10.2, BDG-10) |
 
 ## Language coverage
 
@@ -166,7 +168,7 @@ component composition and inheritance with `@children` — see
 
 | configuration | defines | links |
 | --- | --- | --- |
-| Debug | `ALBOR_DEV` | the dev runtime extension |
+| Debug | `ALBOR_DEV`, `ALBOR_AUTOMATION` | the dev runtime extension and the automation host |
 | Release | — | nothing Dev/Test — excluded at link time |
 | Test | `ALBOR_TEST` | the automation core, the software renderer |
 

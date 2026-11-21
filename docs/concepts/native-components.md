@@ -24,9 +24,9 @@ native component WaveformView {
 - **signals** carry typed, named parameters, as in `.ui`
 - **`semantic role`** publishes the accessibility/automation role the component reports
 
-The class behind the manifest is ordinary C++. It implements the widget contract —
-`measure`, `arrange`, `render` — and nothing about its internal structure is visible to the
-compiler. What the manifest promises is what the generated facade exposes; what the facade
+The class behind the manifest is ordinary C++. It implements the widget contract by supplying
+`paint_content` (and optionally overriding `measure` or `arrange`); `render` is inherited `final`
+from `Component`. Nothing about its internal structure is visible to the compiler. What the manifest promises is what the generated facade exposes; what the facade
 does not promise can change freely.
 
 ## Records
@@ -172,8 +172,8 @@ albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/panel.ui"
 On the C++ side the application implements the class the manifest declares, defines the
 `create_<Class>` factory, and may still construct the view directly as a root. The `chart`
 example (`examples/chart/`) is the reference: `WaveformView` with a
-`Snapshot<WaveformData>` input, a `LineBatch`-backed draw, and a `create_WaveformView`
-definition.
+`Snapshot<WaveformData>` input, colour slots and a `selection_changed` signal, and a
+`create_WaveformView` definition.
 
 ## The rules
 

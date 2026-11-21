@@ -1,8 +1,8 @@
 # Canvas
 
 A leaf drawing surface with a closed primitive vocabulary. Its `draw` block runs during the
-scene-execution stage of the frame ([Rendering](../concepts/rendering.md)), so what it paints
-follows the bound properties without any retained image.
+scene-build stage (stage 1) of the frame ([Rendering](../concepts/rendering.md)), so what it
+records follows the current property values without any retained image.
 
 ## Properties
 
@@ -49,7 +49,7 @@ Canvas {
 - `canvas_width` and `canvas_height` are the canvas extent in logical units, read-only
   inside the block
 - coordinates are relative to the canvas corner
-- the block is re-evaluated when its bound properties change
+- the block is installed once and runs every frame, reading current property values
 
 Colour literals are `#RRGGBB` or `#RRGGBBAA`; arithmetic on the coordinates and on
 `canvas_width`/`canvas_height` is ordinary float arithmetic, so a proportion of the extent —

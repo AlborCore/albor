@@ -9,6 +9,9 @@ A leaf that draws a run of text — a caption, a title, a value readout.
 | `text` | `string` | the run to draw; accepts `@tr` and any string expression |
 | `foreground` | `color` | the text colour; defaults to the theme's `on_surface` |
 | `font_size` | `float` | density-scaled; accepts `px` |
+| `font_family` | `string` | the face family, when a matching face is registered |
+| `font_weight` | `font_weight` | the face weight; a member of the `Weight` value set |
+| `font_fallback` | `vector<string>` | families tried when the first has no matching face |
 
 Plus the [common properties](index.md#common-properties).
 

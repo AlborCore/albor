@@ -15,8 +15,8 @@ changes publish once, and every consumer follows in one pass.
 
 ## In `.ui`
 
-A component receives a command through an `in property<command>` slot, and two forms attach
-it to a control or fire it:
+A component receives a command through an `in property<command>` slot or a component-level
+`command save "Save";` declaration, and two forms attach it to a control or fire it:
 
 ```text
 component Editor {
@@ -33,14 +33,15 @@ component Editor {
 }
 ```
 
-- **`action: save;`** binds the command to the control. The control's label, disabled state
-  and click target follow the command — a disabled command is a disabled button, with no
-  second bookkeeping.
+- **`action: save;`** (or its synonym **`command: save;`**) binds the command to the control.
+  The control's label, disabled state and click target follow the command — a disabled command
+  is a disabled button, with no second bookkeeping.
 - **`save.invoke();`** fires the command from a handler, with no argument and recording no
   property write. `invoke` is the only command method the language exposes.
 
 [Button](../components/button.md), [Slider](../components/slider.md) and
-[CheckBox](../components/checkbox.md) each carry an `action` property.
+[CheckBox](../components/checkbox.md) each carry an `action` property, with `command` as its
+synonym.
 
 ## In C++
 
@@ -68,7 +69,7 @@ A consumer — widget, menu row, shortcut handler — binds a plain observer and
 the state:
 
 ```cpp
-button->set_action(save_command);       // the button follows the command's published state
+button->set_command(&save_command);    // the button follows the command's published state
 ```
 
 Invoking returns why it did or did nothing:

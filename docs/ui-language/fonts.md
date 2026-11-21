@@ -3,7 +3,7 @@
 A `.ui` file names a family and a weight; it never names a file, a platform font or a
 font size in device pixels. The build carries the bytes, the engine shapes from them, and
 the renderer draws the outlines. That is what makes text layout identical on every platform
-(§15, AD-34).
+(§9).
 
 ## Declaring a selection
 
@@ -84,7 +84,7 @@ or consolidate the faces into one target.
   instance variable fonts, so both weights would shape identically.
 
 A target that declares no fonts keeps the platform font path. That path exists for
-transitional applications; it is not the identity path of AD-34.
+transitional applications; embedded faces are the identity path described in §9.
 
 ## Diagnostics
 

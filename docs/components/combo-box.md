@@ -58,7 +58,8 @@ component PlotSettings {
   under the pointer. Pressing the already-selected row still commits and closes the list.
 - The semantic node carries role `ComboBox`, the stable `label` (or author `id`) as its name, the
   expanded state, the disabled state and the chosen state. It exposes one list item per option and
-  the `open`, `close`, `select_next`, `select_previous` and `activate` semantic actions.
+  the `open`, `close`, `expand`, `collapse`, `select_next`, `select_previous` and `activate`
+  semantic actions.
 - When the application installs a `PopupHost` and the control belongs to an application-owned
   stage, the open list is a native `WindowRole::Popup` owned by the trigger's window. Its content is
   a themed `ListBox` in a non-activating surface placed below the trigger and kept inside the work

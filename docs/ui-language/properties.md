@@ -11,7 +11,7 @@ component Form {
     in property<string> name: "World";      // declared with a default
     in property<bool> armed: false;
     in property<float> level: 0.5;
-    inout property<int> presses: 0;         // declared without one
+    inout property<int> presses: 0;         // declared with a default
 
     Column {
         Label { text: "Hello, " + name; }
@@ -63,17 +63,16 @@ and, in a derived component, inherited names ([inheritance](components.md#inheri
 | `float` | a floating-point number; never narrows to int on its own |
 | `string` | text |
 | `color` | an RGBA colour |
-| `length` | a length literal (`12px` logical or `12phx` physical, see [Layout](../concepts/layout.md)) |
-| `align` | a member of the `Align` value set |
-| `scrollbar` | a member of the `Scrollbar` value set |
+| `length` | a length literal (`12px` logical; `12phx` is parsed but refused by codegen, see [Layout](../concepts/layout.md)) |
 | `command` | a reference to a shared command object ([Commands](../concepts/commands.md)) |
 | `vector<T>` | an ordered collection of `T` |
 | `Snapshot<T>` | an immutable shared value handed across threads |
 | a declared `struct` / `enum` | a record or value set the file declared ([Types](types.md)) |
 | a manifest type | a native component the catalog holds ([Native components](../concepts/native-components.md)) |
 
-Nothing widens implicitly: a `float` does not become an `int`, an `int` does not become a
-`float`. Convert explicitly — see [Expressions and bindings](expressions.md#conversions).
+Assignment never widens: a `float` does not become an `int` and an `int` does not become a
+`float`. An arithmetic operator with a float operand does yield float, so convert explicitly
+when assigning — see [Expressions and bindings](expressions.md#conversions).
 
 ## Signals
 
