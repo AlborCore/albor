@@ -44,6 +44,10 @@ requests from this repository: the `port` workflow builds the installed package 
 the Release link itself (a reference to an excluded dev symbol fails to link, BDG-03), with a
 native symbol scan tracked in #263.
 
+The debug preset on each platform also exports Google Test's JUnit XML (`GTEST_OUTPUT`) and uploads
+it to Codecov Test Analytics with `report_type: test_results` under the platform's flag. The upload
+runs even when a test step fails, so a failing or flaky test is still reported (§13.2).
+
 ## Platforms
 
 | platform | runtime floor | build baseline | state |

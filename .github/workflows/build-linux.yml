@@ -78,6 +78,7 @@ jobs:
             enable: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      GTEST_OUTPUT: xml:${{ github.workspace }}/junit-results/
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage-%p.profraw
@@ -305,6 +306,18 @@ jobs:
           disable_search: true
           flags: linux
           name: linux-coverage
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: upload test results to codecov
+        if: ${{ !cancelled() && matrix.enable && matrix.preset == 'debug' }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: junit-results/*.xml
+          disable_search: true
+          report_type: test_results
+          flags: linux
+          name: linux-test-results
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
