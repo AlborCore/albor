@@ -11,7 +11,7 @@ interpreter="python3"
 command -v python3 >/dev/null 2>&1 || interpreter="python"
 
 "$interpreter" - "$root_dir" <<'PYEOF'
-import json, os, pathlib, re, sys, time, urllib.error, urllib.request
+import json, os, pathlib, re, subprocess, sys, tempfile
 
 
 root = pathlib.Path(sys.argv[1])
@@ -143,22 +143,16 @@ def unverified(reason):
         sys.exit(0)
     issue(f"{reason}; set ALBOR_PORT_ALLOW_UNVERIFIED=1 only for offline work")
 
-# a transient 5xx is common on GitHub, so retry briefly before declaring the pin unverified
-last_error = None
-for attempt in range(3):
-    try:
-        urllib.request.urlopen(f"https://github.com/{repository}/commit/{ref}", timeout=10)
-        last_error = None
-        break
-    except urllib.error.HTTPError as error:
-        if error.code == 404:
-            issue(f"the pinned commit {ref[:12]}... does not exist on {repository}: HTTP 404")
-        last_error = f"GitHub returned HTTP {error.code} for the pinned commit {ref[:12]}..."
-    except Exception as error:
-        last_error = f"the pinned commit could not be checked from here ({error})"
-    if attempt < 2:
-        time.sleep(2)
-if last_error:
-    unverified(last_error)
+# a git fetch answers the same question a consumer asks, without the HTML endpoint GitHub throttles on Actions runners
+try:
+    with tempfile.TemporaryDirectory(prefix="albor-port-pin-") as scratch:
+        subprocess.run(["git", "init", "-q", scratch], check=True, capture_output=True)
+        fetched = subprocess.run(["git", "-C", scratch, "fetch", "-q", "--depth=1", f"https://github.com/{repository}.git", ref], capture_output=True, text=True, timeout=120)
+        if fetched.returncode != 0:
+            unverified(f"the pinned commit {ref[:12]}... could not be fetched from {repository}: {fetched.stderr.strip()}")
+except subprocess.TimeoutExpired:
+    unverified(f"the pinned commit {ref[:12]}... could not be fetched from {repository} before the timeout")
+except Exception as error:
+    unverified(f"the pinned commit could not be checked from here ({error})")
 print(f"pinned commit {ref[:12]}... exists on {repository}")
 PYEOF

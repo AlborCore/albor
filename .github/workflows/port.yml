@@ -199,7 +199,7 @@ jobs:
   # and builds a consumer with its .ui helper before a pre-release is cut (§4, §13.2, AD-19)
   fetch-consumer:
     name: fetch consumer (macos)
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: macos-15
     timeout-minutes: 60
     defaults:
@@ -255,7 +255,7 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_BUILD_TYPE=Release \
             -DALBOR_FETCH_REPOSITORY="https://github.com/${{ github.repository }}.git" \
-            -DALBOR_FETCH_TAG="${{ github.sha }}"
+            -DALBOR_FETCH_TAG="${{ github.event.pull_request.head.sha || github.sha }}"
           cmake --build .build-fetch-consumer --parallel 4
       - name: save the vcpkg binary cache
         if: success()

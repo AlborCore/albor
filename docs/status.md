@@ -37,9 +37,9 @@ A consumer of the pre-release should read the platform tables below for the curr
 levels; "Full" there means implemented and covered by the suites that run today, not that every
 gap above is closed.
 
-The pre-release's consumption evidence runs in CI on every `main` push and nightly: the `port`
-workflow builds the installed package against `tests/consumer` and the `FetchContent` source route
-against `tests/fetch-consumer`. The `link boundary` step in the macOS and Linux Release jobs runs
+The pre-release's consumption evidence runs in CI on every `main` push, the nightly and pull
+requests from this repository: the `port` workflow builds the installed package against
+`tests/consumer` and the `FetchContent` source route against `tests/fetch-consumer`. The `link boundary` step in the macOS and Linux Release jobs runs
 `build/check-link-boundary.sh` over the shipping archives; on Windows the same boundary is held by
 the Release link itself (a reference to an excluded dev symbol fails to link, BDG-03), with a
 native symbol scan tracked in #263.
