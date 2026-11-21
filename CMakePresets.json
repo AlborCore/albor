@@ -102,6 +102,11 @@
     {
       "name": "coverage",
       "configurePreset": "coverage"
+    },
+    {
+      "name": "fetch-consumer",
+      "configurePreset": "debug",
+      "targets": ["albor-fetch-consumer-smoke"]
     }
   ]
 }

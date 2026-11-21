@@ -64,6 +64,18 @@ This exact route — a pinned commit fetched from GitHub, a `.ui` component buil
 job in `port.yml` against `tests/fetch-consumer/`. A consumer that vendors the sources with
 `add_subdirectory` uses the same targets and helpers without the fetch step.
 
+From a framework checkout the same fixture is an explicit CMake target, not part of the default
+build (it would fetch the framework during its own configure):
+
+```sh
+cmake --preset debug
+cmake --build --preset fetch-consumer
+```
+
+The target pins the checkout's current `HEAD`; that commit must already be pushed to GitHub, or
+pass `-DALBOR_FETCH_TAG=<commit>` when configuring. `ALBOR_FETCH_REPOSITORY` selects the remote for
+a fork.
+
 The framework targets publish the include root the public headers live under, so a consumer
 does not add `target_include_directories` for `albor/application/application.h` or a generated
 component header.
