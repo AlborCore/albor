@@ -35,6 +35,7 @@ jobs:
           - name: macos-release
             os: macos-15
             os_key: macos
+            os_arch: arm64
             enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
@@ -50,6 +51,7 @@ jobs:
           - name: windows-release
             os: windows-2022
             os_key: windows
+            os_arch: x64
             enable: true
             preset: release
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
@@ -62,6 +64,7 @@ jobs:
           - name: linux-release
             os: ubuntu-24.04
             os_key: linux
+            os_arch: x64
             enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
@@ -115,19 +118,18 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
-            vcpkg-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-
-            vcpkg-${{ matrix.os_key }}-
+            vcpkg-${{ matrix.os_key }}-${{ matrix.os_arch }}-
 
       - name: restore the ccache directory
         if: matrix.enable
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
+          key: ccache-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ matrix.preset }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-${{ matrix.preset }}-
+            ccache-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ matrix.preset }}-
 
       - name: configure
         if: matrix.enable

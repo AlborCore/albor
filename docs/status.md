@@ -89,8 +89,10 @@ and the `nightly-cache` workflow, is keyed `vcpkg-<os>-<arch>-<dependency-hash>`
 `x64`. Its hash covers `vcpkg.json`, `vcpkg-configuration.json` and `.triplets/`. The **consumer**
 cache used by the `port` workflow is keyed `vcpkg-port-<os>-<arch>-<port-hash>`, where the hash
 covers `ports/albor/**`; it is never mixed with the build cache. In both classes the toolchain is
-already part of vcpkg's own ABI hash, so it is not repeated in the GitHub Actions cache key, and
-the architecture is taken from `runner.arch` (`ARM64` → `arm64`, otherwise `x64`).
+already part of vcpkg's own ABI hash, so it is not repeated in the GitHub Actions cache key. The OS
+and architecture are explicit per job: `os`/`arch` inputs for the shared build action, and
+`os_key`/`os_arch` matrix fields (or literal values in the single-platform fetch job) in the
+workflows.
 
 An application names a window and a component. A normal application links `albor`
 (GPU renderer) or `albor-blend2d` (portable CPU renderer); the platform and text engine

@@ -98,6 +98,7 @@ jobs:
           - name: macos
             os: macos-15
             os_key: macos
+            os_arch: arm64
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
@@ -112,6 +113,7 @@ jobs:
             os: windows-2022
             os_key: windows
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
+            os_arch: x64
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
@@ -151,17 +153,16 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
+          key: vcpkg-port-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ hashFiles('ports/albor/**') }}
           restore-keys: |
-            vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-
-            vcpkg-port-${{ matrix.os_key }}-
+            vcpkg-port-${{ matrix.os_key }}-${{ matrix.os_arch }}-
       - name: restore the ccache directory
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ runner.os }}-${{ github.sha }}
+          key: ccache-port-${{ matrix.os_key }}-${{ matrix.os_arch }}-release-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-
+            ccache-port-${{ matrix.os_key }}-${{ matrix.os_arch }}-release-
       - name: staging build with the port's default features
         run: |
           # the stage resolves its dependencies through the test bed's manifest, which the drift gate keeps
@@ -193,7 +194,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
+          key: vcpkg-port-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ hashFiles('ports/albor/**') }}
 
   # the source route is consumed as often as the package, so CI fetches the pushed commit from GitHub
   # and builds a consumer with its .ui helper before a pre-release is cut (§4, §13.2, AD-19)
@@ -235,17 +236,16 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-macos-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
+          key: vcpkg-port-macos-arm64-${{ hashFiles('ports/albor/**') }}
           restore-keys: |
-            vcpkg-port-macos-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-
-            vcpkg-port-macos-
+            vcpkg-port-macos-arm64-
       - name: restore the ccache directory
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ runner.os }}-${{ github.sha }}
+          key: ccache-fetch-macos-arm64-release-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-
+            ccache-fetch-macos-arm64-release-
       - name: consume the fetched source end to end
         run: |
           # the overlay triplets stamp the deployment floor into the dependencies as well as the framework
@@ -263,7 +263,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-macos-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
+          key: vcpkg-port-macos-arm64-${{ hashFiles('ports/albor/**') }}
 
   # the overlay port consumption end to end, which walks the dependency closure and belongs to the evidence
   # a main push, the nightly or a packaging review carries, not to every review (AD-16, AD-19)
@@ -283,32 +283,38 @@ jobs:
           - name: macos-default
             os: macos-15
             os_key: macos
+            os_arch: arm64
             consumer: tests/port-consumer
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
           - name: macos-blend2d
             os: macos-15
             os_key: macos
+            os_arch: arm64
             consumer: tests/port-consumer-blend2d
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
           - name: macos-pinned-release
             os: macos-15
             os_key: macos
+            os_arch: arm64
             consumer: tests/port-consumer
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             pinned: true
           - name: windows-default
             os: windows-2022
             os_key: windows
+            os_arch: x64
             consumer: tests/port-consumer
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
           - name: windows-blend2d
             os: windows-2022
             os_key: windows
+            os_arch: x64
             consumer: tests/port-consumer-blend2d
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
           - name: windows-pinned-release
             os: windows-2022
             os_key: windows
+            os_arch: x64
             consumer: tests/port-consumer
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             pinned: true
@@ -369,11 +375,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
+          key: vcpkg-port-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ hashFiles('ports/albor/**') }}
           # a consumer cache is keyed by the port, never by the framework build inputs (AD-19)
           restore-keys: |
-            vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-
-            vcpkg-port-${{ matrix.os_key }}-
+            vcpkg-port-${{ matrix.os_key }}-${{ matrix.os_arch }}-
       - name: consume the overlay port end to end
         run: |
           # the consumer's manifest would name a published version one day, which the overlay answers today (AD-19)
@@ -400,4 +405,4 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
+          key: vcpkg-port-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ hashFiles('ports/albor/**') }}

@@ -113,8 +113,8 @@ jobs:
         with:
           preset: ${{ matrix.preset }}
           vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-          platform: Linux
           os: linux
+          arch: x64
           extra-configure: -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
 
       - name: unit tests

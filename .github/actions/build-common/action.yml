@@ -8,11 +8,11 @@ inputs:
   vcpkg-commit:
     description: the pinned vcpkg revision for this platform
     required: true
-  platform:
-    description: the ccache key namespace, one of macOS, Windows or Linux
-    required: true
   os:
     description: the lowercase vcpkg cache key OS, one of macos, windows or linux
+    required: true
+  arch:
+    description: the lowercase vcpkg cache key architecture, one of arm64 or x64
     required: true
   extra-configure:
     description: extra arguments appended to the configure command
@@ -44,18 +44,17 @@ runs:
       uses: actions/cache/restore@v5
       with:
         path: ${{ github.workspace }}/.vcpkg-cache
-        key: vcpkg-${{ inputs.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+        key: vcpkg-${{ inputs.os }}-${{ inputs.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
         restore-keys: |
-          vcpkg-${{ inputs.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-
-          vcpkg-${{ inputs.os }}-
+          vcpkg-${{ inputs.os }}-${{ inputs.arch }}-
 
     - name: restore - ccache directory
       uses: actions/cache/restore@v5
       with:
         path: ${{ github.workspace }}/.ccache
-        key: ccache-${{ inputs.platform }}-${{ inputs.preset }}-${{ github.sha }}
+        key: ccache-${{ inputs.os }}-${{ inputs.arch }}-${{ inputs.preset }}-${{ github.sha }}
         restore-keys: |
-          ccache-${{ inputs.platform }}-${{ inputs.preset }}-
+          ccache-${{ inputs.os }}-${{ inputs.arch }}-${{ inputs.preset }}-
 
     - name: configure
       id: configure
@@ -71,11 +70,11 @@ runs:
       uses: actions/cache/save@v5
       with:
         path: ${{ github.workspace }}/.vcpkg-cache
-        key: vcpkg-${{ inputs.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+        key: vcpkg-${{ inputs.os }}-${{ inputs.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
 
     - name: save - ccache directory
       if: ${{ !cancelled() }}
       uses: actions/cache/save@v5
       with:
         path: ${{ github.workspace }}/.ccache
-        key: ccache-${{ inputs.platform }}-${{ inputs.preset }}-${{ github.sha }}
+        key: ccache-${{ inputs.os }}-${{ inputs.arch }}-${{ inputs.preset }}-${{ github.sha }}
