@@ -83,6 +83,17 @@ The Windows job pins the MSVC **toolset** and SDK through `msvc-dev-cmd`, not th
 minor version: the 17.14 release named above is the matching release on
 the `windows-2022` image, so it follows from the toolset pin rather than being pinned on its own.
 
+Two vcpkg cache classes are kept separate. The **build** cache, shared by the `build-*` workflows
+and the `nightly-cache` workflow, is keyed `vcpkg-<os>-<arch>-<dependency-hash>` — for example
+`vcpkg-macos-arm64-<hash>`, `vcpkg-macos-x64-<hash>`, and the same form with `windows`/`linux` and
+`x64`. Its hash covers `vcpkg.json`, `vcpkg-configuration.json` and `.triplets/`. The **consumer**
+cache used by the `port` workflow is keyed `vcpkg-port-<os>-<arch>-<port-hash>`, where the hash
+covers `ports/albor/**`; it is never mixed with the build cache. In both classes the toolchain is
+already part of vcpkg's own ABI hash, so it is not repeated in the GitHub Actions cache key. The OS
+and architecture are explicit per job: `os`/`arch` inputs for the shared build action, and
+`os_key`/`os_arch` matrix fields (or literal values in the single-platform fetch job) in the
+workflows.
+
 An application names a window and a component. A normal application links `albor`
 (GPU renderer) or `albor-blend2d` (portable CPU renderer); the platform and text engine
 are the framework's choice. The target map and advanced composition are on

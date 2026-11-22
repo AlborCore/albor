@@ -113,7 +113,8 @@ jobs:
         with:
           preset: ${{ matrix.preset }}
           vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
-          platform: Linux
+          os: linux
+          arch: x64
           extra-configure: -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
 
       - name: unit tests
@@ -364,18 +365,14 @@ jobs:
           vcpkgJsonGlob: vcpkg.json
           doNotCache: true
 
-      - name: toolchain fingerprint
-        id: toolchain
-        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
-
       - name: restore - vcpkg cache
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-linux-alma9-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-linux-x64-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
-            vcpkg-linux-alma9-
-            vcpkg-Linux-
+            vcpkg-linux-x64-
+            vcpkg-linux-
 
       - name: restore - ccache directory
         uses: actions/cache/restore@v5
@@ -448,7 +445,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-linux-alma9-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-linux-x64-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
 
       - name: save - ccache directory
         if: success()

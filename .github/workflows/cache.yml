@@ -34,6 +34,8 @@ jobs:
         include:
           - name: macos-release
             os: macos-15
+            os_key: macos
+            os_arch: arm64
             enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
@@ -48,6 +50,8 @@ jobs:
               sudo xcode-select --switch /Applications/Xcode_16.4.app
           - name: windows-release
             os: windows-2022
+            os_key: windows
+            os_arch: x64
             enable: true
             preset: release
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
@@ -59,6 +63,8 @@ jobs:
               bash build/install-ccache.sh
           - name: linux-release
             os: ubuntu-24.04
+            os_key: linux
+            os_arch: x64
             enable: true
             preset: release
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
@@ -107,29 +113,23 @@ jobs:
         if: matrix.enable
         run: echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> "$GITHUB_ENV"
 
-      - name: toolchain fingerprint
-        id: toolchain
-        if: matrix.enable
-        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
-
       - name: restore the vcpkg binary cache
         if: matrix.enable
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-
-            vcpkg-${{ runner.os }}-
+            vcpkg-${{ matrix.os_key }}-${{ matrix.os_arch }}-
 
       - name: restore the ccache directory
         if: matrix.enable
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
+          key: ccache-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ matrix.preset }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-${{ matrix.preset }}-
+            ccache-${{ matrix.os_key }}-${{ matrix.os_arch }}-${{ matrix.preset }}-
 
       - name: configure
         if: matrix.enable
