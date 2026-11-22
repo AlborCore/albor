@@ -102,6 +102,7 @@ jobs:
           preset: ${{ matrix.preset }}
           vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
           platform: macOS
+          os: macos
 
       - name: unit tests
         if: matrix.enable

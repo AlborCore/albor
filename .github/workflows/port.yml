@@ -97,6 +97,7 @@ jobs:
         include:
           - name: macos
             os: macos-15
+            os_key: macos
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
@@ -109,6 +110,7 @@ jobs:
               sudo xcode-select --switch /Applications/Xcode_16.4.app
           - name: windows
             os: windows-2022
+            os_key: windows
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
@@ -145,17 +147,14 @@ jobs:
       # the msvc action repoints VCPKG_ROOT at the image's bundled vcpkg, so the pinned checkout is restored here
       - name: pin the vcpkg root
         run: echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> "$GITHUB_ENV"
-      - name: toolchain fingerprint
-        id: toolchain
-        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
       - name: restore the vcpkg binary cache
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-fixture-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('tests/consumer/vcpkg.json', 'tests/consumer/vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
           restore-keys: |
-            vcpkg-fixture-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-
-            vcpkg-fixture-${{ runner.os }}-
+            vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-
+            vcpkg-port-${{ matrix.os_key }}-
       - name: restore the ccache directory
         uses: actions/cache/restore@v5
         with:
@@ -190,10 +189,11 @@ jobs:
           cmake --build .build-port-fixture
       - name: save the vcpkg binary cache
         if: success()
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-fixture-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('tests/consumer/vcpkg.json', 'tests/consumer/vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
 
   # the source route is consumed as often as the package, so CI fetches the pushed commit from GitHub
   # and builds a consumer with its .ui helper before a pre-release is cut (§4, §13.2, AD-19)
@@ -231,14 +231,14 @@ jobs:
           vcpkgGitCommitId: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
           vcpkgJsonGlob: tests/fetch-consumer/vcpkg.json
           doNotCache: true
-      - name: toolchain fingerprint
-        id: toolchain
-        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
       - name: restore the vcpkg binary cache
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-fetch-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('tests/fetch-consumer/vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-port-macos-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
+          restore-keys: |
+            vcpkg-port-macos-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-
+            vcpkg-port-macos-
       - name: restore the ccache directory
         uses: actions/cache/restore@v5
         with:
@@ -259,10 +259,11 @@ jobs:
           cmake --build .build-fetch-consumer --parallel 4
       - name: save the vcpkg binary cache
         if: success()
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-fetch-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('tests/fetch-consumer/vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-port-macos-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
 
   # the overlay port consumption end to end, which walks the dependency closure and belongs to the evidence
   # a main push, the nightly or a packaging review carries, not to every review (AD-16, AD-19)
@@ -281,27 +282,33 @@ jobs:
         include:
           - name: macos-default
             os: macos-15
+            os_key: macos
             consumer: tests/port-consumer
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
           - name: macos-blend2d
             os: macos-15
+            os_key: macos
             consumer: tests/port-consumer-blend2d
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
           - name: macos-pinned-release
             os: macos-15
+            os_key: macos
             consumer: tests/port-consumer
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             pinned: true
           - name: windows-default
             os: windows-2022
+            os_key: windows
             consumer: tests/port-consumer
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
           - name: windows-blend2d
             os: windows-2022
+            os_key: windows
             consumer: tests/port-consumer-blend2d
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
           - name: windows-pinned-release
             os: windows-2022
+            os_key: windows
             consumer: tests/port-consumer
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             pinned: true
@@ -351,9 +358,6 @@ jobs:
       # the msvc action repoints VCPKG_ROOT at the image's bundled vcpkg, so the pinned checkout is restored here
       - name: pin the vcpkg root
         run: echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> "$GITHUB_ENV"
-      - name: toolchain fingerprint
-        id: toolchain
-        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
       - name: restore the ccache directory
         uses: actions/cache/restore@v5
         with:
@@ -365,10 +369,11 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.name }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'tests/port-consumer/vcpkg.json', 'tests/port-consumer-blend2d/vcpkg.json', '.triplets/**', 'ports/albor/**') }}
-          # the entry restores only its own lineage, because the released source and the working tree share an ABI (AD-19)
+          key: vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}
+          # a consumer cache is keyed by the port, never by the framework build inputs (AD-19)
           restore-keys: |
-            vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.name }}-
+            vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-
+            vcpkg-port-${{ matrix.os_key }}-
       - name: consume the overlay port end to end
         run: |
           # the consumer's manifest would name a published version one day, which the overlay answers today (AD-19)
@@ -391,7 +396,8 @@ jobs:
           cmake --build .build-port-consumer
       - name: save the vcpkg binary cache
         if: success()
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.name }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'tests/port-consumer/vcpkg.json', 'tests/port-consumer-blend2d/vcpkg.json', '.triplets/**', 'ports/albor/**') }}
+          key: vcpkg-port-${{ matrix.os_key }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('ports/albor/**') }}

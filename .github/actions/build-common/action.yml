@@ -9,7 +9,10 @@ inputs:
     description: the pinned vcpkg revision for this platform
     required: true
   platform:
-    description: the cache key namespace, one of macOS, Windows or Linux
+    description: the ccache key namespace, one of macOS, Windows or Linux
+    required: true
+  os:
+    description: the lowercase vcpkg cache key OS, one of macos, windows or linux
     required: true
   extra-configure:
     description: extra arguments appended to the configure command
@@ -37,21 +40,14 @@ runs:
       shell: bash
       run: echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> "$GITHUB_ENV"
 
-    - name: toolchain fingerprint
-      id: toolchain
-      shell: bash
-      env:
-        VCPKG_ABI_POLICY: pinned-toolchain-v2
-      run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
-
     - name: restore - vcpkg cache
       uses: actions/cache/restore@v5
       with:
         path: ${{ github.workspace }}/.vcpkg-cache
-        key: vcpkg-${{ inputs.platform }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+        key: vcpkg-${{ inputs.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
         restore-keys: |
-          vcpkg-${{ inputs.platform }}-${{ steps.toolchain.outputs.fingerprint }}-
-          vcpkg-${{ inputs.platform }}-
+          vcpkg-${{ inputs.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-
+          vcpkg-${{ inputs.os }}-
 
     - name: restore - ccache directory
       uses: actions/cache/restore@v5
@@ -75,7 +71,7 @@ runs:
       uses: actions/cache/save@v5
       with:
         path: ${{ github.workspace }}/.vcpkg-cache
-        key: vcpkg-${{ inputs.platform }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+        key: vcpkg-${{ inputs.os }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
 
     - name: save - ccache directory
       if: ${{ !cancelled() }}
