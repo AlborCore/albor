@@ -1,8 +1,8 @@
 # Albor Framework Design
 
-**Status:** Draft for verification and audit. Not yet linked into the documentation set or `AGENTS.md`.
-**Version:** 1.0
-**Date:** 2026-11-20
+**Status:** Audited contract. Linked from `AGENTS.md`, `README.md` and `docs/index.md`.
+**Version:** 1.1
+**Date:** 2026-11-21
 **Scope:** Normative contract for framework code, platform parity, and feature acceptance.
 
 This document starts its own history here. It does not inherit, summarise, or rely on any earlier
@@ -432,7 +432,7 @@ facades and implementation files.
 | Build | `cmake --build --preset debug` |
 | Unit tests | `./.build-debug/tests/albor-tests` |
 | Format/lint | `bash build/check-format.sh` |
-| Link boundary | `bash build/check-link-boundary.sh` |
+| Link boundary | `bash build/check-link-boundary.sh` (after the release build; scans `.build-release/albor`, or pass one archive) |
 
 Additional test binaries are built where a platform or feature needs isolation; the authoritative
 list lives in `tests/CMakeLists.txt`. `docs/status.md` records the current per-platform support
@@ -493,12 +493,36 @@ This document is versioned independently of any earlier specification. An amendm
 2. keep the number of *must* clauses unchanged or explicitly record the removal;
 3. update the affected code and tests in the same change;
 4. add a dated entry to the revision history below;
-5. pass audit before it is linked into `docs/index.md` and `AGENTS.md`.
+5. keep the reference crosswalk in §16 current when an identifier is retired.
 
-Until that audit is complete, this file is a draft and is not referenced by any other document.
+The audit completed on 2026-11-21. This file is the contract referenced by `AGENTS.md`,
+`README.md` and `docs/index.md`; §16 resolves the historical identifiers that older
+scripts, workflows and issues still carry.
+
+---
+
+## 16. Legacy reference crosswalk
+
+Architecture decisions and suite numbers were recorded under identifiers that predate this
+contract. Those identifiers remain in build scripts, workflows, issue titles and git history.
+They are **not** additional normative clauses: the clauses named below are the authority, and
+new work cites this document's `BDG-NN`, `GAP-NN` and § numbers only.
+
+| Historical identifier cluster | Current clause |
+| --- | --- |
+| `AD-01`, `AD-02`, `AD-04` | §12 — dev runtime, hot swap and their link-time exclusion |
+| `AD-05`, `AD-06`, `AD-26` | §6.3, §6.4, BDG-09 — native backend parity, retained resources and conformance |
+| `AD-15`, §18 | §7, §8.3 — commands, actions and input routing |
+| `AD-16`, `AD-22` | §5.3, BDG-10 — platform parity, CI images, floors and Linux CI details |
+| `AD-19` | §4, §13.2 — build and distribution, package and consumer evidence |
+| `AD-25`, `AD-34` | §9.1, §6.4 — embedded text, outlines and text conformance |
+| `AD-27` | §6 — density is a property of the surface |
+| §16 (conformance suites) | §13.2 — cross-cutting conformance suites |
+| §27 (coverage gate) | §13.1, §13.3 — verification commands and per-change requirements |
 
 ## Revision history
 
 | Version | Date | Change |
 | --- | --- | --- |
 | 1.0 | 2026-11-20 | Initial contract drafted from the verified current tree. |
+| 1.1 | 2026-11-21 | Audit completed: authoritative status, legacy reference crosswalk, pre-release gap decisions recorded in `status.md` (#263). |

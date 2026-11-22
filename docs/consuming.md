@@ -59,6 +59,23 @@ target_link_libraries(my_app PRIVATE albor)
 `ALBOR_EXAMPLES` and `ALBOR_TESTS` already default to off when Albor is not the top-level
 project, so the explicit settings above are optional; they document the choice.
 
+This exact route — a pinned commit fetched from GitHub, a `.ui` component built by
+`albor_build_ui_component`, and the `albor` umbrella — is exercised by the `fetch consumer`
+job in `port.yml` against `tests/fetch-consumer/`. A consumer that vendors the sources with
+`add_subdirectory` uses the same targets and helpers without the fetch step.
+
+From a framework checkout the same fixture is an explicit CMake target, not part of the default
+build (it would fetch the framework during its own configure):
+
+```sh
+cmake --preset debug
+cmake --build --preset fetch-consumer
+```
+
+The target pins the checkout's current `HEAD`; that commit must already be pushed to GitHub, or
+pass `-DALBOR_FETCH_TAG=<commit>` when configuring. `ALBOR_FETCH_REPOSITORY` selects the remote for
+a fork.
+
 The framework targets publish the include root the public headers live under, so a consumer
 does not add `target_include_directories` for `albor/application/application.h` or a generated
 component header.
@@ -135,7 +152,7 @@ The non-render half is shared by `albor` and `albor-blend2d`:
 | `albor-text-auto` | HarfBuzz shaping and font resolution |
 | `albor-layout`, `albor-widgets` | containers and the standard widget set |
 | `albor-accessibility` | the platform semantic/accessibility bridge |
-| `albor-i18n` | translation catalogs and RTL support |
+| `albor-i18n` | translation catalogs and locale reading-direction reporting (RTL layout mirroring is a pre-release limitation, GAP-02 in [Status](status.md#pre-release-scope)) |
 | `albor-resources` | image and font resource registries |
 | `albor-application`, `albor-ui`, `albor-runtime`, `albor-render` | the runtime closure those modules need |
 
@@ -330,8 +347,11 @@ design (BDG-03, BDG-04). See [Tooling](tooling.md#hot-reload) and
 
 The distribution is source/CMake through `FetchContent` or a vendored `add_subdirectory`,
 and the vcpkg package through the in-repository overlay port, whose dependency matrix and
-version the `build/check-port.sh` gate keeps identical to the project's. The package route
-is the one an official registry submission will carry, and the overlay is its rehearsal.
+version the `build/check-port.sh` gate keeps identical to the project's. That gate also verifies
+the pinned `REF` against GitHub and fails when the check cannot run; offline work can set
+`ALBOR_PORT_ALLOW_UNVERIFIED=1` to skip only that network check, which is never a CI default.
+The package route is the one an official registry submission will carry, and the overlay is its
+rehearsal.
 Publishing a GitHub Release for a stable tag opens one package PR; the workflow never creates a
 tag. The pin is the commit the tag names, and the port passes the release version to the build, so the
 package reports the published version even though the tag predates the version commit.

@@ -382,3 +382,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (ALBOR_WAYLAND_FOUND OR ALBOR_X11_FOUN
     target_compile_features(albor-linux-tests PRIVATE cxx_std_20)
     target_link_libraries(albor-linux-tests PRIVATE ${ALBOR_LINUX_TEST_LINKS} GTest::gtest_main)
 endif()
+
+# the FetchContent fixture is a standalone consumer, so the framework drives it as an explicit target (§4, §13.2)
+set(ALBOR_FETCH_REPOSITORY "https://github.com/AlborCore/albor.git" CACHE STRING "the repository the FetchContent smoke fixture clones")
+set(ALBOR_FETCH_TAG "" CACHE STRING "the pushed commit the FetchContent smoke fixture clones, empty means HEAD")
+if(NOT ALBOR_FETCH_TAG)
+    execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" OUTPUT_VARIABLE ALBOR_FETCH_TAG OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+add_custom_target(albor-fetch-consumer-smoke
+    COMMAND ${CMAKE_COMMAND} -S "${CMAKE_CURRENT_SOURCE_DIR}/fetch-consumer" -B "${CMAKE_BINARY_DIR}/fetch-consumer-smoke" -G "${CMAKE_GENERATOR}" "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}" "-DVCPKG_OVERLAY_TRIPLETS=${ALBOR_SOURCE_DIR}/.triplets" "-DCMAKE_BUILD_TYPE=Release" "-DALBOR_FETCH_REPOSITORY=${ALBOR_FETCH_REPOSITORY}" "-DALBOR_FETCH_TAG=${ALBOR_FETCH_TAG}"
+    COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}/fetch-consumer-smoke"
+    COMMENT "building the standalone FetchContent consumer fixture"
+    VERBATIM)

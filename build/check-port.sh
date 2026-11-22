@@ -11,7 +11,7 @@ interpreter="python3"
 command -v python3 >/dev/null 2>&1 || interpreter="python"
 
 "$interpreter" - "$root_dir" <<'PYEOF'
-import json, os, pathlib, re, sys, urllib.error, urllib.request
+import json, os, pathlib, re, subprocess, sys, tempfile
 
 
 root = pathlib.Path(sys.argv[1])
@@ -134,15 +134,25 @@ ref = match.group(1)
 if ref.startswith("0") and len(set(ref)) == 1:
     issue("ports/albor/portfile.cmake carries a placeholder REF; the release automation must write the real one")
 
+# an unreachable GitHub must not turn the pin check into a no-op; offline work opts out explicitly
+offline_ok = os.environ.get("ALBOR_PORT_ALLOW_UNVERIFIED") == "1"
+
+def unverified(reason):
+    if offline_ok:
+        print(f"note: {reason}; ALBOR_PORT_ALLOW_UNVERIFIED=1 keeps the pin unverified")
+        sys.exit(0)
+    issue(f"{reason}; set ALBOR_PORT_ALLOW_UNVERIFIED=1 only for offline work")
+
+# a git fetch answers the same question a consumer asks, without the HTML endpoint GitHub throttles on Actions runners
 try:
-    pinned = urllib.request.urlopen(f"https://github.com/{repository}/commit/{ref}", timeout=10)
-except urllib.error.HTTPError as error:
-    if error.code == 404:
-        issue(f"the pinned commit {ref[:12]}... does not exist on {repository}: HTTP 404")
-    print(f"note: GitHub returned HTTP {error.code} for the pinned commit, so the pin stays unverified this run")
-    sys.exit(0)
+    with tempfile.TemporaryDirectory(prefix="albor-port-pin-") as scratch:
+        subprocess.run(["git", "init", "-q", scratch], check=True, capture_output=True)
+        fetched = subprocess.run(["git", "-C", scratch, "fetch", "-q", "--depth=1", f"https://github.com/{repository}.git", ref], capture_output=True, text=True, timeout=120)
+        if fetched.returncode != 0:
+            unverified(f"the pinned commit {ref[:12]}... could not be fetched from {repository}: {fetched.stderr.strip()}")
+except subprocess.TimeoutExpired:
+    unverified(f"the pinned commit {ref[:12]}... could not be fetched from {repository} before the timeout")
 except Exception as error:
-    print(f"note: the pinned commit could not be checked from here ({error}); the pin stays unverified this run")
-    sys.exit(0)
+    unverified(f"the pinned commit could not be checked from here ({error})")
 print(f"pinned commit {ref[:12]}... exists on {repository}")
 PYEOF

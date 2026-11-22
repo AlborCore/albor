@@ -80,6 +80,7 @@ jobs:
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3
+      GTEST_OUTPUT: xml:${{ github.workspace }}/junit-results/
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage-%p.profraw
@@ -106,6 +107,10 @@ jobs:
         if: matrix.enable
         working-directory: .build-${{ matrix.preset }}/tests
         run: ./albor-tests && ./albor-generated-font-checks
+
+      - name: link boundary (release)
+        if: matrix.enable && matrix.preset == 'release'
+        run: bash build/check-link-boundary.sh
 
       - name: lcov coverage report
         if: matrix.enable && matrix.preset == 'coverage'
@@ -180,5 +185,17 @@ jobs:
           disable_search: true
           flags: macos
           name: macos-coverage
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: upload test results to codecov
+        if: ${{ !cancelled() && matrix.enable && matrix.preset == 'debug' }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: junit-results/*.xml
+          disable_search: true
+          report_type: test_results
+          flags: macos
+          name: macos-test-results
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
