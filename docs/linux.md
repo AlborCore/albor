@@ -61,13 +61,26 @@ from 2027-04-17, and a floor package built there would be rejected by the symbol
   the same `wl_display` on the render thread, so a blocking `wl_display_dispatch` could wait
   forever for an event on the UI thread's own queue while the render thread consumed the
   socket, freezing the window even though both stage one and stage two were running.
-- A surface a renderer presents through is never committed by the platform. The Vulkan WSI
-  binds each `wl_surface` to an explicit sync object, so any buffer the client commits on it
-  must carry an acquire point; the platform's opaque `wl_shm` placeholder was one such commit,
-  and the compositor answered it with `no_acquire_point` and disconnected the client. The
+- A surface a renderer presents through never commits a buffer on the platform's behalf. The
+  Vulkan WSI binds each `wl_surface` to an explicit sync object, so any buffer the client commits
+  on it must carry an acquire point; the platform's opaque `wl_shm` placeholder was one such
+  commit, and the compositor answered it with `no_acquire_point` and disconnected the client. The
   placeholder is now attached only while the window has no renderer, so the first frame the
   renderer presents maps the surface instead. A window that returns to screen asks the tree
   for a whole frame, because nothing retained the content it had.
+- A surface that returns to screen repeats the protocol's initial commit before the platform
+  attaches a buffer. Hiding unmaps the `xdg_surface`, which spends its map cycle, so `show()`
+  commits the surface without a buffer and dispatches the answer before the placeholder is
+  attached or the surface is marked mapped for the renderer; a libdecor frame carries the same
+  commit through its own handler. A compositor that owes a configure sends it — KWin does — and
+  it is acknowledged before the buffer; headless Weston sends none and keeps the previous cycle,
+  which the adapter accepts rather than refusing a window CI must show. The Blend2D present path
+  drops a frame built before the cycle completes, so a hide/show raises no
+  `xdg_surface.unconfigured_buffer`.
+- A connection whose display reports a fatal protocol error is evicted from the process cache,
+  so the next `connect()` opens a fresh display and a later window presents again. The guarantee
+  covers newly created windows: the clipboard and the event loop keep the connection they hold,
+  because rebinding a data device and a keyboard needs a live seat and a new subscription.
 - An `xdg_popup` is spent once it is unmapped or dismissed, and a fresh `xdg_surface` cannot
   be created for a `wl_surface` that already carried a role. A popup dismissal therefore
   releases the role and retires the surface: the renderer that still names it releases its
@@ -110,7 +123,10 @@ from 2027-04-17, and a floor package built there would be rejected by the symbol
   the same Wayland connection.
 
 The suite runs against a headless Weston compositor. A normal desktop Wayland session is the
-real target, and the remote display path below is optional. The portal suite is self-contained:
+real target, and the remote display path below is optional. Headless Weston accepts the
+hide/show remap without answering it, so a local run also drives a strict seat-bearing
+compositor (KWin), which rejects a buffer attached before the configure and closes the display
+connection; both compositors pass the same suite. The portal suite is self-contained:
 it starts its own `dbus-daemon` with a config that declares no service directory, owns
 `org.freedesktop.portal.Desktop` on that private bus, and drives the chooser and the settings
 interface through it, so neither the session bus nor the host's real portal is ever touched; a

@@ -38,6 +38,9 @@ namespace albor::wayland
         // connect to the named display, reusing one connection per name, and report null when it is unreachable (§5.3)
         [[nodiscard]] static std::shared_ptr<WaylandConnection> connect(std::string_view name);
 
+        // report whether the display carries no fatal error, which a cached connection is reused on (§5.3)
+        [[nodiscard]] bool valid() const;
+
         // hand out the file descriptor the loop polls
         [[nodiscard]] int fd() const;
 

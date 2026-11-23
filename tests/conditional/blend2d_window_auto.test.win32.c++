@@ -15,12 +15,14 @@
 #include "albor/core/geometry.h"
 #include "albor/core/native_window_handle.h"
 #include "albor/core/paint.h"
+#include "albor/platform/windows/platform_window.h"
 #include "albor/render/frame_scene.h"
 #include "albor/render/render-blend2d/blend2d_renderer_backend.h"
 #include "albor/render/render-blend2d/blend2d_window_surface.h"
 #include "albor/render/render_executor.h"
 #include "albor/render/renderer_backend.h"
 #include "albor/window/window_metrics.h"
+#include "albor/window/window_options.h"
 
 using namespace albor;
 
@@ -164,4 +166,35 @@ TEST(Blend2DWindowSurfaceChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     // assert the buffers moved, because an outstanding GetBuffer reference makes ResizeBuffers fail (§6.3)
     EXPECT_TRUE(surface->valid());
     EXPECT_EQ(surface->metrics(), WindowMetrics::from_logical(Size{640.0f, 480.0f}, 2.0f));
+}
+
+TEST(Blend2DWindowSurfaceChecks, PresentingResumesAfterAHideAndShow) {
+    // arrange a window the framework owns, which drives the native show and hide (§5.3)
+    WindowOptions options;
+    options.title = "albor-blend2d-hide-show";
+    options.size = Size{64.0f, 48.0f};
+    std::unique_ptr<Win32PlatformWindow> window = Win32PlatformWindow::create(options);
+    ASSERT_NE(window, nullptr);
+    window->show();
+    ASSERT_TRUE(window->visible());
+    // arrange the surface the install-time factory builds over the window handle (§5.3, §6.3)
+    const std::unique_ptr<RenderSurface> surface = blend2d::create_window_surface(window->native_handle(), window->metrics());
+    ASSERT_NE(surface, nullptr);
+    ASSERT_TRUE(surface->valid());
+    // act one frame is presented, which the swapchain receives (§6.3)
+    surface->begin_frame();
+    surface->end_frame();
+    ASSERT_EQ(surface->presented_frames(), 1u);
+    // act the window is hidden and shown again, which the appkit adapter takes the same way (§5.3)
+    window->hide();
+    EXPECT_FALSE(window->visible());
+    window->show();
+    // assert the surface survived the hide and show, which a torn down swapchain would fail (§5.3, §6.3)
+    ASSERT_TRUE(window->visible());
+    EXPECT_TRUE(surface->valid());
+    // act a frame is presented after the re-show (§6.3)
+    surface->begin_frame();
+    surface->end_frame();
+    // assert the frame reached the swapchain, so a re-show resumes presentation (§5.3)
+    EXPECT_EQ(surface->presented_frames(), 2u);
 }

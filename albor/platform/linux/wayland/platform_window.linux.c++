@@ -654,6 +654,8 @@ namespace albor
                 state->native.state->surface = nullptr;
                 state->native.state->shm = nullptr;
                 state->native.state->mapped = false;
+                // the map cycle is over with the surface, which no present may reopen (§5.3)
+                state->native.state->configured = false;
                 // the last holder destroys the surface, so an in flight present never names a dead proxy (§10.5)
                 state->native.state->pending_surface = state->surface;
             }
@@ -705,6 +707,8 @@ namespace albor
             if (state->native.state != nullptr) {
                 const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
                 state->native.state->mapped = false;
+                // the unmap spends the map cycle, which a show starts again with a bufferless commit (§5.3)
+                state->native.state->configured = false;
             }
 #ifdef ALBOR_WAYLAND_LIBDECOR
             // a decorated frame is hidden with its content, which the libdecor frame surface carries (§5.3)
@@ -737,6 +741,11 @@ namespace albor
             if (state->shell_surface != nullptr) {
                 xdg_surface_destroy(state->shell_surface);
                 state->shell_surface = nullptr;
+            }
+            // the configure belonged to the spent role, which the replacement surface wins again (§5.3)
+            if (state->native.state != nullptr) {
+                const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
+                state->native.state->configured = false;
             }
         }
 #endif
@@ -774,6 +783,8 @@ namespace albor
                         wl_surface_destroy(state->surface);
                     // the shared state names no surface while the role is spent (§10.5)
                     state->native.state->surface = nullptr;
+                    // the configure of the retired surface admits no buffer on the fresh one (§5.3)
+                    state->native.state->configured = false;
                 }
                 else {
                     // a window without shared state presents through nothing, which destroys the surface here (§10.5)
@@ -877,10 +888,52 @@ namespace albor
             return true;
         }
 
+        // hand the map cycle to the compositor, which no buffer may precede (§5.3, §10.5)
+        bool begin_map(WaylandWindowState* state) {
+            // a window torn down across an earlier dispatch has nothing left to map (§4.2)
+            if (state->native.state == nullptr || state->surface == nullptr)
+                return false;
+            // the shared state is kept alive across the dispatch, which a listener may tear down (§4.2)
+            const std::shared_ptr<wayland::WaylandSurfaceState> surface_state = state->native.state;
+            // the cycle state is read under the lock, which the render thread presents under (§10.5)
+            bool configured = false;
+            {
+                const std::lock_guard<std::mutex> surface_lock(surface_state->mutex);
+                configured = surface_state->configured;
+                // a frame that races the commit is stopped, because the compositor owes this cycle an answer (§10.5)
+                surface_state->mapped = false;
+                // an unconfigured surface sends the bufferless initial commit again, which an unmap spends (§5.3)
+                if (!configured)
+                    wl_surface_commit(state->surface);
+            }
+            // an already configured surface owes no commit, which the first show after create relies on (§5.3)
+            if (configured)
+                return true;
+            // the answer is dispatched with no lock held, so a resize never waits on the render thread (§10.5)
+            if (wl_display_roundtrip(state->connection->display()) < 0)
+                return false;
+            // a listener may have closed the window across the dispatch, which leaves nothing to map (§4.2)
+            if (state->native.state == nullptr || state->surface == nullptr)
+                return false;
+            // a compositor that owes a configure sent it, while one keeping its previous cycle sent none (§5.3)
+            const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
+            state->native.state->configured = true;
+            return true;
+        }
+
         // attach the initial buffer and mark the surface mapped, which a show and its reopen share (§5.3, §10.5)
         bool attach_and_map(WaylandWindowState* state) {
+            // a listener may have closed the window across the dispatch, which leaves nothing to map (§4.2)
+            if (state->native.state == nullptr || state->surface == nullptr)
+                return false;
             // the surface is locked, so the map commits atomically against a render thread present (§10.5)
             const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
+            // a map cycle the compositor has not accepted attaches no buffer, which the protocol forbids (§5.3)
+            if (!state->native.state->configured) {
+                // the surface stays off screen, which a later show starts again (§5.3)
+                state->native.state->mapped = false;
+                return false;
+            }
             // a renderer owned surface maps on its own next buffer, because a placeholder breaks explicit sync (§6.3)
             if (renderer_presenting(state)) {
                 // the viewport and the buffer scale are surface state the renderer's next commit carries (AD-27)
@@ -945,6 +998,11 @@ namespace albor
             const std::shared_ptr<WaylandWindowState> state = static_cast<WaylandWindowState*>(data)->shared_from_this();
             // the configure is acknowledged, which the next commit must be preceded by (§5.3)
             xdg_surface_ack_configure(shell_surface, serial);
+            // the map cycle is ready for a buffer, which the render thread reads under the state lock (§10.5)
+            if (state->native.state != nullptr) {
+                const std::lock_guard<std::mutex> surface_lock(state->native.state->mutex);
+                state->native.state->configured = true;
+            }
             // the metrics are applied, which a proposal of zero leaves at the requested one (§5.3)
             apply_configure(state.get(), state->proposed_width, state->proposed_height);
             // the proposal is consumed, because the next sequence starts from zero (§5.3)
@@ -1990,21 +2048,35 @@ namespace albor
             if (!m_state->frame_mapped) {
                 libdecor_frame_map(m_state->frame);
                 m_state->frame_mapped = true;
-                // the initial configure is answered here, which the roundtrip delivers (§5.3)
-                wl_display_roundtrip(m_state->connection->display());
+            }
+            // the frame's bufferless commit is answered here, which the roundtrip delivers before a buffer (§5.3)
+            wl_display_roundtrip(m_state->connection->display());
+            // libdecor owns the frame's configure sequence, so the map is ready once it answered or kept its cycle (§5.3)
+            if (m_state->native.state != nullptr) {
+                const std::lock_guard<std::mutex> surface_lock(m_state->native.state->mutex);
+                m_state->native.state->configured = true;
             }
         }
 #endif
+        // a listener may have closed the window across the frame dispatch, which leaves nothing to map (§4.2)
+        if (m_state->native.state == nullptr || m_state->surface == nullptr)
+            return;
+        // the map cycle is handed to the compositor, which no buffer may precede (§5.3)
+        if (!begin_map(m_state.get()))
+            return;
         // a refused buffer leaves the window off screen, which the visible flag reports (§5.3)
         if (!attach_and_map(m_state.get()))
             return;
         m_state->visible = true;
         // the events the commit produced are dispatched, so the metrics are current when show returns (§5.3)
         wl_display_roundtrip(m_state->connection->display());
+        // a listener may have closed the window across the metrics dispatch, which leaves nothing to reopen (§4.2)
+        if (m_state->native.state == nullptr || m_state->surface == nullptr)
+            return;
         // a dismissal that arrived during the roundtrip spent the popup role, which the reopen rebuilds once (§5.1)
         if (m_state->popup_role && m_state->shell_surface == nullptr) {
             // the role is rebuilt and presented once, which keeps show from claiming a visible popup it cannot show (§5.1)
-            if (!rebuild_popup_role(m_state.get()) || !attach_and_map(m_state.get()))
+            if (!rebuild_popup_role(m_state.get()) || !begin_map(m_state.get()) || !attach_and_map(m_state.get()))
                 return;
             m_state->visible = true;
             // the rebuilt configure is dispatched, which the metrics follow (§5.1)

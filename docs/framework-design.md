@@ -239,6 +239,12 @@ handoff and accessibility attachment. The headless adapter has no native window:
 synthetic metrics, explicit `raise_resize` / `raise_event` / `raise_close_request`, an empty native
 handle, and explicit frame pumping. It is a test surface, not an application surface.
 
+A surface that returns to screen after a hide repeats the platform's map handshake before the
+platform attaches a buffer: the platform commits the surface without a buffer and dispatches the
+compositor's answer, and the CPU window surface drops a frame built before that cycle completes
+instead of committing it. A connection whose display reports a fatal error is never handed out
+again, so a protocol failure costs the surface that raised it, not the process.
+
 ---
 
 ## 6. Rendering and frame pipeline
@@ -526,3 +532,4 @@ new work cites this document's `BDG-NN`, `GAP-NN` and § numbers only.
 | --- | --- | --- |
 | 1.0 | 2026-11-20 | Initial contract drafted from the verified current tree. |
 | 1.1 | 2026-11-21 | Audit completed: authoritative status, legacy reference crosswalk, pre-release gap decisions recorded in `status.md` (#263). |
+| 1.2 | 2026-11-22 | §5.3 records the remap handshake a hidden surface repeats before presenting, and the eviction of a connection whose display reports a fatal error (#271). |

@@ -256,3 +256,40 @@ TEST(AlborVulkanWindowChecks, PresentsThroughAPopupShownHiddenAndShownAgain) {
     // assert the reopened surface presents again, which a stale wsi surface would refuse (§6.3)
     EXPECT_GE(vulkan_presented_frames(), reopened + 4u);
 }
+
+TEST(AlborVulkanWindowChecks, PresentsAgainAfterAHideAndShow) {
+    // arrange a shown window whose swapchain the renderer owns (§5.3, §6.3)
+    const bool wayland = albor::core::get_environment_variable("WAYLAND_DISPLAY").has_value();
+    const bool x11 = albor::core::get_environment_variable("DISPLAY").has_value();
+    if (!wayland && !x11)
+        GTEST_SKIP() << "no display on this host";
+    WindowOptions options;
+    options.title = "albor-vulkan-hide-show";
+    options.size = Size{160.0f, 120.0f};
+    const std::unique_ptr<PlatformWindow> window = PlatformWindow::create(options);
+    if (window == nullptr)
+        GTEST_SKIP() << "the platform adapter could not create a window";
+    window->show();
+    AlborRendererBackend backend;
+    if (!backend.ready())
+        GTEST_SKIP() << "no vulkan device on this host";
+    const WindowMetrics metrics = window->metrics();
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(window->native_handle(), metrics);
+    ASSERT_NE(surface, nullptr);
+    // act one frame is presented, which the swapchain owns (§6.3)
+    const std::uint64_t before = vulkan_presented_frames();
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.1f, 0.2f, 0.3f)));
+    ASSERT_GT(vulkan_presented_frames(), before);
+    // act the window is hidden and shown again, which repeats the map handshake before the next buffer (§5.3)
+    window->hide();
+    EXPECT_FALSE(window->visible());
+    window->show();
+    ASSERT_TRUE(window->visible());
+    // act a frame is presented on the remapped surface (§6.3)
+    const std::uint64_t remapped = vulkan_presented_frames();
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.3f, 0.2f, 0.1f)));
+    // assert the frame reached the compositor, which a buffer attached before the configure would refuse (§5.3)
+    EXPECT_GT(vulkan_presented_frames(), remapped);
+    EXPECT_TRUE(surface->valid());
+    window->close();
+}
