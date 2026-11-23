@@ -157,7 +157,7 @@ those configurations (BDG-04); **Not supported** means there is no Windows imple
 | Render surface, metrics, scale | Full | D3D and Blend2D windowed surfaces |
 | Two-stage frame pipeline | Full | scene build and render execution separated |
 | Custom rendering and retained resources | Full | `CustomRenderNode`, `RenderContext`, batch buffers, glyph cache |
-| `render-albor` GPU backend | Full | Direct3D 11 on Windows, Metal on macOS and Vulkan on Linux; the Linux suite carries the offscreen smoke, the parity corpus, the allocation invariant and the Wayland/XCB windowed present, with damage culled stage one and damage-bounded partial frames. The Vulkan backend keeps two frames in flight per surface with no queue drain on a steady frame |
+| `render-albor` GPU backend | Full | Direct3D 11 on Windows, Metal on macOS and Vulkan on Linux; the Linux suite carries the offscreen smoke, the parity corpus, the allocation invariant and the Wayland/XCB windowed present, with damage culled stage one and damage-bounded partial frames. Texture-cache evictions are retired against the frame that dropped them on all three backends, so an in-flight frame never reads a destroyed texture, and the Vulkan backend keeps two frames in flight per surface with no queue drain on a steady frame |
 | Blend2D windowed surface | Full | 3 windowed tests |
 | Software and headless renderer | Full | screenshot reference for GPU/software parity |
 

@@ -842,6 +842,9 @@ namespace albor::render
             // the buffers the frame retired, which the next use of the slot releases (§6.3)
             std::vector<Buffer> retired;
 
+            // the textures dropped while this slot recorded, released when the slot is recycled (§6.3, AD-06)
+            std::vector<Image> retired_images;
+
             // the descriptor sets the frame already wrote, which a draw of the same key reuses (§6.3)
             std::vector<DescriptorEntry> descriptors;
         };
@@ -1037,6 +1040,9 @@ namespace albor::render
 
             // the textures the uploaded images became, keyed by the identifier an image carries (AD-06)
             AgedCache<std::uint64_t, Image> m_textures{TEXTURE_IDLE_FRAMES, MAXIMUM_CACHED_TEXTURES};
+
+            // the textures a begin frame sweep dropped, which the end transfers to the slot that records the frame (AD-06)
+            std::vector<Image> m_pending_retired_images;
 
             // the glyph paths this surface already walked, which the context borrows so a glyph walks once (§6.4)
             GlyphPathCache m_glyph_paths;
@@ -1644,6 +1650,8 @@ namespace albor::render
             }
             m_target = Image{};
             m_readback = Buffer{};
+            // the images a sweep dropped before the last frame ended release after the device drained (§6.3, AD-06)
+            m_pending_retired_images.clear();
         }
 
         bool AlborRenderSurface::create_slot(FrameSlot& slot) {
@@ -1694,6 +1702,8 @@ namespace albor::render
             // the scratch targets and the retired buffers release their memory (§6.3)
             slot.scratch.clear();
             slot.retired.clear();
+            // the textures the slot retired release their memory after the device drained (§6.3, AD-06)
+            slot.retired_images.clear();
             slot.vertices.buffer = Buffer{};
             slot.quad_vertices.buffer = Buffer{};
             slot.indices.buffer = Buffer{};
@@ -1746,6 +1756,8 @@ namespace albor::render
             slot.descriptors.clear();
             // the buffers the finished frame retired and the scratch it took are free again (§6.3, AD-06)
             slot.retired.clear();
+            // the textures the finished frame dropped release now that no submitted frame reads them (§6.3, AD-06)
+            slot.retired_images.clear();
             for (ScratchTarget& target : slot.scratch)
                 target.in_use = false;
             // the command buffer is one time submit, because the frame is recorded once and submitted once (§6.3)
@@ -2072,8 +2084,12 @@ namespace albor::render
             m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), metrics.scale_factor, &m_glyph_paths, &m_glyph_meshes);
             // the frame counter advances once per frame, which the textures record and the glyph paths age against (AD-06)
             m_frame_counter++;
-            // the textures age against the same counter, which drops the images no draw reached (AD-06)
-            m_textures.begin_frame(m_frame_counter);
+            // the textures age against the same counter, which hands back the ones no draw reached (AD-06)
+            std::vector<Image> swept = m_textures.begin_frame(m_frame_counter);
+            for (Image& image : swept) {
+                // the swept image is retired to the slot this frame records on, which releases it two frames later (AD-06)
+                m_pending_retired_images.push_back(std::move(image));
+            }
             // the glyph paths age against the same counter, which drops the ones no draw reached (§6.4)
             m_glyph_paths.begin_frame(m_frame_counter);
             // the glyph meshes age against the same counter too, which drops the ones no draw reached (§6.4)
@@ -2106,6 +2122,13 @@ namespace albor::render
                     m_damage.reset();
                     return;
                 }
+                // the textures the sweep dropped join the slot, which releases them once it is recycled (AD-06)
+                for (Image& image : m_pending_retired_images) {
+                    // the slot owns the image until its fence signals, so no in-flight frame reads it after release (AD-06)
+                    slot.retired_images.push_back(std::move(image));
+                }
+                // the pending list hands every image to the slot, which now owns their release (AD-06)
+                m_pending_retired_images.clear();
                 // the images the frame carries become textures once, which a later frame reuses (AD-06)
                 const FrameProfileScope upload_scope;
                 upload_textures(slot);
@@ -2130,6 +2153,13 @@ namespace albor::render
                 // a frame the present left unsubmitted still finishes its target, which a read back waits on (§6.3)
                 if (!presented && !slot.submitted && slot.command != VK_NULL_HANDLE) {
                     if (!submit_slot(slot, VK_NULL_HANDLE, 0, VK_NULL_HANDLE)) {
+                        // the frame never reached the queue, so its dropped textures wait for the next submit (§6.3, AD-06)
+                        for (Image& image : slot.retired_images) {
+                            // the image moves back to the pending list, which the next submitted frame retires (AD-06)
+                            m_pending_retired_images.push_back(std::move(image));
+                        }
+                        // the slot owns no dropped texture until a frame recorded on it reaches the queue (AD-06)
+                        slot.retired_images.clear();
                         m_begun.store(false);
                         m_damage.reset();
                         return;
@@ -2410,7 +2440,12 @@ namespace albor::render
                 // the last level was written by the last blit, so its own barrier finishes the chain (§6.4)
                 transition_mips(command, texture.image, levels - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
                 texture.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                m_textures.store(upload.id, std::move(texture));
+                // the store hands back the coldest textures it drops, which the slot retires rather than destroys (AD-06)
+                std::vector<Image> dropped = m_textures.store(upload.id, std::move(texture));
+                for (Image& image : dropped) {
+                    // the dropped image is kept until the slot that recorded this frame is recycled (AD-06)
+                    slot.retired_images.push_back(std::move(image));
+                }
             }
         }
 

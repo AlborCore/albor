@@ -1663,7 +1663,7 @@ TEST(AlborRendererBackendChecks, CompositesACastOnAFrameWithNoGeometry) {
 }
 
 TEST(AlborParityChecks, KeepsAFrameThatUploadsMoreImagesThanTheCacheHolds) {
-    // arrange a frame of seventy solid images, which is more than the texture cache is sized for (§6.4, AD-06)
+    // arrange a surface pair and seventy images, which is more than the texture cache is sized for (§6.4, AD-06)
     const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{96.0f, 96.0f}, 1.0f);
     albor::software::SoftwareRendererBackend reference;
     albor::render::AlborRendererBackend backend;
@@ -1671,28 +1671,83 @@ TEST(AlborParityChecks, KeepsAFrameThatUploadsMoreImagesThanTheCacheHolds) {
     const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
     ASSERT_NE(expected_surface, nullptr);
     ASSERT_NE(actual_surface, nullptr);
-    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    std::vector<std::shared_ptr<const ImageResource>> images;
     for (std::uint64_t index = 0u; index < 70u; index++) {
         // every image is its own identifier and its own colour, so none of them is answered by another (AD-06)
         const std::vector<std::uint8_t> source{static_cast<std::uint8_t>(index * 3u), 60u, 120u, 255u};
-        const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(300u + index, 1u, 1u, ImageFormat::RGBA8, source);
+        images.push_back(std::make_shared<const ImageResource>(300u + index, 1u, 1u, ImageFormat::RGBA8, source));
+    }
+    // arrange the first frame, whose seventy uploads all come from the same frame (AD-06)
+    FrameScene first(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    for (std::size_t index = 0u; index < images.size(); index++) {
         // the images tile a ten column grid, whose row is the floating quotient rather than the integer one (§6.4)
         const AlborPoint origin{.x = 4.0f + static_cast<float>(index % 10u) * 9.0f, .y = 4.0f + (static_cast<float>(index) / 10u) * 9.0f};
-        DrawCommand command = DrawCommand::image(image, AlborRect::from_origin_size(origin, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
-        // the clip is the whole surface, which is what an unclipped frame carries (§6.2)
+        DrawCommand command = DrawCommand::image(images[index], AlborRect::from_origin_size(origin, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
         command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
-        scene.add_command(std::move(command));
+        first.add_command(std::move(command));
     }
-    // act
+    // act the first frame, which fills the cache past its capacity but evicts nothing of its own (AD-06)
+    reference.execute_frame(*expected_surface, first);
+    backend.execute_frame(*actual_surface, first);
+    // act a second frame with one new image, whose store drops the coldest slice the first frame left (AD-06)
+    const std::vector<std::uint8_t> fresh{255u, 0u, 255u, 255u};
+    const std::shared_ptr<const ImageResource> newer = std::make_shared<const ImageResource>(400u, 1u, 1u, ImageFormat::RGBA8, fresh);
+    FrameScene second(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand trigger = DrawCommand::image(newer, AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{4.0f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    trigger.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    second.add_command(std::move(trigger));
+    reference.execute_frame(*expected_surface, second);
+    backend.execute_frame(*actual_surface, second);
+    // arrange the third frame, which redraws every image so the evicted slice is uploaded again in any order (AD-06)
+    FrameScene third(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    for (std::size_t index = 0u; index < images.size(); index++) {
+        const AlborPoint origin{.x = 4.0f + static_cast<float>(index % 10u) * 9.0f, .y = 4.0f + (static_cast<float>(index) / 10u) * 9.0f};
+        DrawCommand command = DrawCommand::image(images[index], AlborRect::from_origin_size(origin, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+        third.add_command(std::move(command));
+    }
+    // act the third frame, which a dropped texture answers by uploading it again (AD-06)
+    reference.execute_frame(*expected_surface, third);
+    backend.execute_frame(*actual_surface, third);
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert every re-uploaded tile keeps its own colour, which a stale or missing texture would not (§6.4, AD-06)
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    EXPECT_LE(actual_shot.max_channel_difference(expected_shot), 2);
+}
+
+TEST(AlborParityChecks, RedrawsATextureTheIdleSweepDropped) {
+    // arrange a surface pair and one image, which the first frame uploads into the cache (§6.4, AD-06)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const std::vector<std::uint8_t> source{64u, 128u, 192u, 255u};
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(500u, 1u, 1u, ImageFormat::RGBA8, source);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::image(image, AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    // act the surface runs past the 120 frame idle limit, which drops the image and recycles its slot (§6.4, AD-06)
+    FrameScene idle(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    for (std::uint32_t frame = 0u; frame < 130u; frame++)
+        backend.execute_frame(*actual_surface, idle);
+    // act the image is drawn again, which the sweep no longer answers and uploads a second time (AD-06)
     reference.execute_frame(*expected_surface, scene);
     backend.execute_frame(*actual_surface, scene);
     const Screenshot expected_shot = capture_surface(*expected_surface);
     const Screenshot actual_shot = capture_surface(*actual_surface);
-    // assert
+    // assert the re-uploaded image lands where the reference draws it, which a missing sweep answer would not (§6.4, AD-06)
     ASSERT_FALSE(expected_shot.empty());
     ASSERT_FALSE(actual_shot.empty());
     ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
-    // every image draws as its own colour, which a texture dropped before the frame encoded would not (§6.4, AD-06)
     EXPECT_LE(actual_shot.max_channel_difference(expected_shot), 2);
 }
 

@@ -617,8 +617,14 @@ namespace albor::render
             // how many textures a surface aims to hold, which one frame's own uploads may briefly exceed (AD-06)
             static constexpr std::size_t MAXIMUM_CACHED_TEXTURES = 64;
 
+            // how many frame buckets hold a dropped view, which bounds the cpu's own references to it (AD-06)
+            static constexpr std::size_t RETIRED_TEXTURE_FRAMES = 2;
+
             // the textures the uploaded images became, keyed by the identifier an image carries (AD-06)
             AgedCache<std::uint64_t, ComPtr<ID3D11ShaderResourceView>> m_textures{TEXTURE_IDLE_FRAMES, MAXIMUM_CACHED_TEXTURES};
+
+            // the views the texture cache dropped, kept until the frame that dropped them recycles its bucket (AD-06)
+            std::array<std::vector<ComPtr<ID3D11ShaderResourceView>>, RETIRED_TEXTURE_FRAMES> m_retired_textures{};
 
             // the glyph paths this surface already walked, which the context borrows so a glyph walks once (§6.4)
             GlyphPathCache m_glyph_paths;
@@ -932,8 +938,15 @@ namespace albor::render
             m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), metrics.scale_factor, &m_glyph_paths, &m_glyph_meshes);
             // the frame counter advances once per frame, which the textures record and the glyph paths age against (AD-06)
             m_frame_counter++;
-            // the textures age against the same counter, which drops the images no draw reached (AD-06)
-            m_textures.begin_frame(m_frame_counter);
+            // the bucket this frame fills is the one two frames ago, whose dropped views this frame recycles (AD-06)
+            std::vector<ComPtr<ID3D11ShaderResourceView>>& retired = m_retired_textures[m_frame_counter % RETIRED_TEXTURE_FRAMES];
+            retired.clear();
+            // the textures age against the same counter, which hands back the ones no draw reached (AD-06)
+            std::vector<ComPtr<ID3D11ShaderResourceView>> swept = m_textures.begin_frame(m_frame_counter);
+            for (ComPtr<ID3D11ShaderResourceView>& view : swept) {
+                // the swept view is kept in this frame's bucket, which releases it after two frames (AD-06)
+                retired.push_back(std::move(view));
+            }
             // the glyph paths age against the same counter, which drops the ones no draw reached (§6.4)
             m_glyph_paths.begin_frame(m_frame_counter);
             // the glyph meshes age against the same counter too, which drops the ones no draw reached (§6.4)
@@ -1104,7 +1117,14 @@ namespace albor::render
                     continue;
                 // the chain is generated once, which a later frame samples instead of reuploading (§6.4, AD-06)
                 context->GenerateMips(view.Get());
-                m_textures.store(upload.id, std::move(view));
+                // the store hands back the coldest views it drops, which this frame retires rather than releases (AD-06)
+                std::vector<ComPtr<ID3D11ShaderResourceView>> dropped = m_textures.store(upload.id, std::move(view));
+                // the views this frame drops join its bucket, which recycles them after two frames (AD-06)
+                std::vector<ComPtr<ID3D11ShaderResourceView>>& retired = m_retired_textures[m_frame_counter % RETIRED_TEXTURE_FRAMES];
+                for (ComPtr<ID3D11ShaderResourceView>& item : dropped) {
+                    // the dropped view is kept until the bucket of this frame is recycled (AD-06)
+                    retired.push_back(std::move(item));
+                }
             }
         }
 

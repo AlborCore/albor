@@ -53,23 +53,41 @@ namespace albor
                 found->second.last_used = m_frame;
         }
 
-        // keep a value under its identity, dropping the coldest slice when the cache is already full (§6.4, AD-06)
-        void store(const Key& key, Value value) {
+        // keep a value under its identity, handing back the coldest slice a full cache drops (§6.4, AD-06)
+        std::vector<Value> store(const Key& key, Value value) {
+            // the values the cache cannot keep are collected, which a backend retires later (§6.4, AD-06)
+            std::vector<Value> dropped;
             // a full cache drops a slice before it grows, which is what keeps its size near the capacity (§6.4, AD-06)
             if (m_values.size() >= m_capacity)
-                drop_the_coldest_slice();
+                dropped = drop_the_coldest_slice();
             // the value joins under its identity, aged to the frame that stored it (§6.4)
             m_values.insert_or_assign(key, Entry{.value = std::move(value), .last_used = m_frame});
+            // the caller owns every value the cache could not keep, which a backend destroys later (§6.4, AD-06)
+            return dropped;
         }
 
-        // age the cache at a frame, which a consumer calls once per frame because it drives every eviction (§6.4, AD-06)
-        void begin_frame(std::uint64_t frame) {
+        // age the cache at a frame, handing back the stale values the sweep drops (§6.4, AD-06)
+        std::vector<Value> begin_frame(std::uint64_t frame) {
             // the frame is what every entry ages against, which the sweep and the eviction both read (§6.4, AD-06)
             m_frame = frame;
+            // the values the sweep drops are collected rather than destroyed, which a backend retires later (§6.4, AD-06)
+            std::vector<Value> dropped;
             // the sweep walks every entry, because a value no caller reached is memory that frame cannot use (§6.4)
-            for (auto entry = m_values.begin(); entry != m_values.end();)
-                // a fresh entry is passed over, and a stale one is erased here rather than later (§6.4, AD-06)
-                entry = frame - entry->second.last_used <= m_idle_frames ? std::next(entry) : m_values.erase(entry);
+            for (auto entry = m_values.begin(); entry != m_values.end();) {
+                // a stale entry leaves the map, while a fresh one stays and ages against the frame (§6.4, AD-06)
+                if (frame - entry->second.last_used > m_idle_frames) {
+                    // the stale value is handed to the caller, which destroys it when no frame reads it (§6.4, AD-06)
+                    dropped.push_back(std::move(entry->second.value));
+                    // the entry leaves the map, because the caller now owns the value it held (§6.4)
+                    entry = m_values.erase(entry);
+                }
+                else {
+                    // a fresh entry stays in the map, aged to the frame it was last reached in (§6.4)
+                    entry = std::next(entry);
+                }
+            }
+            // the caller owns every stale value the sweep dropped, which a backend retires later (§6.4, AD-06)
+            return dropped;
         }
 
         // report how many values the cache holds, which a test asserts on (§6.4)
@@ -79,8 +97,8 @@ namespace albor
         }
 
     private:
-        // drop the coldest slice of the full cache, because dropping all of it loses every value of a frame (§6.4, AD-06)
-        void drop_the_coldest_slice() {
+        // drop the coldest slice of the full cache, handing back the values it drops (§6.4, AD-06)
+        std::vector<Value> drop_the_coldest_slice() {
             // every entry's age is gathered with its identity, which the coldest slice is chosen from (§6.4, AD-06)
             std::vector<std::pair<std::uint64_t, Key>> ages;
             for (const auto& [key, entry] : m_values) {
@@ -88,17 +106,32 @@ namespace albor
                 if (entry.last_used < m_frame)
                     ages.emplace_back(entry.last_used, key);
             }
+            // the values the slice drops are collected rather than destroyed, which a backend retires later (§6.4, AD-06)
+            std::vector<Value> dropped;
             // a cache whose every entry came from this frame keeps them all, so the frame is never robbed (§6.4)
             if (ages.empty())
-                return;
+                return dropped;
             // the slice is a fixed fraction, and never nothing, because a cache that drops nothing cannot grow (§6.4)
             const std::size_t slice = std::min(std::max<std::size_t>(m_capacity / 8u, 1u), ages.size());
             // the coldest slice sorts to the front, because the entries nothing reached soonest are the ones to go (§6.4)
             const auto coldest = ages.begin() + static_cast<std::ptrdiff_t>(slice);
             std::partial_sort(ages.begin(), coldest, ages.end(), [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
-            // the slice is erased by identity, because a map hands out no window a caller could erase (§6.4)
-            for (auto age = ages.begin(); age != coldest; ++age)
-                m_values.erase(age->second);
+            // the slice is reserved up front, because the ages it selected already say how many values leave (§6.4)
+            dropped.reserve(slice);
+            // the slice is erased by identity, moving each dropped value out before the map lets it go (§6.4, AD-06)
+            for (auto age = ages.begin(); age != coldest; ++age) {
+                // the victim is looked up by the identity the slice names, which the cache still holds (§6.4)
+                const auto victim = m_values.find(age->second);
+                // a victim the slice already took is passed over, because one entry leaves once (§6.4)
+                if (victim != m_values.end()) {
+                    // the value is moved to the caller, which keeps it until no in-flight frame reads it (§6.4, AD-06)
+                    dropped.push_back(std::move(victim->second.value));
+                    // the entry leaves the map, so the cache no longer answers it and the caller owns it (§6.4)
+                    m_values.erase(victim);
+                }
+            }
+            // the caller owns the dropped slice, which a backend retires once its frames finish (§6.4, AD-06)
+            return dropped;
         }
 
         // one value with the frame it was last reached in, which the sweep and the eviction both read (§6.4, AD-06)
