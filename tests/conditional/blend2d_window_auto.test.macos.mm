@@ -13,12 +13,14 @@
 #include "albor/core/geometry.h"
 #include "albor/core/native_window_handle.h"
 #include "albor/core/paint.h"
+#include "albor/platform/macos/platform_window.h"
 #include "albor/render/frame_scene.h"
 #include "albor/render/render-blend2d/blend2d_renderer_backend.h"
 #include "albor/render/render-blend2d/blend2d_window_surface.h"
 #include "albor/render/render_executor.h"
 #include "albor/render/renderer_backend.h"
 #include "albor/window/window_metrics.h"
+#include "albor/window/window_options.h"
 
 // the suite only runs on apple, because it asserts the macos window half self installed at load (§5.3, AD-16)
 TEST(Blend2DAutoInstallChecks, TheWindowSurfaceFactoryInstallsItselfAtLoad) {
@@ -117,4 +119,35 @@ TEST(Blend2DWindowSurfaceChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     // assert a per frame leak cannot hide here, because the pool costs 7.33 MiB per frame when it is missing (§6.3)
     const std::int64_t growth = static_cast<std::int64_t>(after.phys_footprint) - static_cast<std::int64_t>(before.phys_footprint);
     EXPECT_LT(growth, 8 * 1024 * 1024);
+}
+
+TEST(Blend2DWindowSurfaceChecks, PresentingResumesAfterAHideAndShow) {
+    // arrange a window the framework owns, which drives the native show and hide (§5.3)
+    albor::WindowOptions options;
+    options.title = "albor-blend2d-hide-show";
+    options.size = albor::Size{64.0f, 48.0f};
+    std::unique_ptr<albor::MacosPlatformWindow> window = albor::MacosPlatformWindow::create(options);
+    ASSERT_NE(window, nullptr);
+    window->show();
+    ASSERT_TRUE(window->visible());
+    // arrange the surface the install-time factory builds over the layer (§5.3, AD-16)
+    const std::unique_ptr<albor::RenderSurface> surface = albor::blend2d::create_window_surface(window->native_handle(), window->metrics());
+    ASSERT_NE(surface, nullptr);
+    ASSERT_TRUE(surface->valid());
+    // act one frame is presented, which the layer receives (§6.3)
+    surface->begin_frame();
+    surface->end_frame();
+    ASSERT_EQ(surface->presented_frames(), 1u);
+    // act the window is hidden and shown again, which the win32 adapter takes the same way (§5.3)
+    window->hide();
+    EXPECT_FALSE(window->visible());
+    window->show();
+    // assert the surface survived the hide and show, which a torn down layer would fail (§5.3, §6.3)
+    ASSERT_TRUE(window->visible());
+    EXPECT_TRUE(surface->valid());
+    // act a frame is presented after the re-show (§6.3)
+    surface->begin_frame();
+    surface->end_frame();
+    // assert the frame reached the layer, so a re-show resumes presentation (§5.3)
+    EXPECT_EQ(surface->presented_frames(), 2u);
 }

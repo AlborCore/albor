@@ -14,6 +14,7 @@
 #include "albor/platform/linux/wayland/event_loop.h"
 #include "albor/platform/linux/wayland/native_surface.linux.h"
 #include "albor/platform/linux/wayland/platform_window.h"
+#include "albor/platform/linux/wayland/wayland_connection.linux.h"
 #include "albor/ui/ui_event.h"
 #include "albor/window/platform_window.h"
 #include "albor/window/window_metrics.h"
@@ -158,10 +159,14 @@ TEST(WaylandPlatform, ShowsARendererOwnedSurfaceWithoutAPlaceholderBuffer) {
     // act the window is hidden and shown again, which a reopened popup does (§5.1)
     window->hide();
     EXPECT_FALSE(window->visible());
+    // assert the unmap spent the map cycle, which the next show starts again (§5.3)
+    EXPECT_FALSE(native->state->configured);
     window->show();
     // assert the second show maps it again, because the renderer presents the frame that follows (§6.1)
     EXPECT_TRUE(window->visible());
     EXPECT_TRUE(native->state->mapped);
+    // assert the show completed the map cycle, which admits the renderer's next buffer (§5.3)
+    EXPECT_TRUE(native->state->configured);
     window->close();
 }
 
@@ -379,6 +384,35 @@ TEST(WaylandPlatform, CreatesAPopupUnderAClientSideDecoratedWindow) {
     parent->close();
 }
 
+TEST(WaylandPlatform, ShowsAClientSideDecoratedWindowAgainAfterAHide) {
+    // arrange a window whose decoration the compositor leaves to libdecor (§5.3)
+    WindowOptions options;
+    options.title = "albor-wayland-decorated-remap";
+    options.size = Size{240.0f, 160.0f};
+    const std::unique_ptr<PlatformWindow> window = PlatformWindow::create(options);
+    ASSERT_NE(window, nullptr);
+    const auto* wayland_window = dynamic_cast<const WaylandPlatformWindow*>(window.get());
+    ASSERT_NE(wayland_window, nullptr);
+    // the frame path needs a compositor without server-side chrome, which headless weston does not provide (§5.3)
+    if (!wayland_window->uses_client_side_frame())
+        GTEST_SKIP() << "the compositor draws server-side decorations, so the libdecor remap is not exercised";
+    auto* native = static_cast<wayland::WaylandNativeSurface*>(const_cast<void*>(window->native_handle().object()));
+    ASSERT_NE(native, nullptr);
+    ASSERT_NE(native->state, nullptr);
+    // act the window is shown, hidden and shown again, which a frame-owned surface repeats the same way (§5.3)
+    window->show();
+    ASSERT_TRUE(window->visible());
+    window->hide();
+    EXPECT_FALSE(window->visible());
+    window->show();
+    // assert the frame handshake completed without a protocol error, which a buffer before the configure would raise (§5.3)
+    EXPECT_TRUE(window->visible());
+    EXPECT_TRUE(native->state->mapped);
+    EXPECT_TRUE(native->state->configured);
+    EXPECT_EQ(wl_display_get_error(native->state->display), 0);
+    window->close();
+}
+
 TEST(WaylandPlatform, MapsXkbKeysAndModifiers) {
     // act, assert the named keys and the modifier set map onto the portable names (§8.3)
     EXPECT_EQ(linux_platform::key_from_keysym(linux_platform::KEYSYM_SPACE), Key::Space);
@@ -438,6 +472,55 @@ TEST(WaylandPlatform, InstallsTheClipboard) {
     ASSERT_NE(clipboard, nullptr);
     EXPECT_TRUE(clipboard->text().empty());
     EXPECT_FALSE(clipboard->has_text());
-    // a headless compositor has no seat, so the data device is not ready, which the report states (§3.5)
-    EXPECT_FALSE(clipboard->ready());
+    // arrange the seat the desktop offers, which a headless compositor leaves absent (§3.5)
+    const std::shared_ptr<wayland::WaylandConnection> connection = wayland::WaylandConnection::connect(std::string_view());
+    ASSERT_NE(connection, nullptr);
+    // assert readiness follows the seat and the data device manager, which a desktop session carries (§3.5)
+    const bool device_present = connection->seat() != nullptr && connection->data_devices() != nullptr;
+    EXPECT_EQ(clipboard->ready(), device_present);
+}
+
+TEST(WaylandPlatform, ReplacesAPoisonedConnectionOnTheNextConnect) {
+    // arrange the shared display whose cache the next window would reuse (§5.3)
+    const std::shared_ptr<wayland::WaylandConnection> poisoned = wayland::WaylandConnection::connect(std::string_view());
+    ASSERT_NE(poisoned, nullptr);
+    ASSERT_TRUE(poisoned->valid());
+    // arrange a window that predates the fault, which keeps the dead display alive through its connection (§5.3)
+    WindowOptions survivor_options;
+    survivor_options.title = "albor-wayland-before-protocol-error";
+    survivor_options.size = Size{64.0f, 48.0f};
+    const std::unique_ptr<PlatformWindow> survivor = PlatformWindow::create(survivor_options);
+    ASSERT_NE(survivor, nullptr);
+    survivor->show();
+    ASSERT_TRUE(survivor->visible());
+    // arrange a surface on that display, which carries the request the fault rides (§5.3)
+    wl_surface* surface = wl_compositor_create_surface(poisoned->compositor());
+    ASSERT_NE(surface, nullptr);
+    // act a zero buffer scale is a fatal protocol error, which both compositors report (§5.3)
+    wl_surface_set_buffer_scale(surface, 0);
+    EXPECT_LT(wl_display_roundtrip(poisoned->display()), 0);
+    // assert the display reports the fatal error, which no later window can present through (§5.3)
+    EXPECT_FALSE(poisoned->valid());
+    // act a window asks for the connection the dead display is cached under (§5.3)
+    const std::shared_ptr<wayland::WaylandConnection> replacement = wayland::WaylandConnection::connect(std::string_view());
+    // assert the cache handed out a different live display, which the next window presents through (§5.3)
+    ASSERT_NE(replacement, nullptr);
+    EXPECT_NE(replacement->display(), poisoned->display());
+    EXPECT_TRUE(replacement->valid());
+    // act a window is created after the fatal error, which the poisoned cache would have refused (§5.3)
+    WindowOptions options;
+    options.title = "albor-wayland-after-protocol-error";
+    options.size = Size{64.0f, 48.0f};
+    const std::unique_ptr<PlatformWindow> window = PlatformWindow::create(options);
+    // assert the window came up on the replacement display, which the poison never reaches (§5.3)
+    ASSERT_NE(window, nullptr);
+    window->show();
+    EXPECT_TRUE(window->visible());
+    window->close();
+    // act the window that predates the fault is closed, which releases its proxies on the dead display (§5.3)
+    survivor->close();
+    // assert the close completed, which the replacement display never sees (§5.3)
+    EXPECT_FALSE(survivor->visible());
+    // the faulted surface is released locally, which the dead display answers no request for (§5.3)
+    wl_surface_destroy(surface);
 }

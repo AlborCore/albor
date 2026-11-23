@@ -93,8 +93,13 @@ namespace albor::wayland
         const std::map<std::string, std::weak_ptr<WaylandConnection>>::const_iterator found = cache().find(key);
         if (found != cache().end()) {
             // a weak reference that still locks is the live connection (§5.3)
-            if (std::shared_ptr<WaylandConnection> alive = found->second.lock())
-                return alive;
+            if (std::shared_ptr<WaylandConnection> alive = found->second.lock()) {
+                // a display that reported a fatal error answers nothing, so it is never handed out again (§5.3)
+                if (alive->valid())
+                    return alive;
+            }
+            // the dead connection leaves the cache, so the next ask opens a fresh display (§5.3)
+            cache().erase(found);
         }
         // the socket name is handed over as a nul terminated string, where an empty name means the default (§5.3)
         const std::string socket(name);
@@ -120,6 +125,11 @@ namespace albor::wayland
         // the connection is cached under its name, which a later connect reuses (§5.3)
         cache()[key] = connection;
         return connection;
+    }
+
+    bool WaylandConnection::valid() const {
+        // a display that reported an error answers no request, which a fatal protocol error sets (§5.3)
+        return m_display != nullptr && wl_display_get_error(m_display) == 0;
     }
 
     WaylandConnection::~WaylandConnection() {

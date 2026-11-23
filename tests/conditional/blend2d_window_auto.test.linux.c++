@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -12,6 +13,7 @@
 #include "albor/core/native_window_handle.h"
 #include "albor/core/paint.h"
 #include "albor/platform/linux/wayland/native_surface.linux.h"
+#include "albor/platform/linux/wayland/platform_window.h"
 #include "albor/render/render-blend2d/blend2d_window_surface.h"
 #include "albor/render/render_context.h"
 #include "albor/window/platform_window.h"
@@ -191,6 +193,14 @@ TEST(Blend2DWaylandChecks, DrawingAHiddenWindowKeepsItOffScreen) {
     options.size = Size{64.0f, 48.0f};
     const std::unique_ptr<PlatformWindow> window = PlatformWindow::create(options);
     ASSERT_NE(window, nullptr);
+    auto* native = static_cast<wayland::WaylandNativeSurface*>(const_cast<void*>(window->native_handle().object()));
+    ASSERT_NE(native, nullptr);
+    ASSERT_NE(native->state, nullptr);
+    const auto* wayland_window = dynamic_cast<const WaylandPlatformWindow*>(window.get());
+    ASSERT_NE(wayland_window, nullptr);
+    // assert create completed the first map cycle, which the first raw show relies on (§5.3)
+    if (!wayland_window->uses_client_side_frame())
+        EXPECT_TRUE(native->state->configured);
     window->show();
     ASSERT_TRUE(window->visible());
     const std::unique_ptr<RenderSurface> surface = blend2d::create_window_surface(window->native_handle(), window->metrics());
@@ -204,8 +214,10 @@ TEST(Blend2DWaylandChecks, DrawingAHiddenWindowKeepsItOffScreen) {
     window->hide();
     surface->begin_frame();
     surface->end_frame();
-    // assert the hidden frame never reached the compositor (§5.3, §10.5)
+    // assert the hidden frame never reached the compositor and the unmap spent the map cycle (§5.3, §10.5)
     EXPECT_FALSE(window->visible());
+    EXPECT_FALSE(native->state->mapped);
+    EXPECT_FALSE(native->state->configured);
     EXPECT_EQ(surface->presented_frames(), 1u);
     // act the window is shown again, which the next frame presents through (§5.3)
     window->show();
@@ -213,7 +225,52 @@ TEST(Blend2DWaylandChecks, DrawingAHiddenWindowKeepsItOffScreen) {
     surface->end_frame();
     // assert the reopen presented the frame, which a dismissed popup reopens the same way (§5.1)
     EXPECT_TRUE(window->visible());
+    EXPECT_TRUE(native->state->configured);
     EXPECT_EQ(surface->presented_frames(), 2u);
+    // assert the remap raised no protocol error, which a buffer before the configure would (§5.3)
+    EXPECT_EQ(wl_display_get_error(native->state->display), 0);
+}
+
+TEST(Blend2DWaylandChecks, DropsAFrameDrawnBeforeTheRemapConfigure) {
+    // arrange a shown window and the canvas that presents through it (§5.3, §6.3)
+    WindowOptions options;
+    options.title = "albor-wayland-canvas-remap";
+    options.size = Size{64.0f, 48.0f};
+    const std::unique_ptr<PlatformWindow> window = PlatformWindow::create(options);
+    ASSERT_NE(window, nullptr);
+    window->show();
+    ASSERT_TRUE(window->visible());
+    auto* native = static_cast<wayland::WaylandNativeSurface*>(const_cast<void*>(window->native_handle().object()));
+    ASSERT_NE(native, nullptr);
+    ASSERT_NE(native->state, nullptr);
+    const std::unique_ptr<RenderSurface> surface = blend2d::create_window_surface(window->native_handle(), window->metrics());
+    ASSERT_NE(surface, nullptr);
+    // act one frame is presented, which the compositor receives (§6.3)
+    surface->begin_frame();
+    surface->end_frame();
+    ASSERT_EQ(surface->presented_frames(), 1u);
+    // arrange the state a map request leaves before the compositor answers, which no buffer may precede (§5.3)
+    window->hide();
+    {
+        // the shared state is written under the lock the render thread presents under (§10.5)
+        const std::lock_guard<std::mutex> state_lock(native->state->mutex);
+        native->state->mapped = true;
+        native->state->configured = false;
+    }
+    // act a frame is drawn in that window, which must not attach before the configure (§5.3)
+    surface->begin_frame();
+    surface->end_frame();
+    // assert the frame was dropped, which a committed buffer would fault the surface for (§5.3)
+    EXPECT_EQ(surface->presented_frames(), 1u);
+    // act the window is shown again, which completes the map cycle (§5.3)
+    window->show();
+    surface->begin_frame();
+    surface->end_frame();
+    // assert the frame presents once the compositor accepted the cycle (§5.3)
+    EXPECT_TRUE(window->visible());
+    EXPECT_TRUE(native->state->configured);
+    EXPECT_EQ(surface->presented_frames(), 2u);
+    EXPECT_EQ(wl_display_get_error(native->state->display), 0);
 }
 
 // the suite closes a window while a frame is in flight, because teardown must stop the present (§5.2, §10.5)

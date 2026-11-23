@@ -167,7 +167,7 @@ namespace albor::blend2d
                 {
                     const std::lock_guard<std::mutex> lock(m_state->mutex);
                     // a hidden, dismissed or torn down window presents nothing (§5.3, §10.5)
-                    if (!m_state->mapped || m_state->display == nullptr || m_state->surface == nullptr || m_state->shm == nullptr)
+                    if (!m_state->mapped || !m_state->configured || m_state->display == nullptr || m_state->surface == nullptr || m_state->shm == nullptr)
                         return;
                     // every frame the compositor released is freed, which bounds the retained memory (§6.3)
                     std::erase_if(m_presented, [](const std::unique_ptr<PresentedBuffer>& presented) {
@@ -234,7 +234,7 @@ namespace albor::blend2d
                     // the state is locked again, because a hide or a teardown may have landed during the copy (§10.5)
                     const std::lock_guard<std::mutex> lock(m_state->mutex);
                     // a window that went off screen during the copy drops the frame it built (§5.3)
-                    if (!m_state->mapped || m_state->surface == nullptr) {
+                    if (!m_state->mapped || !m_state->configured || m_state->surface == nullptr) {
                         free_presented(*presented);
                         return;
                     }

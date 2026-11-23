@@ -34,6 +34,9 @@ namespace albor::wayland
         // whether the window is mapped, which a hidden or dismissed window leaves false (§5.3)
         bool mapped = false;
 
+        // whether the map cycle was handed over, which an unmap clears until the compositor answers (§5.3)
+        bool configured = false;
+
         // whether a renderer presents through the surface, which then owns every buffer it commits (§6.3)
         bool renderer_presenting = false;
 

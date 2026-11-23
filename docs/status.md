@@ -104,9 +104,9 @@ are the framework's choice. The target map and advanced composition are on
 | abstraction | level | notes |
 | --- | --- | --- |
 | Application, event loop, tasks, timers | Full | Wayland loop with timerfd pacing |
-| Window roles and close request | Partial | Normal, Dialog and Tool are parented toplevels; Popup uses `xdg_popup` + `xdg_positioner`; close veto is framework-enforced |
+| Window roles and close request | Partial | Normal, Dialog and Tool are parented toplevels; Popup uses `xdg_popup` + `xdg_positioner`; close veto is framework-enforced; a hidden window that returns to screen repeats the `xdg-shell` initial commit before any buffer, which a strict compositor accepts |
 | Window modality and parent windows | Full | the framework gate enforces it before dispatch; Wayland has no native dialog role |
-| Clipboard | Partial | `wl_data_device` text selection; a headless compositor without a seat has no clipboard |
+| Clipboard | Partial | `wl_data_device` text selection; readiness follows the seat and the data-device manager, so a headless compositor without a seat has no clipboard |
 | IME and text composition | Partial | `text-input-v3`; candidate anchor; surrounding text is not sent yet |
 | DPI and scale factor | Full | fractional `wp_fractional_scale_v1` with `wp_viewporter`; integer output fallback, covered at scale 2 by the local container |
 | Event-loop frame pacing | Full | timerfd pacing |
@@ -122,8 +122,9 @@ packages exist. The libdecor frame and the Wayland protocol XMLs are vendored, s
 libdecor package, plugin directory or `wayland-protocols` package is needed. The Linux debug,
 release and coverage CI jobs are enabled with lavapipe; only the Alma 9 `linux-floor` job is
 disabled. The workflow installs the packages and runs the platform suite under a headless
-Weston compositor.
-[Linux](linux.md) records the workflow, the Alma 9 baseline and the current limits.
+Weston compositor. The hide/show remap and the eviction of a dead connection were additionally
+verified locally against a strict seat-bearing compositor (KWin), which CI does not run.
+[Linux](linux.md) records the workflow, the Alma 9 baseline, that local check and the current limits.
 
 ## Windows support
 
