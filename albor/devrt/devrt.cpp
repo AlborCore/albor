@@ -122,4 +122,7 @@ namespace albor::devrt
 } // namespace albor::devrt
 
 // the install mark the dev runtime defines, so two copies on one line refuse the binary (§12.1, AD-02)
-extern "C" int albor_devrt_marker = 1;
+extern "C" {
+// the linkage block keeps the c symbol unmangled without an extern initializer (gcc)
+int albor_devrt_marker = 1;
+}

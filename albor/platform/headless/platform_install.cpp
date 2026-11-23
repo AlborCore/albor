@@ -13,4 +13,7 @@ namespace
 } // namespace
 
 // the install mark every platform adapter defines, so two adapters on one line refuse the binary (§5.3, AD-16)
-extern "C" int albor_platform_marker = 2;
+extern "C" {
+// the linkage block keeps the c symbol unmangled without an extern initializer (gcc)
+int albor_platform_marker = 2;
+}

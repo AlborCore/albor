@@ -16,4 +16,7 @@ namespace albor::render
 } // namespace albor::render
 
 // the install mark, so two whole archive backends refuse one binary; a lazy link resolves it first-wins (issue 102)
-extern "C" int albor_renderer_marker = 4;
+extern "C" {
+// the linkage block keeps the c symbol unmangled without an extern initializer (gcc)
+int albor_renderer_marker = 4;
+}

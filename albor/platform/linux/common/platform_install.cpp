@@ -7,4 +7,7 @@ namespace
 } // namespace
 
 // the mark every platform adapter defines, which the link refuses when a second family is added (§5.3, AD-16)
-extern "C" int albor_platform_marker = LINUX_PLATFORM_MARKER;
+extern "C" {
+// the linkage block keeps the c symbol unmangled without an extern initializer (gcc)
+int albor_platform_marker = LINUX_PLATFORM_MARKER;
+}
