@@ -84,7 +84,7 @@ namespace
         ReloadFixture() {
             context.engine = &engine;
             context.text = &text;
-            context.factory = [](std::string_view element, BindingEngine& engine, TextEngine& text) { return create_node(element, engine, text); };
+            context.factory = [](std::string_view element, BindingEngine& binding_engine, TextEngine& text_engine) { return create_node(element, binding_engine, text_engine); };
             context.element_of = [](const UiNode& node) { return element_of(node); };
         }
     };

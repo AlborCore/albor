@@ -14,6 +14,7 @@ This document defines the code style preferences for this project.
 
 - 4 spaces per indent
 - No tabs
+- `extern "C"` block bodies indent like namespace bodies
 
 ### Line Length
 

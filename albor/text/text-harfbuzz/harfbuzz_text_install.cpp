@@ -13,4 +13,7 @@ namespace
 } // namespace
 
 // the install mark for the text engine, so two engines on one line refuse the binary (§9.1)
-extern "C" int albor_text_marker = 2;
+extern "C" {
+    // the linkage block keeps the c symbol unmangled without an extern initializer (gcc)
+    int albor_text_marker = 2;
+}

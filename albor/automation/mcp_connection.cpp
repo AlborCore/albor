@@ -13,7 +13,7 @@ namespace albor::automation
         // every tool call goes through the session, which is the automation layer's own gate (§10.3, AD-20)
         route.run = [this](std::string_view line) { return m_session.handle(line); };
         // the initialize token is compared by the session, which never discloses the expected value (§10.3, AD-10)
-        route.authenticate = [this](std::string_view token) { return m_session.authenticate(token).authenticated; };
+        route.authenticate = [this](std::string_view presented) { return m_session.authenticate(presented).authenticated; };
         // every later request reads the same session, so a second connection can never inherit this proof (§10.3, AD-10)
         route.authenticated = [this] { return m_session.authenticated(); };
         // the adapter is built over the route, which is the whole of its reach (§10.3, AD-20)

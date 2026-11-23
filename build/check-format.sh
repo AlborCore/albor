@@ -20,7 +20,7 @@ cd "$ROOT"
 # the digest is taken over the carriage returns removed, because windows
 # checks the tree out with CRLF line endings and macos and linux check it out
 # with LF, and one pin has to name the file on every platform
-CLANG_FORMAT_SHA256="4f9e53ddf0d41a6c5e758cf5300fe9f0128a3d64f4550a99f82e522b95643260"
+CLANG_FORMAT_SHA256="528f49cd0ffb58a28ddb7b7efe1889302ed5afa984db64c330c4a5cec68cc34e"
 
 # hash the style file with whatever digest tool the host provides, reading the
 # carriage returns out first so a checked out line ending never decides the pin

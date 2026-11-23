@@ -104,9 +104,9 @@ namespace albor::blend2d
             const std::span<const std::uint8_t> pixels = texture.pixels();
             const std::size_t row = texture.row_bytes();
             // one channel of one texel is a byte the weight scales (§6.4)
-            const auto channel = [&pixels, row](std::size_t x, std::size_t y, std::size_t c) {
+            const auto channel = [&pixels, row](std::size_t column, std::size_t texel_row, std::size_t channel_index) {
                 // the byte is normalized into the unit range the interpolation works in (§6.4)
-                return static_cast<double>(pixels[y * row + x * 4 + c]) / 255.0;
+                return static_cast<double>(pixels[texel_row * row + column * 4 + channel_index]) / 255.0;
             };
             // every channel interpolates the same four taps, so one loop covers them (§6.4)
             float channels[4] = {0.0f, 0.0f, 0.0f, 0.0f};

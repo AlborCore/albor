@@ -3451,7 +3451,7 @@ namespace albor::compiler
                     if (child->kind == TreeNodeKind::Conditional) {
                         for (const ConditionalSlot& earlier : m_conditionals)
                             if (earlier.node == child.get())
-                                terms.push_back("(m_cond_present_" + std::to_string(earlier.index) + " ? 1 : 0)");
+                                terms.push_back("(m_cond_present_" + std::to_string(earlier.index) + " ? std::size_t{1} : std::size_t{0})");
                     }
                 }
                 // the expression starts from the always present elements, because they are counted at build time (§11.1)
@@ -3664,8 +3664,8 @@ namespace albor::compiler
             // the body is built in preorder, which hangs one row together exactly as written (§8.1, §18.1)
             for (const NodeSlot& body : slot.body)
                 emit_row_node_block(body);
-            line(2, "// the row root is handed back, because the view owns it from here (§18.1)");
-            line(2, slot.body.empty() ? "return nullptr;" : "return std::move(node_" + std::to_string(slot.body.front().index) + ");");
+            line(2, "// the row root is returned by name, which c++20 moves through the converting constructor (§18.1)");
+            line(2, slot.body.empty() ? "return nullptr;" : "return node_" + std::to_string(slot.body.front().index) + ";");
             line(1, "}");
             m_object.clear();
 
