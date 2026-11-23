@@ -416,6 +416,9 @@ namespace albor::render
 
                 // the offscreen targets the slot keeps, which a shadow or a layer paints into (AD-06)
                 std::vector<ScratchTexture> scratch;
+
+                // the textures dropped while this slot recorded, released when the slot is recycled (§6.3, AD-06)
+                std::vector<id<MTLTexture>> retired_textures;
             };
 
             // how many slots the surface cycles, which covers the drawables the layer keeps in flight (§6.3)
@@ -441,6 +444,9 @@ namespace albor::render
 
             // the textures the uploaded images became, keyed by the identifier an image carries (AD-06)
             AgedCache<std::uint64_t, id<MTLTexture>> m_textures{TEXTURE_IDLE_FRAMES, MAXIMUM_CACHED_TEXTURES};
+
+            // the textures a sweep or an upload dropped, which the encode transfers to the recording slot (AD-06)
+            std::vector<id<MTLTexture>> m_pending_retired_textures;
 
             // the glyph paths this surface already walked, which the context borrows so a glyph walks once (§6.4, AD-06)
             GlyphPathCache m_glyph_paths;
@@ -565,8 +571,12 @@ namespace albor::render
             m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, m_metrics.logical_size), m_metrics.scale_factor, &m_glyph_paths, &m_glyph_meshes);
             // the frame counter advances once per frame, which the textures record and the glyph paths age against (AD-06)
             m_frame_counter++;
-            // the textures age against the same counter, which drops the images no draw reached (AD-06)
-            m_textures.begin_frame(m_frame_counter);
+            // the textures age against the same counter, which hands back the ones no draw reached (AD-06)
+            std::vector<id<MTLTexture>> swept = m_textures.begin_frame(m_frame_counter);
+            for (id<MTLTexture> texture : swept) {
+                // the swept texture is retired to the slot this frame uses, which releases it after three frames (AD-06)
+                m_pending_retired_textures.push_back(texture);
+            }
             // the glyph paths age against the same counter, which drops the ones no draw reached (§6.4, AD-06)
             m_glyph_paths.begin_frame(m_frame_counter);
             // the glyph meshes age against the same counter too, which drops the ones no draw reached (§6.4, AD-06)
@@ -782,7 +792,11 @@ namespace albor::render
                     [blit endEncoding];
                 }
                 // the texture joins the cache under the identifier its image carries, aged to this frame (AD-06)
-                m_textures.store(upload.id, texture);
+                std::vector<id<MTLTexture>> dropped = m_textures.store(upload.id, texture);
+                for (id<MTLTexture> item : dropped) {
+                    // the dropped texture is kept until the slot that records this frame is recycled (AD-06)
+                    m_pending_retired_textures.push_back(item);
+                }
             }
         }
 
@@ -834,6 +848,13 @@ namespace albor::render
             BatchSlot& slot = m_batch_slots[frame_slot];
             if (slot.command != nil)
                 [slot.command waitUntilCompleted];
+            // the textures the previous frame in this slot dropped release now that its command completed (§6.3, AD-06)
+            slot.retired_textures.clear();
+            // the textures this frame dropped move into the slot, which releases them after its next wait (AD-06)
+            for (id<MTLTexture> texture : m_pending_retired_textures)
+                slot.retired_textures.push_back(texture);
+            // the pending list hands every texture to the slot, which now owns their release (AD-06)
+            m_pending_retired_textures.clear();
             // the command this frame submits is what the next use of the slot waits on (§6.3)
             slot.command = command;
             // every offscreen target the previous frame in this slot took is free again (§6.2, AD-06)

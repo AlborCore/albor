@@ -1798,6 +1798,41 @@ TEST(AlborVulkanParityChecks, KeepsAFrameThatUploadsMoreImagesThanTheCacheHolds)
     EXPECT_LE(actual_shot.max_channel_difference(expected_shot), 2);
 }
 
+TEST(AlborVulkanParityChecks, RedrawsATextureTheIdleSweepDropped) {
+    // arrange a surface pair and one image, which the first frame uploads into the cache (§6.4, AD-06)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    if (!backend.ready())
+        GTEST_SKIP() << "no vulkan device on this host";
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const std::vector<std::uint8_t> source{64u, 128u, 192u, 255u};
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(500u, 1u, 1u, ImageFormat::RGBA8, source);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::image(image, Rect::from_origin_size(Point{4.0f, 4.0f}, Size{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    // act the surface runs past the 120 frame idle limit, which drops the image and recycles its slot (§6.4, AD-06)
+    FrameScene idle(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    for (std::uint32_t frame = 0u; frame < 130u; frame++)
+        backend.execute_frame(*actual_surface, idle);
+    // act the image is drawn again, which the sweep no longer answers and uploads a second time (AD-06)
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the re-uploaded image lands where the reference draws it, which a missing sweep answer would not (§6.4, AD-06)
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    EXPECT_LE(actual_shot.max_channel_difference(expected_shot), 2);
+}
+
 TEST(AlborVulkanParityChecks, AFilledConcavePathMatchesTheReference) {
     // arrange an L-shaped closed path, whose notch a fan cannot cover
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{40.0f, 40.0f}, 1.0f);

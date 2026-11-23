@@ -1,6 +1,6 @@
-#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -188,4 +188,83 @@ TEST(AgedCacheChecks, AnswersAPointerToTheValueItHolds) {
     ASSERT_NE(found, nullptr);
     // assert the pointer refers to the stored value, which is what a caller without a copy reads (§6.4)
     EXPECT_EQ(*found, value);
+}
+
+TEST(AgedCacheChecks, HandsBackTheColdestSliceItDrops) {
+    // arrange a full cache whose next frame reaches every entry but one, so the key left out is the victim (§6.4, AD-06)
+    AgedCache<std::uint32_t, int> cache(10u, 8u);
+    cache.begin_frame(0u);
+    for (std::uint32_t index = 0u; index < 8u; index++)
+        cache.store(index, static_cast<int>(index));
+    cache.begin_frame(1u);
+    for (std::uint32_t index = 0u; index < 8u; index++) {
+        // the entry read at this frame is warm, so the one key left out is the only victim (§6.4)
+        if (index != 3u)
+            EXPECT_NE(cache.find(index), nullptr);
+    }
+    // act one more value arrives, which the full cache answers by dropping its one cold entry (§6.4, AD-06)
+    const std::vector<int> dropped = cache.store(9u, 9);
+    // assert the dropped value is handed to the caller, because a deferred release needs it (§6.4, AD-06)
+    ASSERT_EQ(dropped.size(), 1u);
+    EXPECT_EQ(dropped.front(), 3);
+    // assert the victim left the cache and the new value joined it, which is what the store reports (§6.4)
+    EXPECT_EQ(cache.peek(3u), nullptr);
+    EXPECT_NE(cache.peek(9u), nullptr);
+    EXPECT_EQ(cache.count(), 8u);
+}
+
+TEST(AgedCacheChecks, HandsBackTheValuesTheSweepDrops) {
+    // arrange two values, one of which a later frame reaches and keeps from the sweep (§6.4, AD-06)
+    AgedCache<std::uint32_t, int> cache(2u, 8u);
+    cache.begin_frame(0u);
+    cache.store(1u, 11);
+    cache.store(2u, 22);
+    cache.begin_frame(1u);
+    EXPECT_NE(cache.find(2u), nullptr);
+    // act the cache ages past the idle limit of the value no reader reached (§6.4, AD-06)
+    const std::vector<int> dropped = cache.begin_frame(3u);
+    // assert the sweep hands the stale value back rather than destroying it (§6.4, AD-06)
+    ASSERT_EQ(dropped.size(), 1u);
+    EXPECT_EQ(dropped.front(), 11);
+    // assert the touched value survives, because the sweep drops only what no frame reads (§6.4)
+    EXPECT_EQ(cache.peek(1u), nullptr);
+    EXPECT_NE(cache.peek(2u), nullptr);
+}
+
+TEST(AgedCacheChecks, HandsBackNothingWhenItDropsNothing) {
+    // arrange a cache with room to spare, whose next frame drops no value (§6.4, AD-06)
+    AgedCache<std::uint32_t, int> cache(10u, 8u);
+    cache.begin_frame(1u);
+    // act a value is stored and the cache ages one frame, which drops nothing (§6.4)
+    const std::vector<int> stored = cache.store(3u, 42);
+    const std::vector<int> swept = cache.begin_frame(2u);
+    // assert an eviction list is empty when nothing was dropped, so a steady frame allocates nothing (§6.4, AD-06)
+    EXPECT_TRUE(stored.empty());
+    EXPECT_TRUE(swept.empty());
+    EXPECT_NE(cache.peek(3u), nullptr);
+}
+
+TEST(AgedCacheChecks, HandsBackTheSweepAndTheStoreVictimsApart) {
+    // arrange a cache past its capacity with four values read at a later frame and one left stale (§6.4, AD-06)
+    AgedCache<std::uint32_t, int> cache(11u, 4u);
+    cache.begin_frame(0u);
+    for (std::uint32_t index = 1u; index <= 5u; index++)
+        cache.store(index, static_cast<int>(index * 10u));
+    cache.begin_frame(1u);
+    for (std::uint32_t index = 1u; index <= 4u; index++)
+        EXPECT_NE(cache.find(index), nullptr);
+    // act the cache ages past the stale value, which the sweep drops before the store fills the cache again (§6.4, AD-06)
+    const std::vector<int> swept = cache.begin_frame(12u);
+    const std::vector<int> dropped = cache.store(6u, 60);
+    // assert the sweep hands back the stale value, because it shares no victim with the store (§6.4, AD-06)
+    ASSERT_EQ(swept.size(), 1u);
+    EXPECT_EQ(swept.front(), 50);
+    // assert the store hands back one of the warm values, because the cache was full when it stored (§6.4, AD-06)
+    ASSERT_EQ(dropped.size(), 1u);
+    EXPECT_GE(dropped.front(), 10);
+    EXPECT_LE(dropped.front(), 40);
+    // assert both victims left the cache and the new value joined it, which the two lists report (§6.4)
+    EXPECT_EQ(cache.peek(5u), nullptr);
+    EXPECT_NE(cache.peek(6u), nullptr);
+    EXPECT_EQ(cache.count(), 4u);
 }
