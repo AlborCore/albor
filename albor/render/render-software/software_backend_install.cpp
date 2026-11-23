@@ -17,6 +17,6 @@ namespace albor::software
 
 // the install mark for the renderer, so two backends on one line refuse the binary (§6.3, AD-26)
 extern "C" {
-// the linkage block keeps the c symbol unmangled without an extern initializer (gcc)
-int albor_renderer_marker = 2;
+    // the linkage block keeps the c symbol unmangled without an extern initializer (gcc)
+    int albor_renderer_marker = 2;
 }
