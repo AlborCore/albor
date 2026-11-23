@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: an existing release tag, for example v0.2.0
+        description: an existing release tag, for example v0.0.1
         required: true
 
 permissions:
@@ -46,7 +46,7 @@ jobs:
           tag="$RELEASE_TAG"
           # the tag enters the step through the environment, which a crafty value cannot escape before validation (AD-19)
           if ! printf '%s\n' "$tag" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "the release tag '$tag' is not a stable semver form like v0.2.0"; exit 1
+            echo "the release tag '$tag' is not a stable semver form like v0.0.1"; exit 1
           fi
           version="${tag#v}"
           git fetch --tags --force origin

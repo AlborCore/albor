@@ -293,7 +293,7 @@ Retrying a published release, or backfilling an existing tag, uses the same prep
 creates no tag:
 
 ```sh
-gh workflow run release.yml -f tag=v0.2.0
+gh workflow run release.yml -f tag=v0.0.1
 ```
 
 The workflow is idempotent: an already prepared `main`, or an open package PR, is left alone.
