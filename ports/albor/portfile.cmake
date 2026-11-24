@@ -18,7 +18,7 @@ else()
     vcpkg_from_git(
         OUT_SOURCE_PATH SOURCE_PATH
         URL "https://github.com/AlborCore/albor.git"
-        REF fbf13915bd6e3577fb817b1e413c70b8c292b4cb
+        REF 7d2f0c6f52a780762802d667a0a49fa5eed110a7
         HEAD_REF main
     )
 endif()
