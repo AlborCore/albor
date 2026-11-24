@@ -203,6 +203,21 @@ namespace albor
         theme.set_canvas_background(ControlState::Disabled, Color::rgba(canvas_plate.red, canvas_plate.green, canvas_plate.blue, 0.5f));
         theme.set_canvas_background(ControlState::Focused, lighten(canvas_plate, 0.03f));
 
+        // a derived card steps off the surface, which is the plate a dark caption reads over in light (§8.4)
+        const Color card = control_face(surface, scheme);
+        theme.set_panel_background(ControlState::Normal, card);
+        theme.set_panel_background(ControlState::Hovered, scheme == ColorScheme::Dark ? lighten(card, 0.05f) : darken(card, 0.02f));
+        theme.set_panel_background(ControlState::Pressed, darken(card, 0.08f));
+        theme.set_panel_background(ControlState::Disabled, Color::rgba(card.red, card.green, card.blue, 0.5f));
+        theme.set_panel_background(ControlState::Focused, card);
+        // a hairline of the text colour separates a card without painting a native frame (§8.4)
+        const Color card_line = Color::rgba(on_surface.red, on_surface.green, on_surface.blue, scheme == ColorScheme::Dark ? 0.12f : 0.22f);
+        theme.set_panel_border(ControlState::Normal, card_line);
+        theme.set_panel_border(ControlState::Hovered, card_line);
+        theme.set_panel_border(ControlState::Pressed, card_line);
+        theme.set_panel_border(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, scheme == ColorScheme::Dark ? 0.06f : 0.10f));
+        theme.set_panel_border(ControlState::Focused, card_line);
+
         // the surface is offered so an application can read it back, which a frame background needs (§6.1)
         theme.set_surface(surface);
         // hand back the fully derived palette (§6.1)

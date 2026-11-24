@@ -8364,6 +8364,41 @@ TEST(PanelChecks, TheMacosPresetPaintsAContentPlateWithoutABorder) {
     EXPECT_FLOAT_EQ(panel.border_width(), 0.0f);
 }
 
+TEST(PanelChecks, TheDerivedPresetPaintsALightCardInTheLightScheme) {
+    // arrange a derived controller with light accents, which is the Linux default (§8.4, BDG-10)
+    Accents light_accents;
+    light_accents.surface = Color::rgb(0.925f, 0.925f, 0.930f);
+    light_accents.on_surface = Color::rgb(0.18f, 0.18f, 0.20f);
+    BindingEngine engine;
+    Panel panel(&engine, "card");
+    ThemeController controller(light_accents, ThemePreset::Derived);
+    controller.install(panel, ColorScheme::Light);
+    // act
+    const Color face = panel.background();
+    // assert the card is the derived light plate and the dark caption reads over it (§8.4)
+    EXPECT_EQ(face, controller.theme().palette().panel_background[state_index(ControlState::Normal)]);
+    EXPECT_GT(face.red, light_accents.on_surface.red);
+    EXPECT_GT(face.green, light_accents.on_surface.green);
+    EXPECT_GT(face.blue, light_accents.on_surface.blue);
+}
+
+TEST(PanelChecks, TheDerivedPresetPaintsALiftedDarkCardInTheDarkScheme) {
+    // arrange a derived controller with dark accents, which is the other scheme the preset paints (§8.4, BDG-10)
+    const Accents dark_accents;
+    BindingEngine engine;
+    Panel panel(&engine, "card");
+    ThemeController controller(dark_accents, ThemePreset::Derived);
+    controller.install(panel, ColorScheme::Dark);
+    // act
+    const Color face = panel.background();
+    // assert the card lifts off the dark surface but stays below the light caption (§8.4)
+    EXPECT_EQ(face, controller.theme().palette().panel_background[state_index(ControlState::Normal)]);
+    EXPECT_GT(face.red, dark_accents.surface.red);
+    EXPECT_LT(face.red, dark_accents.on_surface.red);
+    EXPECT_LT(face.green, dark_accents.on_surface.green);
+    EXPECT_LT(face.blue, dark_accents.on_surface.blue);
+}
+
 TEST(PanelChecks, RendersItsFaceAndBorderThroughTheTheme) {
     // arrange a themed panel with a distinct face and hairline (§6.1, §8.4)
     BindingEngine engine;
