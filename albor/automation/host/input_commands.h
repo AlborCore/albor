@@ -16,7 +16,7 @@ namespace albor::automation
     // the live tree the input commands reach, which the host owns (§10.3)
     using InputRoot = std::function<UiNode*()>;
 
-    // the commands that type, click, press and key the tree, selecting only by author assigned id (§18.1, AD-11)
+    // the commands that type, click, press, key and wheel the tree, selecting only by author assigned id (§18.1, AD-11)
     void register_input_commands(AutomationRegistry& registry, InputRoot root);
 
     // the command names the input commands register, which a host allow-lists by name (§10.3, AD-10)

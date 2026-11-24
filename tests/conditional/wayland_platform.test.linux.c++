@@ -6,6 +6,8 @@
 #include <string>
 #include <thread>
 
+#include <wayland-client.h>
+
 #include <gtest/gtest.h>
 
 #include "albor/core/clipboard.h"
@@ -77,6 +79,15 @@ namespace
         void on_platform_appearance_changed(const SystemAppearance&) override { appearance_changes++; }
     };
 } // namespace
+
+TEST(WaylandPlatform, TheVerticalScrollAxisIsTheOneWheelEventsCarry) {
+    // assert the wheel batch slot is the protocol's vertical scroll, which was once the horizontal value (§8.3)
+    EXPECT_EQ(wayland_vertical_axis_index(), WL_POINTER_AXIS_VERTICAL_SCROLL);
+    // assert the protocol's vertical scroll is the axis the adapter accepts (§8.3)
+    EXPECT_TRUE(wayland_axis_is_vertical(WL_POINTER_AXIS_VERTICAL_SCROLL));
+    // assert a horizontal scroll is not mistaken for a vertical wheel (§8.3)
+    EXPECT_FALSE(wayland_axis_is_vertical(WL_POINTER_AXIS_HORIZONTAL_SCROLL));
+}
 
 TEST(WaylandPlatform, RefusesAWindowWithoutACompositor) {
     // arrange a display name that cannot connect, which the adapter must refuse (§5.3)

@@ -202,6 +202,37 @@ TEST(AutomationSession, ATokenCarriesNoSeparator) {
     EXPECT_EQ(token.find(' '), std::string::npos);
 }
 
+TEST(AutomationSession, AnEmptyTokenRefusesAnEmptyHandshake) {
+    // arrange a session whose caller published no token, which is not a conversation anyone can prove (§10.3, AD-10)
+    std::size_t runs = 0;
+    AutomationRegistry registry = registry_with_probe(&runs);
+    registry.allow("probe");
+    AutomationSession session(registry, "");
+    // act an empty handshake and a command follow, which must not open the session (§10.3, AD-10)
+    const AutomationResult handshake = session.handle(encode_handshake(""));
+    const AutomationResult command = session.handle("probe");
+    // assert the empty token never authenticates and no command runs (§10.3, AD-10)
+    EXPECT_FALSE(session.authenticated());
+    EXPECT_FALSE(handshake.ok);
+    EXPECT_FALSE(command.ok);
+    EXPECT_EQ(runs, 0U);
+}
+
+TEST(AutomationSession, AMintedTokenStaysInsideThePrintableRange) {
+    // arrange a session that mints its own token, which the system device fills one character at a time (§10.3)
+    std::size_t runs = 0;
+    AutomationRegistry registry = registry_with_probe(&runs);
+    AutomationSession session(registry);
+    // act
+    const std::string& token = session.token();
+    // assert the fixed length and the printable range, which is what the device distribution draws (§10.3, AD-10)
+    EXPECT_EQ(token.size(), 32U);
+    for (const char character : token) {
+        EXPECT_GE(character, '!');
+        EXPECT_LE(character, '~');
+    }
+}
+
 TEST(AutomationSession, ACommandBeforeTheHandshakeIsRefused) {
     // arrange
     std::size_t runs = 0;

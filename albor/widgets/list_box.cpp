@@ -507,8 +507,8 @@ namespace albor
         // a position above the first row names nothing, which only a negative offset could produce (§8.2)
         if (row < 0)
             return std::nullopt;
-        // the item index offsets the row by the first built one, because the window can start mid list (§8.2, AD-13)
-        const std::size_t index = m_scroll->first_row_index() + static_cast<std::size_t>(row);
+        // the row is already the item index, because the local position added the scroll offset (§8.2, AD-13)
+        const std::size_t index = static_cast<std::size_t>(row);
         // a row past the item count is empty space below the last row, which names nothing to select (§8.3)
         if (index >= m_item_count)
             return std::nullopt;

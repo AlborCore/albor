@@ -10,6 +10,7 @@
 #include "albor/core/scrollable_content.h"
 #include "albor/input/input_controller.h"
 #include "albor/input/input_dispatcher.h"
+#include "albor/layout/column_layout.h"
 #include "albor/model/item_key.h"
 #include "albor/render/frame_scene.h"
 #include "albor/render/render-software/software_render_surface.h"
@@ -201,6 +202,56 @@ TEST(ListBoxChecks, TheViewportTakesTheBoundsTheListWasGiven) {
     fixture.box.arrange(bounds);
     // assert the internal viewport fills the list, because it is the only child (§8.2)
     EXPECT_EQ(fixture.box.scroll_view().bounds(), bounds);
+}
+
+TEST(ListBoxChecks, ADeclaredViewportFillsTheColumnWidthAndTakesTheWheel) {
+    // arrange a list that declares a narrow viewport but is placed at full column width (§8.2, §8.3)
+    BindingEngine engine;
+    ColumnLayout column;
+    auto list = std::make_unique<ListBox>(&engine);
+    auto rows = std::make_unique<RowContent>();
+    for (int index = 0; index < 16; ++index)
+        rows->add_plain_row();
+    list->set_item_count(16);
+    list->set_row_height(24.0f);
+    list->set_viewport_extent(Size{320.0f, 160.0f});
+    list->scroll_view().add_child(std::move(rows));
+    ListBox* list_ptr = list.get();
+    column.add_child(std::move(list));
+    Size measured{};
+    column.measure(SizeConstraints::at_most(Size{388.0f, 840.0f}), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{388.0f, 840.0f}));
+    ASSERT_FLOAT_EQ(list_ptr->scroll_view().bounds().width, 388.0f);
+    InputController controller;
+    controller.attach(column);
+    // act a notch over the part of the list past the declared width
+    Event wheel{.kind = EventKind::Wheel, .position = Point{350.0f, list_ptr->bounds().y + 20.0f}, .scroll = -1.0f};
+    controller.deliver(wheel);
+    // assert the placed viewport owns the wheel, so the notch scrolls the rows (§8.2, §8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_GT(list_ptr->scroll_view().offset(), 0.0f);
+}
+
+TEST(ListBoxChecks, APressOnARowAfterScrollingSelectsThatRow) {
+    // arrange a scrolled list whose first built row is past the start (§8.2, §18.3)
+    Fixture fixture;
+    for (int index = 0; index < 16; ++index)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    fixture.box.set_overscan(48.0f);
+    fixture.layout(320.0f, 160.0f);
+    fixture.box.scroll_view().scroll_to(fixture.box.scroll_view().maximum_offset());
+    fixture.content->first = 7;
+    const Rect viewport = fixture.box.scroll_view().content_viewport();
+    const float y = viewport.y - fixture.box.scroll_view().offset() + 15.0f * 24.0f + 12.0f;
+    InputController controller;
+    controller.attach(fixture.box);
+    // act a press on the last row, whose position is measured from the content top
+    Event press{.kind = EventKind::PointerDown, .position = Point{viewport.x + 20.0f, y}, .button = PointerButton::Left};
+    controller.deliver(press);
+    // assert the row index is not shifted again by the window's first row (§8.2, §18.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(fixture.box.selected_index(), 15U);
 }
 
 TEST(ListBoxChecks, TheCountBoundsTheFocusedRow) {

@@ -39,5 +39,11 @@ namespace albor
 
         // move a colour toward black by a fraction, which is what a press does on a light surface (§6.1)
         [[nodiscard]] static Color darken(Color value, float amount);
+
+        // the neutral face a surface lifts to, which keeps ordinary buttons off the accent (§8.4)
+        [[nodiscard]] static Color control_face(const Color& surface, ColorScheme scheme);
+
+        // paint the accent plate a dialog's default control carries, which leaves ordinary buttons neutral (§8.4)
+        static void apply_accent_default(Theme& theme, const Color& accent);
     };
 } // namespace albor

@@ -756,6 +756,50 @@ TEST(ScrollViewChecks, ADeclaredViewportIsClampedIntoTheOffer) {
     EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 490.0f);
 }
 
+TEST(ScrollViewChecks, ADeclaredViewportFillsTheBoundsTheParentArranges) {
+    // arrange a declared viewport that stretches to the column height and fills its width (§8.2)
+    BindingEngine engine;
+    ColumnLayout column;
+    auto view = std::make_unique<ScrollView>(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view->add_child(std::move(content));
+    view->set_viewport_extent(Size{200.0f, 300.0f});
+    // a column keeps the measured height unless the child declares a vertical stretch (§8.2)
+    view->set_vertical_align(Align::Stretch);
+    ScrollView* view_ptr = view.get();
+    column.add_child(std::move(view));
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    // assert the declared extent only decides the measure, while the placed bounds own the viewport (§8.2)
+    EXPECT_FLOAT_EQ(view_ptr->measured_size().width, 200.0f);
+    EXPECT_FLOAT_EQ(view_ptr->bounds().width, 500.0f);
+    EXPECT_FLOAT_EQ(view_ptr->bounds().height, 400.0f);
+}
+
+TEST(ScrollViewChecks, ADeclaredViewportKeepsItsMeasuredHeightWithoutStretch) {
+    // arrange a declared viewport as a start aligned child of a column (§8.2)
+    BindingEngine engine;
+    ColumnLayout column;
+    auto view = std::make_unique<ScrollView>(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view->add_child(std::move(content));
+    view->set_viewport_extent(Size{200.0f, 300.0f});
+    ScrollView* view_ptr = view.get();
+    column.add_child(std::move(view));
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    // assert a start aligned child keeps its declared height instead of absorbing the column leftover (§8.2)
+    EXPECT_FLOAT_EQ(view_ptr->measured_size().height, 300.0f);
+    EXPECT_FLOAT_EQ(view_ptr->bounds().width, 500.0f);
+    EXPECT_FLOAT_EQ(view_ptr->bounds().height, 300.0f);
+}
+
 TEST(ScrollViewChecks, ADeclaredAxisBelowTheMinimumIsRaised) {
     // arrange
     BindingEngine engine;
@@ -799,7 +843,7 @@ TEST(ScrollViewChecks, AHeightOnlyViewportClipsAndScrollsTheContent) {
     EXPECT_EQ(context.clips.front(), Rect::from_origin_size(Point{10.0f, 20.0f}, Size{490.0f, 300.0f}));
 }
 
-TEST(ScrollViewChecks, ADeclaredHeightWinsOverTheArrangedBounds) {
+TEST(ScrollViewChecks, ADeclaredHeightFillsTheArrangedBounds) {
     // arrange
     BindingEngine engine;
     ScrollView view(&engine);
@@ -811,13 +855,14 @@ TEST(ScrollViewChecks, ADeclaredHeightWinsOverTheArrangedBounds) {
     view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
     // act
     view.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 400.0f}));
-    // assert the declared height survives a parent that assigns a taller rectangle (§8.2)
-    EXPECT_EQ(view.bounds(), (Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 300.0f})));
-    EXPECT_FLOAT_EQ(view.maximum_offset(), 600.0f);
+    // assert the declared height decided the measure while the parent's taller rectangle owns the viewport (§8.2)
+    EXPECT_FLOAT_EQ(measured.height, 300.0f);
+    EXPECT_EQ(view.bounds(), (Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 400.0f})));
+    EXPECT_FLOAT_EQ(view.maximum_offset(), 500.0f);
     EXPECT_TRUE(view.scrollable());
 }
 
-TEST(ScrollViewChecks, ADeclaredWidthWinsOverTheArrangedBounds) {
+TEST(ScrollViewChecks, ADeclaredWidthFillsTheArrangedBounds) {
     // arrange
     BindingEngine engine;
     ScrollView view(&engine);
@@ -830,9 +875,10 @@ TEST(ScrollViewChecks, ADeclaredWidthWinsOverTheArrangedBounds) {
     view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
     // act
     view.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 400.0f}));
-    // assert the declared width survives a parent that assigns a wider rectangle, and the bar takes its gutter (§8.2)
-    EXPECT_EQ(view.bounds(), (Rect::from_origin_size(Point{10.0f, 20.0f}, Size{200.0f, 400.0f})));
-    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 190.0f);
+    // assert the declared width decided the measure while the parent's wider rectangle owns the viewport (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 200.0f);
+    EXPECT_EQ(view.bounds(), (Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 400.0f})));
+    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 490.0f);
     EXPECT_FLOAT_EQ(view.maximum_offset(), 500.0f);
 }
 

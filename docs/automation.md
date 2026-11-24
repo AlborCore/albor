@@ -155,7 +155,7 @@ token is per process run; a new host mints a new token.
 ```
 
 The answer lists only the commands the layer's allow-list permits. The standard
-host permits the 20 commands documented on this page. Each tool carries a name, a
+host permits the 21 commands documented on this page. Each tool carries a name, a
 generic description, and an `inputSchema`:
 
 ```json
@@ -183,7 +183,7 @@ generic description, and an `inputSchema`:
 }
 ```
 
-The real list contains all 20 tools. The schema's property names and enums are
+The real list contains all 21 tools. The schema's property names and enums are
 authoritative for the MCP boundary; this page documents what each command does,
 which arguments are required, and what the answer means.
 
@@ -267,12 +267,12 @@ that names the value.
 
 ## Command reference
 
-Twenty tools are available:
+Twenty-one tools are available:
 
 | family | commands |
 | --- | --- |
 | semantic | `semantic.tree`, `semantic.find`, `semantic.value`, `semantic.bounds`, `semantic.read`, `semantic.actions`, `semantic.invoke`, `semantic.set_value`, `semantic.set_focused` |
-| input | `input.type`, `input.click`, `input.pointer`, `input.key` |
+| input | `input.type`, `input.click`, `input.pointer`, `input.key`, `input.wheel` |
 | capture | `capture.screenshot` |
 | command | `command.list`, `command.get`, `command.invoke`, `command.can_undo`, `command.undo`, `command.redo` |
 
@@ -699,6 +699,43 @@ A client that needs a point reads `semantic.bounds` first:
 
 ```json
 { "jsonrpc": "2.0", "id": 26, "method": "tools/call", "params": { "name": "semantic.bounds", "arguments": { "id": "form_level" } } }
+```
+
+### input.wheel
+
+Delivers one normalized wheel event to the window that owns the named node.
+
+- **Arguments:** `id` (required), `delta` (required), optional `precision`, optional
+  `x` and `y`.
+- **Delta:** a finite signed number. Positive scrolls toward the start and negative
+  scrolls toward the end, which is the convention every platform adapter and scroll
+  container follows (§8.3).
+- **Precision:** `line` (default) counts notches and moves one themed line extent;
+  `point` counts surface distance and moves by the delta itself. A client may omit it
+  to get a physical wheel notch.
+- **Point:** when `x` and `y` are omitted, the point is the node's centre. When they
+  are present, they are logical window coordinates and may lie outside the node;
+  the id still names the window. `x` and `y` must be supplied together, and a named
+  call that sets both must also name `precision`.
+- **Answer:** `text`, empty on success.
+- **Refused when:** the host supplied no input target, no window carries a tree,
+  `id` or `delta` is missing, `delta` is not a finite number, `precision` is not one
+  of the two units, there are more than five arguments, `x` is present without `y`,
+  no node carries the id, a default point is needed but the node has no area, the
+  node is detached, the window is modal-blocked, or the window refuses the event.
+
+The event goes through the same input path a physical wheel takes, so a scrollable
+control under the point consumes it and an enclosing viewport sees a notch the inner
+one could not use.
+
+```json
+{ "jsonrpc": "2.0", "id": 60, "method": "tools/call", "params": { "name": "input.wheel", "arguments": { "id": "form_list", "delta": "-1" } } }
+```
+
+A point-precision notch over a specific spot:
+
+```json
+{ "jsonrpc": "2.0", "id": 61, "method": "tools/call", "params": { "name": "input.wheel", "arguments": { "id": "form_list", "delta": "-40", "precision": "point", "x": "100", "y": "720" } } }
 ```
 
 ### input.key
@@ -1182,12 +1219,17 @@ answer in a content block. A tool call is therefore exactly one raw command.
 
 - **Local only.** The endpoint is a Unix domain socket or a named pipe. There is
   no network listener.
-- **Per-session token.** The host mints a 32-character token per run and publishes
-  it in an owner-only file. The token is not reused across runs and is compared in
-  constant time.
-- **Owner-only directory.** The host directory, descriptor and token are readable
-  by the owning user only. On Windows the named pipe is restricted to the current
-  user's SID.
+- **Per-session token.** The host mints a 32-character token per run, drawing every
+  character from the system entropy source, and publishes it in an owner-only file.
+  The token is not reused across runs, is compared in constant time, and a session
+  with no token never authenticates.
+- **Owner-only directory.** The host directory, descriptor, token and socket are
+  readable by the owning user only. On Linux a connection is additionally checked
+  against the peer's credentials and refused unless it comes from the same user.
+  On Windows the named pipe is restricted to the current user's SID.
+- **Bounded request lines.** A client that sends more than 1 MiB without a newline
+  is disconnected on every platform, so one silent peer cannot grow the server's
+  pending line without limit.
 - **Allow-list.** Registration is not permission. The host explicitly permits the
   standard surface it wires; a command outside that list is refused before its
   handler is reached.

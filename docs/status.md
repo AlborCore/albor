@@ -207,7 +207,7 @@ under OpenCppCoverage and uploads a Cobertura report with the `windows` Codecov 
 | C++ code generator, facade emission | `compiler/` | shipped |
 | Dev runtime extension, IR loader, hot swap | `devrt/` | Dev only |
 | LSP, preview host, inspector | `language-server/`, `preview/`, `inspector/` | Dev/Test only |
-| Automation core, MCP server | `automation/` | Dev/Test only — unix socket on macOS, named pipe on Windows; layout bounds, pointer/key input and typed value, state and range reads |
+| Automation core, MCP server | `automation/` | Dev/Test only — unix socket on macOS and Linux, named pipe on Windows; layout bounds, pointer/key/wheel input and typed value, state and range reads |
 | Platform accessibility adapters | `accessibility/` | shipped on all three platforms — NSAccessibility, UI Automation and AT-SPI; the shared semantic tree is the single source of truth (§10.2, BDG-10) |
 
 ## Language coverage

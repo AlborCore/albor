@@ -70,7 +70,9 @@ Row {
 ```
 
 In a `Column`, the equivalent declaration is `vertical_align: Align.stretch`. A declared
-`viewport_width` or `viewport_height` still wins: `stretch` never grows a fixed viewport.
+`viewport_width` or `viewport_height` is a measure preference: it sizes the view during the
+measure pass, but the bounds the parent arranges are final. A stretched view therefore fills
+the width or height the parent places it in, even when it declared a smaller extent.
 
 ## Filling the viewport's cross axis
 
@@ -123,10 +125,12 @@ reuses the existing element and rebinds it, rather than rebuilding the list.
   full-width probe overflows, the narrower pass fits, and dropping the gutter would restore
   the overflow on the next measure. An overlay bar runs no narrowed pass, because it never takes
   a gutter from the content.
-- `viewport_width` and `viewport_height` resolve independently: a positive axis takes its
-  extent and is clamped into the parent, while a zero or negative axis follows the space the
-  parent offers. To take the leftover inside a `Row` or `Column`, declare `Align.stretch` on
-  that main axis ([above](#filling-the-space-a-parent-leaves)).
+- `viewport_width` and `viewport_height` resolve independently in the measure pass: a positive
+  axis takes its extent and is clamped into the parent, while a zero or negative axis follows
+  the space the parent offers. Arrange uses the bounds the parent placed, so a stretched view
+  fills that space even when it declared a smaller extent. To take the leftover inside a `Row`
+  or `Column`, declare `Align.stretch` on that main axis
+  ([above](#filling-the-space-a-parent-leaves)).
 - `overscan` trades a band of pre-built rows against visible populate cost; it is measured
   in the same units as the viewport.
 - A positive wheel delta scrolls toward the start and a negative one toward the end. A

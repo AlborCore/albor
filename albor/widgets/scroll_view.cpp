@@ -66,12 +66,8 @@ namespace albor
     }
 
     void ScrollView::arrange(const Rect& bounds) {
-        // a declared axis keeps its extent even when the parent stretches the assigned bounds (§8.2)
-        const float width = m_viewport_extent.width > 0.0f ? std::min(m_viewport_extent.width, bounds.width) : bounds.width;
-        // an undeclared height takes the assigned bounds, which is how a fixed-width view follows its parent (§8.2)
-        const float height = m_viewport_extent.height > 0.0f ? std::min(m_viewport_extent.height, bounds.height) : bounds.height;
-        // the resolved extent is what the content viewport, the bar and the scroll range derive from (§8.2)
-        m_bounds = Rect::from_origin_size(Point{.x = bounds.x, .y = bounds.y}, Size{.width = width, .height = height});
+        // the parent's placed extent is final, and the measure pass already resolved the declared axes into it (§8.2)
+        m_bounds = Rect::from_origin_size(Point{.x = bounds.x, .y = bounds.y}, Size{.width = bounds.width, .height = bounds.height});
         // the window reaches the content before it is placed, so its rows exist in time (§8.2, AD-13)
         push_viewport();
         // the content viewport is the arranged extent less whatever gutter the policy reserves (§8.2)

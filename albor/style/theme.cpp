@@ -51,26 +51,6 @@ namespace albor
             theme.set_checkbox_glyph(ControlState::Focused, mark);
         }
 
-        // the accent plate and its states a dialog's default control carries, which is the system primary button (§8.4)
-        void apply_accent_default(Theme& theme, const Color& accent) {
-            // the plate is the accent at the five states every plate carries (§8.4)
-            theme.set_button_plate_default(ControlState::Normal, accent);
-            theme.set_button_plate_default(ControlState::Hovered, ThemeBuilder::lighten(accent, 0.08f));
-            theme.set_button_plate_default(ControlState::Pressed, ThemeBuilder::darken(accent, 0.12f));
-            theme.set_button_plate_default(ControlState::Disabled, Color::rgba(accent.red, accent.green, accent.blue, 0.45f));
-            theme.set_button_plate_default(ControlState::Focused, ThemeBuilder::lighten(accent, 0.04f));
-            // the label is white over the accent at every state, dimmed when the plate refuses input (§8.4)
-            const Color label = Color::rgb(1.0f, 1.0f, 1.0f);
-            theme.set_button_label_default(ControlState::Normal, label);
-            theme.set_button_label_default(ControlState::Hovered, label);
-            theme.set_button_label_default(ControlState::Pressed, label);
-            theme.set_button_label_default(ControlState::Disabled, Color::rgba(label.red, label.green, label.blue, 0.55f));
-            theme.set_button_label_default(ControlState::Focused, label);
-            // an accent plate carries no border, because the fill is what separates it from the surface (§8.4)
-            for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
-                theme.set_button_border_default(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
-        }
-
         // the accent row a vertical strip paints behind the selected tab, which is the native sidebar selection (§6.1)
         void apply_tab_selection_row(Theme& theme, const Color& accent) {
             // the row plate is the accent at the five states every plate carries (§6.1)
@@ -280,7 +260,7 @@ namespace albor
         // the macos preset plates, which read as control faces rather than colour blocks (§8.4)
         void apply_macos_plates(Theme& theme, const Accents& accents, const Color& pane, ColorScheme scheme) {
             // a control face lifts in dark and steps down from the white pane in light, which is native (§8.4)
-            const Color face = scheme == ColorScheme::Dark ? ThemeBuilder::lighten(pane, 0.16f) : ThemeBuilder::darken(pane, 0.03f);
+            const Color face = ThemeBuilder::control_face(pane, scheme);
             // a hover moves a little further, which is the gentle change a pointer asks for (§8.4)
             theme.set_button_plate(ControlState::Normal, face);
             theme.set_button_plate(ControlState::Hovered, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(face, 0.05f) : ThemeBuilder::darken(face, 0.03f));
@@ -343,7 +323,7 @@ namespace albor
             theme.set_scrollbar_thumb(ControlState::Disabled, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, disabled));
             theme.set_scrollbar_thumb(ControlState::Focused, Color::rgba(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue, hovered));
             // a macos push control keeps the neutral face, so a default control needs a role of its own (§8.4)
-            apply_accent_default(theme, accents.accent);
+            ThemeBuilder::apply_accent_default(theme, accents.accent);
             // a vertical strip paints its selection as a row, which is what a source list reads as (§6.1)
             apply_tab_selection_row(theme, accents.accent);
         }
@@ -414,6 +394,12 @@ namespace albor
             // a press on a tool face carries no border, because the contrast already separates (§8.4)
             for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
                 theme.set_button_border(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+            // a tool surface gives even its primary control the tool face, so the accent role stays empty (§8.4)
+            for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused}) {
+                theme.set_button_plate_default(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+                theme.set_button_label_default(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+                theme.set_button_border_default(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+            }
             // the canvas plate is the surface lifted like any face (§8.4)
             theme.set_canvas_background(ControlState::Normal, face);
             theme.set_canvas_background(ControlState::Hovered, ThemeBuilder::lighten(face, 0.04f));
@@ -494,7 +480,7 @@ namespace albor
         // a fluent field is a white well in light mode and a lift in dark, which is what a text box reads as (§8.4)
         apply_field_surface(theme, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(accents.surface, 0.10f) : Color::rgb(1.0f, 1.0f, 1.0f), accents.accent);
         // a fluent primary button is the accent plate, which the neutral face cannot carry (§8.4)
-        apply_accent_default(theme, accents.accent);
+        ThemeBuilder::apply_accent_default(theme, accents.accent);
         // the surface is what everything else sits on (§6.1)
         theme.set_surface(accents.surface);
         return theme;

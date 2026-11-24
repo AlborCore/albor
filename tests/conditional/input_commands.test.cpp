@@ -26,6 +26,7 @@
 #include "albor/widgets/button.h"
 #include "albor/widgets/checkbox.h"
 #include "albor/widgets/label.h"
+#include "albor/widgets/scroll_view.h"
 #include "albor/widgets/slider.h"
 #include "albor/widgets/text_field.h"
 #include "albor/window/platform_window_factory.h"
@@ -130,6 +131,51 @@ namespace
             if (event.kind == albor::EventKind::KeyUp)
                 ups++;
             // the node claims the key, because it is the focused editor (§8.3)
+            event.handled = true;
+        }
+    };
+
+    // the content double that reports a tall extent, which gives a viewport a range to scroll (§8.2)
+    class TallContent final : public albor::UiNode
+    {
+    public:
+        void measure(const albor::SizeConstraints&, albor::Size& out_size) override {
+            // the extent is taller than the viewport, which is what makes the wheel move it (§8.2)
+            out_size = albor::Size{200.0f, 600.0f};
+            m_measured_size = out_size;
+        }
+    };
+
+    // the node double that records the wheel it receives, which proves the delta, unit and point survive (§8.3)
+    class WheelRecordingNode final : public albor::UiNode
+    {
+    public:
+        // how many wheel events arrived, which the command's single event sets (§10.3)
+        std::size_t wheels = 0;
+
+        // the delta the last wheel carried, which is the signed distance (§8.3)
+        float scroll = 0.0f;
+
+        // the unit the last wheel carried, which the precision name selects (§8.3)
+        albor::ScrollPrecision precision = albor::ScrollPrecision::Line;
+
+        // the point the last wheel carried, which the optional pair replaces (§8.3)
+        albor::Point point{};
+
+        void measure(const albor::SizeConstraints& constraints, albor::Size& out_size) override {
+            // the node fills the offer, so the wheel command finds its centre (§8.2)
+            out_size = constraints.constrain(albor::Size{200.0f, 100.0f});
+            m_measured_size = out_size;
+        }
+
+        void dispatch_event(albor::Event& event) override {
+            // only the wheel is recorded, because the command delivers one (§8.3)
+            if (event.kind != albor::EventKind::Wheel)
+                return;
+            wheels++;
+            scroll = event.scroll;
+            precision = event.precision;
+            point = event.position;
             event.handled = true;
         }
     };
@@ -778,5 +824,162 @@ TEST(InputCommands, AClickRefusesAControlWithNoHitPoint) {
     EXPECT_FALSE(result.ok);
     EXPECT_NE(result.error.find("no clickable point: press"), std::string::npos);
     // cleanup
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(InputCommands, AWheelScrollsTheViewportUnderTheNode) {
+    // arrange a window whose only control scrolls a tall content (§8.3, §10.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::ScrollView* viewport = nullptr;
+    albor::RootBuilder form = [&viewport](albor::BindingEngine& engine, albor::TextEngine&) {
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto view = std::make_unique<albor::ScrollView>(&engine);
+        view->set_explicit_id("viewport");
+        view->set_viewport_extent(albor::Size{200.0f, 100.0f});
+        view->set_scrollbar_visibility(albor::ScrollbarVisibility::AlwaysOff);
+        view->add_child(std::make_unique<TallContent>());
+        viewport = view.get();
+        column->add_child(std::move(view));
+        return column;
+    };
+    albor::WindowOptions options;
+    options.title = "Input";
+    options.size = albor::Size{200.0f, 100.0f};
+    const albor::WindowHandle handle = application.create_window(options, form);
+    ASSERT_TRUE(handle.valid());
+    application.pump();
+    ASSERT_NE(viewport, nullptr);
+    ASSERT_GT(viewport->maximum_offset(), 0.0f);
+    albor::automation::AutomationRegistry registry;
+    albor::automation::register_input_commands(registry, [&application, handle] { return application.root(handle); });
+    registry.allow("input.wheel");
+    albor::automation::AutomationSession session(registry);
+    (void)session.handle(albor::automation::encode_handshake(session.token()));
+    // act a down notch, which moves the content toward the end (§8.3)
+    const albor::automation::AutomationResult wheel = session.handle("input.wheel viewport -1");
+    // assert the command was delivered and the viewport followed it by one themed line (§10.3, §8.3)
+    ASSERT_TRUE(wheel.ok);
+    EXPECT_GT(viewport->offset(), 0.0f);
+    EXPECT_TRUE(viewport->user_scrolled());
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(InputCommands, AWheelTowardTheStartReducesTheOffset) {
+    // arrange a scrolled viewport, which the command must move back toward the start (§8.3, §10.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::ScrollView* viewport = nullptr;
+    albor::RootBuilder form = [&viewport](albor::BindingEngine& engine, albor::TextEngine&) {
+        auto column = std::make_unique<albor::ColumnLayout>();
+        auto view = std::make_unique<albor::ScrollView>(&engine);
+        view->set_explicit_id("viewport");
+        view->set_viewport_extent(albor::Size{200.0f, 100.0f});
+        view->set_scrollbar_visibility(albor::ScrollbarVisibility::AlwaysOff);
+        view->add_child(std::make_unique<TallContent>());
+        viewport = view.get();
+        column->add_child(std::move(view));
+        return column;
+    };
+    albor::WindowOptions options;
+    options.title = "Input";
+    options.size = albor::Size{200.0f, 100.0f};
+    const albor::WindowHandle handle = application.create_window(options, form);
+    ASSERT_TRUE(handle.valid());
+    application.pump();
+    ASSERT_NE(viewport, nullptr);
+    albor::automation::AutomationRegistry registry;
+    albor::automation::register_input_commands(registry, [&application, handle] { return application.root(handle); });
+    registry.allow("input.wheel");
+    albor::automation::AutomationSession session(registry);
+    (void)session.handle(albor::automation::encode_handshake(session.token()));
+    ASSERT_TRUE(session.handle("input.wheel viewport -1").ok);
+    ASSERT_GT(viewport->offset(), 0.0f);
+    const float advanced = viewport->offset();
+    // act a positive notch, which is the platform's direction toward the start (§8.3)
+    const albor::automation::AutomationResult wheel = session.handle("input.wheel viewport 1");
+    // assert the offset moved back by the same line and stayed a user scroll (§8.3, §10.3)
+    ASSERT_TRUE(wheel.ok);
+    EXPECT_LT(viewport->offset(), advanced);
+    EXPECT_TRUE(viewport->user_scrolled());
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(InputCommands, TheWheelCommandIsAdvertisedByTheCommandNames) {
+    // act the host's allow list helper is asked for its names (§10.3, AD-10)
+    const auto names = albor::automation::input_command_names();
+    // assert the wheel is one of them, because a direct allow in a test would hide its removal (§10.3)
+    EXPECT_TRUE(std::find(names.begin(), names.end(), "input.wheel") != names.end());
+}
+
+TEST(InputCommands, AWheelCarriesItsPrecisionAndExplicitPoint) {
+    // arrange a control that records the wheel it receives, which is where the fields land (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    WheelRecordingNode* recorder = nullptr;
+    albor::RootBuilder form = [&recorder](albor::BindingEngine&, albor::TextEngine&) -> std::unique_ptr<albor::UiNode> {
+        auto node = std::make_unique<WheelRecordingNode>();
+        node->set_explicit_id("wheel");
+        recorder = node.get();
+        return node;
+    };
+    albor::WindowOptions options;
+    options.title = "Input";
+    options.size = albor::Size{200.0f, 100.0f};
+    const albor::WindowHandle handle = application.create_window(options, form);
+    ASSERT_TRUE(handle.valid());
+    application.pump();
+    ASSERT_NE(recorder, nullptr);
+    albor::automation::AutomationRegistry registry;
+    albor::automation::register_input_commands(registry, [&application, handle] { return application.root(handle); });
+    registry.allow("input.wheel");
+    albor::automation::AutomationSession session(registry);
+    (void)session.handle(albor::automation::encode_handshake(session.token()));
+    // act a point precision wheel over an explicit spot (§10.3)
+    const albor::automation::AutomationResult wheel = session.handle("input.wheel wheel -40 point 30 60");
+    // assert the delta, unit and point reached the control unchanged (§8.3)
+    ASSERT_TRUE(wheel.ok);
+    ASSERT_EQ(recorder->wheels, 1U);
+    EXPECT_FLOAT_EQ(recorder->scroll, -40.0f);
+    EXPECT_EQ(recorder->precision, albor::ScrollPrecision::Point);
+    EXPECT_EQ(recorder->point, (albor::Point{30.0f, 60.0f}));
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(InputCommands, AWheelRefusesMalformedCalls) {
+    // arrange a control the wheel can reach, which keeps each refusal about the arguments (§10.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    WheelRecordingNode* recorder = nullptr;
+    albor::RootBuilder form = [&recorder](albor::BindingEngine&, albor::TextEngine&) -> std::unique_ptr<albor::UiNode> {
+        auto node = std::make_unique<WheelRecordingNode>();
+        node->set_explicit_id("wheel");
+        recorder = node.get();
+        return node;
+    };
+    albor::WindowOptions options;
+    options.title = "Input";
+    options.size = albor::Size{200.0f, 100.0f};
+    const albor::WindowHandle handle = application.create_window(options, form);
+    ASSERT_TRUE(handle.valid());
+    application.pump();
+    ASSERT_NE(recorder, nullptr);
+    albor::automation::AutomationRegistry registry;
+    albor::automation::register_input_commands(registry, [&application, handle] { return application.root(handle); });
+    registry.allow("input.wheel");
+    albor::automation::AutomationSession session(registry);
+    (void)session.handle(albor::automation::encode_handshake(session.token()));
+    // act every malformed shape a client might send (§10.3)
+    EXPECT_FALSE(session.handle("input.wheel wheel").ok);
+    EXPECT_FALSE(session.handle("input.wheel wheel nope").ok);
+    EXPECT_FALSE(session.handle("input.wheel wheel nan").ok);
+    EXPECT_FALSE(session.handle("input.wheel wheel inf").ok);
+    EXPECT_FALSE(session.handle("input.wheel wheel -1 sideways").ok);
+    EXPECT_FALSE(session.handle("input.wheel wheel -1 line 30").ok);
+    EXPECT_FALSE(session.handle("input.wheel wheel -1 line 1 2 3").ok);
+    EXPECT_FALSE(session.handle("input.wheel wheel -1 point nope 4").ok);
+    EXPECT_FALSE(session.handle("input.wheel missing -1").ok);
+    // assert no event reached the control, because a refused call must not scroll (§10.3)
+    EXPECT_EQ(recorder->wheels, 0U);
     EXPECT_TRUE(application.destroy_window(handle));
 }

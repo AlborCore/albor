@@ -79,6 +79,9 @@ namespace albor::automation
             // a key press names the key and its optional modifiers (§10.3)
             if (command == "input.key")
                 return {"key", "modifiers"};
+            // a wheel names the node, its delta and its optional unit and point (§10.3, §8.3)
+            if (command == "input.wheel")
+                return {"id", "delta", "precision", "x", "y"};
             // an invocation names both the node and the action it runs (§10.3)
             if (command == "semantic.actions")
                 return {"id"};
@@ -293,6 +296,9 @@ namespace albor::automation
                     // the pointer actions are the four events the command delivers, which a client picks by name (§10.3)
                     if (name == "input.pointer" && parameter == "action")
                         property.set("enum", core::Json(std::vector<core::Json>{core::Json(std::string("press")), core::Json(std::string("move")), core::Json(std::string("release")), core::Json(std::string("cancel"))}));
+                    // the wheel units are the two a scroll container converts, which a client picks by name (§8.3)
+                    if (name == "input.wheel" && parameter == "precision")
+                        property.set("enum", core::Json(std::vector<core::Json>{core::Json(std::string("line")), core::Json(std::string("point"))}));
                     // the description states what the parameter means for this command (§10.3)
                     property.set("description", core::Json("the " + parameter + " this command takes"));
                     // the property joins the schema (§10.3)

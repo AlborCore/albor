@@ -532,6 +532,84 @@ TEST(McpServer, APointerNamedCallLandsInTheLayerOrder) {
     EXPECT_EQ(received.at(1), "control");
 }
 
+TEST(McpServer, TheWheelToolDeclaresItsParametersAndUnits) {
+    // arrange a layer permitting the wheel tool, which is what puts it in the listing (§10.3, AD-10)
+    AutomationRegistry registry;
+    registry.register_command("input.wheel", [](const AutomationRequest&) { return AutomationResult::answered(""); });
+    registry.allow("input.wheel");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [](std::string_view) { return AutomationResult::answered(""); };
+    McpServer server(std::move(route));
+    // act
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":44,"method":"tools/list"})");
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    const core::Json* tools = reply->member("result")->member("tools");
+    ASSERT_NE(tools, nullptr);
+    ASSERT_EQ(tools->as_array().size(), 1U);
+    // assert the tool names every field the adapter places, because a missing name is a dropped argument (§10.3)
+    const core::Json& wheel = tools->as_array().at(0);
+    EXPECT_EQ(wheel.member("name")->as_string(), "input.wheel");
+    const core::Json* properties = wheel.member("inputSchema")->member("properties");
+    ASSERT_NE(properties, nullptr);
+    ASSERT_NE(properties->member("id"), nullptr);
+    ASSERT_NE(properties->member("delta"), nullptr);
+    ASSERT_NE(properties->member("precision"), nullptr);
+    ASSERT_NE(properties->member("x"), nullptr);
+    ASSERT_NE(properties->member("y"), nullptr);
+    // assert the two units are discoverable, because a client cannot guess the spelling (§8.3)
+    const core::Json* units = properties->member("precision")->member("enum");
+    ASSERT_NE(units, nullptr);
+    ASSERT_EQ(units->as_array().size(), 2U);
+    EXPECT_EQ(units->as_array().at(0).as_string(), "line");
+    EXPECT_EQ(units->as_array().at(1).as_string(), "point");
+}
+
+TEST(McpServer, AWheelNamedCallLandsInTheLayerOrder) {
+    // arrange a layer that records the arguments it received, which is how the adapter's placement is observed (§10.3)
+    AutomationRegistry registry;
+    std::vector<std::string> received;
+    registry.register_command("input.wheel", [&received](const AutomationRequest& request) {
+        received = request.arguments;
+        return AutomationResult::answered("");
+    });
+    registry.allow("input.wheel");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act a client names the wheel fields in an order that differs from the layer order (§10.3)
+    (void)server.handle_line(R"({"jsonrpc":"2.0","id":45,"method":"tools/call","params":{"name":"input.wheel","arguments":{"y":"720","x":"100","precision":"point","delta":"-40","id":"form_list"}}})");
+    // assert the values reached the layer in the table order, because the wire is positional (§10.3)
+    ASSERT_EQ(received.size(), 5U);
+    EXPECT_EQ(received.at(0), "form_list");
+    EXPECT_EQ(received.at(1), "-40");
+    EXPECT_EQ(received.at(2), "point");
+    EXPECT_EQ(received.at(3), "100");
+    EXPECT_EQ(received.at(4), "720");
+}
+
+TEST(McpServer, AWheelNamedCallCannotSkipPrecisionToSetThePoint) {
+    // arrange a layer that would record a call, which a rejected placement must never reach (§10.3)
+    AutomationRegistry registry;
+    registry.register_command("input.wheel", [](const AutomationRequest&) { return AutomationResult::answered(""); });
+    registry.allow("input.wheel");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [](std::string_view) { return AutomationResult::answered(""); };
+    McpServer server(std::move(route));
+    // act a named call names the point but skips the precision that precedes it (§10.3)
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":46,"method":"tools/call","params":{"name":"input.wheel","arguments":{"id":"form_list","delta":"-40","x":"100","y":"720"}}})");
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    // assert the adapter refuses the gap rather than shifting the point into the precision slot (§10.3)
+    const core::Json* error = reply->member("error");
+    ASSERT_NE(error, nullptr);
+    EXPECT_EQ(error->member("code")->as_number(), -32602.0);
+    EXPECT_EQ(server.layer_calls(), 0U);
+}
+
 TEST(McpServer, ASemanticValueAndBoundsNamedCallCarriesTheId) {
     // arrange a layer that records the arguments it received, which is how the adapter's placement is observed (§10.3)
     AutomationRegistry registry;

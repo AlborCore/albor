@@ -438,7 +438,7 @@ namespace albor
         EXPECT_FLOAT_EQ(light.palette().tab_selection_plate[state_index(ControlState::Normal)].alpha, 0.0f);
     }
 
-    TEST(ThemePresets, TheDerivedPresetPaintsAFieldWellAndKeepsItsAccentPlate) {
+    TEST(ThemePresets, TheDerivedPresetPaintsAFieldWellAndAPrimaryPlate) {
         // arrange a derived theme, which is the portable baseline every hand built theme follows (§6.1)
         const Accents accents;
         const Theme light = ThemeBuilder::light(accents);
@@ -449,14 +449,71 @@ namespace albor
         // assert the derived well strokes the shared outline, because a white plate needs an edge to read as one (§8.4)
         EXPECT_GT(light.palette().text_field_border[state_index(ControlState::Normal)].alpha, 0.0f);
         EXPECT_EQ(light.palette().text_field_border[state_index(ControlState::Focused)], accents.accent);
-        // assert the derived baseline leaves the default role empty, because its buttons are already the accent (§8.4)
-        EXPECT_FLOAT_EQ(light.palette().button_plate_default[state_index(ControlState::Normal)].alpha, 0.0f);
-        // assert a default control therefore falls back to the accent plate every derived button carries (§8.4)
-        EXPECT_EQ(light.palette().button_plate[state_index(ControlState::Normal)], accents.accent);
+        // assert the primary role is the accent in both schemes, which is where an accent belongs (§8.4)
+        EXPECT_EQ(light.palette().button_plate_default[state_index(ControlState::Normal)], accents.accent);
+        EXPECT_EQ(dark.palette().button_plate_default[state_index(ControlState::Normal)], accents.accent);
+        // assert the primary label stays white over the accent, which is what makes a dialog's OK read (§8.4)
+        EXPECT_EQ(light.palette().button_label_default[state_index(ControlState::Normal)], Color::rgb(1.0f, 1.0f, 1.0f));
+        // assert every ordinary plate is neutral in both schemes, so an icon button never sits on the accent (§8.4)
+        EXPECT_NE(light.palette().button_plate[state_index(ControlState::Normal)], accents.accent);
+        EXPECT_NE(dark.palette().button_plate[state_index(ControlState::Normal)], accents.accent);
+        // assert the neutral face is read off the surface, which keeps it legible in light and dark (§8.4)
+        EXPECT_EQ(light.palette().button_plate[state_index(ControlState::Normal)], ThemeBuilder::darken(accents.surface, 0.03f));
+        EXPECT_EQ(dark.palette().button_plate[state_index(ControlState::Normal)], ThemeBuilder::lighten(accents.surface, 0.16f));
         // assert the derived preset keeps its gutter and its indicator, because the macos rules are gated (§8.2)
         EXPECT_FALSE(light.metrics().scrollbar_overlay);
         EXPECT_FLOAT_EQ(light.metrics().scrollbar_extent, 10.0f);
         EXPECT_FLOAT_EQ(light.palette().tab_selection_plate[state_index(ControlState::Normal)].alpha, 0.0f);
+    }
+
+    TEST(ThemePresets, ADerivedThemeKeepsEveryOrdinaryStateNeutral) {
+        // arrange two schemes with a distinctive accent, so a leaked accent is visible (§8.4)
+        const Accents accents{.surface = Color::rgb(0.30f, 0.32f, 0.35f), .on_surface = Color::rgb(0.95f, 0.95f, 0.96f), .accent = Color::rgb(0.90f, 0.10f, 0.20f), .outline = Color::rgb(0.50f, 0.52f, 0.55f)};
+        const Theme light = ThemeBuilder::light(accents);
+        const Theme dark = ThemeBuilder::dark(accents);
+        // assert every ordinary state stays off the accent in both schemes (§8.4)
+        for (const ControlState state : kStates) {
+            EXPECT_NE(light.palette().button_plate[state_index(state)], accents.accent);
+            EXPECT_NE(dark.palette().button_plate[state_index(state)], accents.accent);
+        }
+        // assert the state variants move off the normal face while the disabled one fades (§6.1)
+        const Theme themes[] = {light, dark};
+        for (const Theme& theme : themes) {
+            const Color normal = theme.palette().button_plate[state_index(ControlState::Normal)];
+            EXPECT_NE(theme.palette().button_plate[state_index(ControlState::Hovered)], normal);
+            EXPECT_NE(theme.palette().button_plate[state_index(ControlState::Pressed)], normal);
+            EXPECT_NE(theme.palette().button_plate[state_index(ControlState::Focused)], normal);
+            EXPECT_LT(theme.palette().button_plate[state_index(ControlState::Disabled)].alpha, 1.0f);
+        }
+        // assert the normal face is read off the surface and not the accent (§8.4)
+        EXPECT_EQ(light.palette().button_plate[state_index(ControlState::Normal)], ThemeBuilder::darken(accents.surface, 0.03f));
+        EXPECT_EQ(dark.palette().button_plate[state_index(ControlState::Normal)], ThemeBuilder::lighten(accents.surface, 0.16f));
+    }
+
+    TEST(ThemePresets, TheDefaultRoleIsACompletePairInTheDerivedPreset) {
+        // arrange a derived light theme, whose default control paints the accent (§8.4)
+        const Theme theme = ThemeBuilder::light(Accents{});
+        // assert the plate and its label are filled in all five states, so the role can be used (§8.4)
+        for (const ControlState state : kStates) {
+            EXPECT_GT(theme.palette().button_plate_default[state_index(state)].alpha, 0.0f);
+            EXPECT_GT(theme.palette().button_label_default[state_index(state)].alpha, 0.0f);
+            EXPECT_FLOAT_EQ(theme.palette().button_border_default[state_index(state)].alpha, 0.0f);
+        }
+        // assert the disabled label fades rather than staying bright over a faded plate (§8.4)
+        EXPECT_LT(theme.palette().button_label_default[state_index(ControlState::Disabled)].alpha, 1.0f);
+    }
+
+    TEST(ThemePresets, ProDarkClearsEveryDefaultRoleStateAfterTheBuilderFillsIt) {
+        // arrange a derived theme and a pro tool theme from the same accents (§8.4)
+        const Accents accents;
+        const Theme derived = ThemeBuilder::dark(accents);
+        const Theme pro = Theme::pro_dark(accents);
+        // assert the builder filled all five states while the tool preset cleared them again (§8.4)
+        for (const ControlState state : kStates) {
+            EXPECT_GT(derived.palette().button_plate_default[state_index(state)].alpha, 0.0f);
+            EXPECT_FLOAT_EQ(pro.palette().button_plate_default[state_index(state)].alpha, 0.0f);
+            EXPECT_FLOAT_EQ(pro.palette().button_label_default[state_index(state)].alpha, 0.0f);
+        }
     }
 
     TEST(ThemePresets, TheProDarkPresetKeepsItsFieldOnTheSurface) {

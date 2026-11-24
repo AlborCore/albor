@@ -1,3 +1,5 @@
+#include <initializer_list>
+
 #include "albor/style/theme_builder.h"
 
 namespace albor
@@ -10,6 +12,30 @@ namespace albor
     Color ThemeBuilder::darken(Color value, float amount) {
         // each channel moves toward zero by the amount, which is what a press reads as (§6.1)
         return Color::rgba(value.red * (1.0f - amount), value.green * (1.0f - amount), value.blue * (1.0f - amount), value.alpha);
+    }
+
+    Color ThemeBuilder::control_face(const Color& surface, ColorScheme scheme) {
+        // a dark face lifts off the surface and a light face steps down, which is the neutral direction (§8.4)
+        return scheme == ColorScheme::Dark ? lighten(surface, 0.16f) : darken(surface, 0.03f);
+    }
+
+    void ThemeBuilder::apply_accent_default(Theme& theme, const Color& accent) {
+        // the plate is the accent at the five states every plate carries (§8.4)
+        theme.set_button_plate_default(ControlState::Normal, accent);
+        theme.set_button_plate_default(ControlState::Hovered, ThemeBuilder::lighten(accent, 0.08f));
+        theme.set_button_plate_default(ControlState::Pressed, ThemeBuilder::darken(accent, 0.12f));
+        theme.set_button_plate_default(ControlState::Disabled, Color::rgba(accent.red, accent.green, accent.blue, 0.45f));
+        theme.set_button_plate_default(ControlState::Focused, ThemeBuilder::lighten(accent, 0.04f));
+        // the label is white over the accent at every state, dimmed when the plate refuses input (§8.4)
+        const Color label = Color::rgb(1.0f, 1.0f, 1.0f);
+        theme.set_button_label_default(ControlState::Normal, label);
+        theme.set_button_label_default(ControlState::Hovered, label);
+        theme.set_button_label_default(ControlState::Pressed, label);
+        theme.set_button_label_default(ControlState::Disabled, Color::rgba(label.red, label.green, label.blue, 0.55f));
+        theme.set_button_label_default(ControlState::Focused, label);
+        // an accent plate carries no border, because the fill is what separates it from the surface (§8.4)
+        for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
+            theme.set_button_border_default(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
     }
 
     Theme ThemeBuilder::build(const Accents& accents, ColorScheme scheme) {
@@ -28,25 +54,36 @@ namespace albor
         const Color plate_hovered = scheme == ColorScheme::Dark ? lighten(accent, 0.12f) : lighten(accent, 0.08f);
         // the press always sinks, because pressing in is the direction the pointer reads (§6.1)
         const Color plate_pressed = darken(accent, 0.25f);
-        // the disabled plate is the accent at half strength, which is the fade the button used to do inline (§6.1)
+        // the disabled accent is at half strength, which is the fade an accent role carries (§6.1)
         const Color plate_disabled = Color::rgba(accent.red, accent.green, accent.blue, 0.45f);
 
-        // the four states of a plate are one decision rather than four literals (§6.1)
-        theme.set_button_plate(ControlState::Normal, accent);
-        theme.set_button_plate(ControlState::Hovered, plate_hovered);
-        theme.set_button_plate(ControlState::Pressed, plate_pressed);
-        theme.set_button_plate(ControlState::Disabled, plate_disabled);
-        // a focused plate is the accent lifted a hair, because the ring carries the signal (§6.1)
-        theme.set_button_plate(ControlState::Focused, lighten(accent, 0.04f));
-        // the label sits on the plate, so it is the text colour at four strengths (§6.1)
+        // an ordinary button carries a neutral face, which leaves the accent for the primary role (§8.4)
+        const Color face = control_face(surface, scheme);
+        // the face lifts on a hover and sinks on a press, like the accent states above (§6.1)
+        const Color face_hovered = scheme == ColorScheme::Dark ? lighten(face, 0.12f) : lighten(face, 0.08f);
+        // a press sinks by the same step as a filled accent plate (§6.1)
+        const Color face_pressed = darken(face, 0.25f);
+        // the disabled face fades to half strength, which is how a refused control reads (§6.1)
+        const Color face_disabled = Color::rgba(face.red, face.green, face.blue, 0.45f);
+
+        // the four states of an ordinary plate are one decision rather than four literals (§6.1)
+        theme.set_button_plate(ControlState::Normal, face);
+        theme.set_button_plate(ControlState::Hovered, face_hovered);
+        theme.set_button_plate(ControlState::Pressed, face_pressed);
+        theme.set_button_plate(ControlState::Disabled, face_disabled);
+        // a focused plate is the face lifted a hair, because the ring carries the signal (§6.1)
+        theme.set_button_plate(ControlState::Focused, lighten(face, 0.04f));
+        // the label sits on the neutral face, so it is the readable text colour at every state (§8.4)
         theme.set_button_label(ControlState::Normal, on_surface);
         theme.set_button_label(ControlState::Hovered, on_surface);
         theme.set_button_label(ControlState::Pressed, on_surface);
         theme.set_button_label(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.5f));
         // a focus does not change the label, because the ring already says the control takes keys (§6.1)
         theme.set_button_label(ControlState::Focused, on_surface);
+        // a primary control keeps the accent plate, which the neutral face cannot carry (§8.4)
+        apply_accent_default(theme, accent);
 
-        // a check box plate is the accent at four states, which is the same decision as a button (§6.1)
+        // a check box plate is the accent at four states, which is the fill an accent role takes (§8.4)
         theme.set_checkbox_fill(ControlState::Normal, accent);
         theme.set_checkbox_fill(ControlState::Hovered, plate_hovered);
         theme.set_checkbox_fill(ControlState::Pressed, plate_pressed);
@@ -168,7 +205,7 @@ namespace albor
 
         // the surface is offered so an application can read it back, which a frame background needs (§6.1)
         theme.set_surface(surface);
-        // exit
+        // hand back the fully derived palette (§6.1)
         return theme;
     }
 

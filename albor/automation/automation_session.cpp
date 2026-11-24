@@ -14,22 +14,18 @@ namespace albor::automation
 
         // mint a token for one session, which is why the source is per call and not shared (§10.3, AD-10)
         std::string mint_token() {
-            // the engine is seeded from the system, because two sessions must not share a token (§10.3, AD-10)
-            std::random_device seed;
-            // the generator is seeded per session, which is what makes a token unpredictable (§10.3, AD-10)
-            std::mt19937 engine(seed());
+            // the system device supplies every draw, so a seed never caps the token's entropy (§10.3, AD-10)
+            std::random_device entropy;
             // the range is the printable ascii without the separator, so a token never splits a field (§10.3)
             std::uniform_int_distribution<int> character(33, 126);
             // the token is built a character at a time, which is the whole of it (§10.3, AD-10)
             std::string token;
             // the length is fixed, because a short token is guessable (§10.3, AD-10)
             for (int i = 0; i < 32; i++) {
-                // one draw per character, because drawing twice would silently drop half the entropy (§10.3, AD-10)
-                const int drawn = character(engine);
-                // the separator is replaced rather than skipped, so a token never contains the field break (§10.3)
-                const int value = drawn == ' ' ? 'a' : drawn;
+                // one device draw per character, because a seed would cap a long token's entropy (§10.3, AD-10)
+                const int drawn = character(entropy);
                 // the character joins the token, which is what the client presents (§10.3, AD-10)
-                token.push_back(static_cast<char>(value));
+                token.push_back(static_cast<char>(drawn));
             }
             // the token is returned whole, which is the only copy this session keeps (§10.3, AD-10)
             return token;
@@ -46,6 +42,9 @@ namespace albor::automation
         // an authenticated conversation does not re authenticate, which keeps a token from being replayed (§10.3)
         if (m_authenticated)
             return HandshakeResult{.authenticated = true, .error = {}};
+        // an empty token names no conversation, so even an empty handshake must be refused (§10.3, AD-10)
+        if (m_token.empty())
+            return HandshakeResult{.authenticated = false, .error = std::string("authentication failed")};
         // the comparison walks both strings fully, so a wrong token leaks nothing by how long it took (§10.3, AD-10)
         unsigned char difference = presented.size() == m_token.size() ? 0 : 1;
         // the shorter of the two is walked, so a length mismatch costs the same time as a wrong byte (§10.3)

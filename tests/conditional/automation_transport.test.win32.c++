@@ -286,6 +286,46 @@ TEST(AutomationTransport, ALargeReplyArrivesWholeAndTheNextOneFollowsIt) {
     transport->stop();
 }
 
+TEST(AutomationTransport, AClientWithAnUnfinishedLineIsDropped) {
+    // arrange a silent client whose line never ends, which must not grow the server's buffer without bound (§10.3, AD-10)
+    std::size_t runs = 0;
+    AutomationRegistry registry = registry_with_probe(&runs);
+    const std::unique_ptr<AutomationTransport> transport = create_transport(registry);
+    ASSERT_NE(transport, nullptr);
+    const std::string pipe = pipe_name("flood");
+    ASSERT_TRUE(transport->listen(AutomationEndpoint{.socket_path = pipe, .token_path = {}}));
+    std::atomic<bool> done{false};
+    std::thread server([&] { pump_until(done, *transport); });
+    const HANDLE client = connect_to(pipe);
+    ASSERT_NE(client, INVALID_HANDLE_VALUE);
+    // act the client exceeds the pending budget without a newline (§10.3, AD-10)
+    const std::string flood(1024U * 1024U + 64U, 'x');
+    std::size_t sent = 0;
+    while (sent < flood.size()) {
+        DWORD written = 0;
+        if (!::WriteFile(client, flood.data() + sent, static_cast<DWORD>(flood.size() - sent), &written, nullptr) || written == 0)
+            break;
+        sent += static_cast<std::size_t>(written);
+    }
+    // assert the server closed the conversation, which is how an unfinished line ends (§10.3, AD-10)
+    bool closed = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        DWORD available = 0;
+        if (!::PeekNamedPipe(client, nullptr, 0, nullptr, &available, nullptr)) {
+            closed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(closed);
+    EXPECT_EQ(runs, 0U);
+    ::CloseHandle(client);
+    done.store(true);
+    server.join();
+    transport->stop();
+}
+
 TEST(AutomationTransport, StoppingMakesTheEndpointUnavailable) {
     // arrange
     std::size_t runs = 0;

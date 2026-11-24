@@ -102,6 +102,7 @@ both edges.
   [Windows and dialogs](../consuming.md#windows-and-dialogs).
 - The flag also selects the preset's primary plate: a preset that fills `button_plate_default`
   paints the default control with its accent and its own `button_label_default`. A theme that
-  leaves that role transparent keeps the neutral plate; the derived preset is accent throughout, so
-  its default control is filled by the plain button role. An authored `background` wins over the
-  whole role, and a role with no label falls back rather than hiding its caption.
+  leaves that role transparent keeps the neutral plate; the derived preset fills the role with the
+  accent while ordinary buttons keep a neutral face, so a dialog's OK stands out and an icon button
+  does not. An authored `background` wins over the whole role, and a role with no label falls back
+  rather than hiding its caption.
