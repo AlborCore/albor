@@ -1170,6 +1170,39 @@ A refusal carries the layer's reason:
 {"jsonrpc":"2.0","id":17,"error":{"code":-32000,"message":"no node with id: form_missing"}}
 ```
 
+## Python compatibility harness
+
+An out-of-process client lives in `tools/automation-harness/albor_automation/`. It discovers a
+host through `host.json`, reads the per-session token, connects to the Unix socket or Windows
+named pipe, and speaks newline-delimited MCP. Every tool call goes through the automation layer;
+the harness has no second path into the application (BDG-04).
+
+Run the whole suite from the repository root:
+
+```sh
+python3 tools/automation-harness/run.py
+python3 tools/automation-harness/run.py --app /path/to/albor-automation-reference-app
+```
+
+The runner can also be invoked through the CMake target `albor-automation-compatibility`, which
+passes the freshly built fixture app. `ALBOR_TEST_APPLICATION` overrides the default executable,
+`ALBOR_TEST_ARTIFACTS` sets where a failed test writes its screenshot, tree and stream artifacts,
+and `ALBOR_AUTOMATION_DEBUG=1` logs the protocol exchange.
+
+Two suites run under `unittest` (STYLE-GUIDE.md):
+
+- `tests/automation/harness/` — self-contained client tests with fake transports and fakes for
+  the tool facade, locators, polling assertions and launch lifecycle.
+- `tests/automation/reference_compatibility_test.py` — drives the headless form fixture app
+  through the real host: discovery and handshake, token refusal, the allow-listed tool surface,
+  and the documented session of [A complete session](#a-complete-session) through typed reads,
+  input and capture.
+
+The fixture app (`tests/automation/albor_automation_reference_app.cpp`) builds the same generated
+form as the in-process reference suite on the headless platform, so no window server is needed.
+The same Python suite runs in the debug CI jobs on macOS, Windows and Linux; the client selects
+the named-pipe transport on Windows and the Unix socket transport elsewhere.
+
 ## The raw automation wire
 
 The MCP adapter is the supported client protocol. The automation layer also has a

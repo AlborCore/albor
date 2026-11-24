@@ -109,6 +109,10 @@ jobs:
         working-directory: .build-${{ matrix.preset }}/tests
         run: ./albor-tests && ./albor-generated-font-checks
 
+      - name: python automation compatibility
+        if: matrix.enable && matrix.preset == 'debug'
+        run: python3 tools/automation-harness/run.py --app .build-debug/tests/albor-automation-reference-app
+
       - name: link boundary (release)
         if: matrix.enable && matrix.preset == 'release'
         run: bash build/check-link-boundary.sh

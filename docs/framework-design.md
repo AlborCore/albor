@@ -455,7 +455,9 @@ A feature is accepted only when the relevant cross-cutting suites pass:
 - **Platform parity**: macOS, Windows and Linux carry mirrored platform suites; a platform-only test
   gap is a defect (BDG-10).
 - **LSP/compiler agreement**, **manifest consistency**, **semantic tree**, **build scope** and
-  **automation compatibility** suites as specified by their owning modules.
+  **automation compatibility** suites as specified by their owning modules. The automation
+  compatibility suite drives a running application out of process through the Python harness in
+  `tools/automation-harness/` (§10.3).
 
 A comparison that reads nothing from one side is not an agreement. A tolerance is written and
 derived from measurement, not guessed. A suite that cannot run is recorded, not shipped red.
@@ -478,7 +480,6 @@ derived from measurement, not guessed. A suite that cannot run is recorded, not 
 These are not part of the current contract. A change that closes one must update this section and
 `docs/status.md` in the same change.
 
-- **GAP-01** Python automation test harness (#25) and the full reference compatibility suite.
 - **GAP-02** RTL layout mirroring and text-level bidi/caret navigation (#98, #99).
 - **GAP-03** Out-of-process dev service that delivers reload definitions to `devrt`.
 - **GAP-04** Full LSP component-aware completion, hover, references and rename (#126–#129).
@@ -533,3 +534,4 @@ new work cites this document's `BDG-NN`, `GAP-NN` and § numbers only.
 | 1.0 | 2026-11-20 | Initial contract drafted from the verified current tree. |
 | 1.1 | 2026-11-21 | Audit completed: authoritative status, legacy reference crosswalk, pre-release gap decisions recorded in `status.md` (#263). |
 | 1.2 | 2026-11-22 | §5.3 records the remap handshake a hidden surface repeats before presenting, and the eviction of a connection whose display reports a fatal error (#271). |
+| 1.3 | 2026-11-24 | §13.2 names the out-of-process Python automation compatibility harness; GAP-01 (#25) is closed with the harness, its fixture app and three-platform CI; `status.md` drops it from the stable-tag blockers. |

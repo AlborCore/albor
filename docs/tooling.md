@@ -192,7 +192,9 @@ pointer and key input (`input.*`), frame capture (`capture.screenshot`), and the
 application command registry (`command.*`). The complete command reference — every
 command, its arguments, refusals and request/response examples — is on
 [Automation and MCP](automation.md). That page also documents host discovery, the
-MCP handshake, content blocks and the raw automation wire.
+MCP handshake, content blocks, the raw automation wire and the Python compatibility
+harness under `tools/automation-harness/`, whose out-of-process suite is part of the
+automation compatibility conformance suite (§13.2).
 
 ## What the test suite covers
 

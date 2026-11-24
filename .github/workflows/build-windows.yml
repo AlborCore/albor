@@ -131,6 +131,10 @@ jobs:
             ./albor-tests && ./albor-generated-font-checks
           fi
 
+      - name: python automation compatibility
+        if: matrix.enable && matrix.preset == 'debug'
+        run: python tools/automation-harness/run.py --app .build-debug/tests/albor-automation-reference-app.exe
+
       - name: coverage report (cobertura)
         if: matrix.enable && matrix.preset == 'coverage'
         run: |
