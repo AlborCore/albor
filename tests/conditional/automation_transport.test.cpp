@@ -235,13 +235,12 @@ TEST(AutomationTransport, AConnectedClientDoesNotStallTheServer) {
     const std::unique_ptr<AutomationTransport> transport = create_transport(registry);
     const std::string socket = endpoint_path("spans");
     ASSERT_TRUE(transport->listen(AutomationEndpoint{.socket_path = socket, .token_path = {}}));
-    // act the client sends a handshake and then stays silent, which is what an idle tool looks like (§10.3)
-    std::atomic<bool> done{false};
-    std::thread server([&] { pump_until(done, *transport); });
     const int client = connect_to(socket);
     ASSERT_NE(client, -1);
     apply_timeout(client);
+    // act the client sends a handshake and then stays silent, which is what an idle tool looks like (§10.3)
     write_line(client, encode_handshake(transport->session_token()));
+    (void)transport->serve_one();
     EXPECT_EQ(read_line(client), "!ok text ");
     // assert further passes keep returning while the client is quiet, because a frame loop calls this every frame (§6.1)
     for (int pass = 0; pass < 20; pass++) {
@@ -251,11 +250,10 @@ TEST(AutomationTransport, AConnectedClientDoesNotStallTheServer) {
     }
     // act the client speaks again, which is what proves the conversation survived the quiet (§10.3)
     write_line(client, "probe");
+    (void)transport->serve_one();
     EXPECT_EQ(read_line(client), "!ok text yes");
     // exit
     ::close(client);
-    done.store(true);
-    server.join();
     EXPECT_EQ(runs, 1U);
     transport->stop();
 }
