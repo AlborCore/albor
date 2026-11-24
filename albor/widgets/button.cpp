@@ -10,6 +10,14 @@
 
 namespace albor
 {
+    namespace
+    {
+        float icon_opacity(ControlState state) {
+            // a hover brightens the icon, a press dims it and a refused button fades it (§8.4)
+            return state == ControlState::Hovered ? 1.0f : state == ControlState::Pressed ? 0.7f : state == ControlState::Disabled ? 0.35f : 0.85f;
+        }
+    } // namespace
+
     Button::Button(BindingEngine* engine, TextEngine* text_engine, std::string label, std::string explicit_id) :
         Widget(engine, std::move(explicit_id)), m_text_engine(text_engine), m_label(std::move(label)) {
         // a button with no engine cannot measure, so the plate stays at its minimum extent (§9.1, AD-14)
@@ -99,8 +107,8 @@ namespace albor
         const float group_x = std::clamp(align == Align::Start ? bounds().x + metrics.button_padding_horizontal : align == Align::End ? bounds().x + bounds().width - metrics.button_padding_horizontal - group_width : bounds().x + (bounds().width - group_width) * 0.5f, bounds().x, std::max(bounds().x, bounds().x + bounds().width - group_width));
         // the icon hangs at the content's vertical centre, which is where a push control reads (§8.2)
         const Rect icon_rect = Rect::from_origin_size(Point{.x = group_x, .y = bounds().y + (bounds().height - side) * 0.5f}, Size{.width = side, .height = side});
-        // the image is recorded under the plate's content, which the renderer samples into the square (§6.4)
-        context.draw_image(m_icon, icon_rect, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        // the icon fades by state through alpha, which is the only tint an image paint carries (§6.4, AD-26)
+        context.draw_image(m_icon, icon_rect, Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, icon_opacity(state()))});
         // an icon-only button has no label to draw after the square (§8.2)
         if (m_label_layout.empty())
             return;
@@ -382,6 +390,9 @@ namespace albor
     }
 
     Color Button::background() const {
+        // a disabled icon-only control drops its plate, so the faded icon carries the state (§8.4)
+        if (theme() != nullptr && m_icon != nullptr && m_label_layout.empty() && !m_background_set && disabled())
+            return Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
         // a themed button resolves by role until the author writes a plate (§6.1)
         if (theme() != nullptr)
             return resolve_authored(plate_colors(), m_background, m_background_set);

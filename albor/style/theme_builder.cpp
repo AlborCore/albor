@@ -59,8 +59,8 @@ namespace albor
 
         // an ordinary button carries a neutral face, which leaves the accent for the primary role (§8.4)
         const Color face = control_face(surface, scheme);
-        // the face lifts on a hover and sinks on a press, like the accent states above (§6.1)
-        const Color face_hovered = scheme == ColorScheme::Dark ? lighten(face, 0.12f) : lighten(face, 0.08f);
+        // a hover lifts a dark face and deepens a light one, so the delta stays visible in both schemes (§8.4)
+        const Color face_hovered = scheme == ColorScheme::Dark ? lighten(face, 0.12f) : darken(face, 0.10f);
         // a press sinks by the same step as a filled accent plate (§6.1)
         const Color face_pressed = darken(face, 0.25f);
         // the disabled face fades to half strength, which is how a refused control reads (§6.1)

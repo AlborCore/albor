@@ -534,6 +534,44 @@ namespace albor
         EXPECT_EQ(dark.palette().button_plate[state_index(ControlState::Normal)], ThemeBuilder::lighten(accents.surface, 0.16f));
     }
 
+    TEST(ThemePresets, ADerivedHoverMovesTheNeutralPlatePerceptiblyInBothSchemes) {
+        // arrange accents whose surfaces match their scheme, which is how a light or dark frame is built (§8.4)
+        const Accents light{.surface = Color::rgb(0.925f, 0.925f, 0.930f), .on_surface = Color::rgb(0.18f, 0.18f, 0.20f), .accent = Color::rgb(0.20f, 0.55f, 0.90f), .outline = Color::rgb(0.55f, 0.57f, 0.60f)};
+        const Accents dark{.surface = Color::rgb(0.125f, 0.125f, 0.135f), .on_surface = Color::rgb(0.92f, 0.94f, 0.96f), .accent = Color::rgb(0.20f, 0.55f, 0.90f), .outline = Color::rgb(0.42f, 0.44f, 0.48f)};
+        // act
+        const Theme light_theme = ThemeBuilder::light(light);
+        const Theme dark_theme = ThemeBuilder::dark(dark);
+        // assert a light hover deepens the plate by at least fifteen eight-bit levels (§8.4)
+        const Color light_normal = light_theme.palette().button_plate[state_index(ControlState::Normal)];
+        const Color light_hovered = light_theme.palette().button_plate[state_index(ControlState::Hovered)];
+        EXPECT_GT(light_normal.red - light_hovered.red, 0.06f);
+        // assert a dark hover lifts the plate by the same visible margin (§8.4)
+        const Color dark_normal = dark_theme.palette().button_plate[state_index(ControlState::Normal)];
+        const Color dark_hovered = dark_theme.palette().button_plate[state_index(ControlState::Hovered)];
+        EXPECT_GT(dark_hovered.red - dark_normal.red, 0.06f);
+    }
+
+    TEST(ThemePresets, ANeutralStateFixLeavesTheDefaultRoleAndNativePlatesAlone) {
+        // arrange one accent set, which every preset derives its states from (§8.4)
+        const Accents accents;
+        // act
+        const Theme derived = ThemeBuilder::light(accents);
+        const Theme macos = Theme::macos(accents, ColorScheme::Dark);
+        const Theme fluent = Theme::fluent(accents, ColorScheme::Light);
+        // assert the derived default role still carries the accent at every state (§8.4)
+        EXPECT_EQ(derived.palette().button_plate_default[state_index(ControlState::Normal)], accents.accent);
+        EXPECT_EQ(derived.palette().button_plate_default[state_index(ControlState::Hovered)], ThemeBuilder::lighten(accents.accent, 0.08f));
+        EXPECT_EQ(derived.palette().button_plate_default[state_index(ControlState::Pressed)], ThemeBuilder::darken(accents.accent, 0.12f));
+        EXPECT_FLOAT_EQ(derived.palette().button_plate_default[state_index(ControlState::Disabled)].alpha, 0.45f);
+        EXPECT_EQ(derived.palette().button_plate_default[state_index(ControlState::Focused)], ThemeBuilder::lighten(accents.accent, 0.04f));
+        // assert fluent keeps its unmoving face and its faded disabled plate (§8.4, BDG-10)
+        EXPECT_EQ(fluent.palette().button_plate[state_index(ControlState::Hovered)], fluent.palette().button_plate[state_index(ControlState::Normal)]);
+        EXPECT_FLOAT_EQ(fluent.palette().button_plate[state_index(ControlState::Disabled)].alpha, 0.5f);
+        // assert macos keeps its gentle dark hover and its faded disabled plate (§8.4, BDG-10)
+        EXPECT_EQ(macos.palette().button_plate[state_index(ControlState::Hovered)], ThemeBuilder::lighten(ThemeBuilder::control_face(accents.surface, ColorScheme::Dark), 0.05f));
+        EXPECT_FLOAT_EQ(macos.palette().button_plate[state_index(ControlState::Disabled)].alpha, 0.45f);
+    }
+
     TEST(ThemePresets, TheDefaultRoleIsACompletePairInTheDerivedPreset) {
         // arrange a derived light theme, whose default control paints the accent (§8.4)
         const Theme theme = ThemeBuilder::light(Accents{});
