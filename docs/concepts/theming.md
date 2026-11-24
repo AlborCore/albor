@@ -51,7 +51,7 @@ Beyond control metrics, a preset decides the surfaces a form is built from:
 
 | surface | token | macOS | Windows (fluent) | derived |
 | --- | --- | --- | --- | --- |
-| panel / card plate | `panel_background` + `panel_border_width` | grey group plate on a white pane, no border | fluent face with its one point line | the palette plate, unchanged |
+| panel / card plate | `panel_background` + `panel_border_width` | grey group plate on a white pane, no border | fluent face with its one point line | neutral plate stepped off the surface, with a hairline |
 | button plate | `button_plate` | neutral face of the pane | neutral face of the surface | neutral face of the surface |
 | field well | `text_field_plate` | white or lifted well, hairline | white or lifted well, hairline | white or lifted well, outline edge |
 | scrollbar | `scrollbar_overlay`, `scrollbar_hover_extent`, `scrollbar_overlay_inset` | 7px overlay, 11px hovered | 12px gutter | 10px gutter |
@@ -62,9 +62,11 @@ Beyond control metrics, a preset decides the surfaces a form is built from:
 Every *new* role and metric is silent by default: a transparent role and a zero metric leave the
 widget drawing exactly what it drew before, which is how the presets shape a surface without a
 single `is_macos()` branch in a widget. The derived preset opts in explicitly to a field well and
-its outline edge, paints ordinary button plates as a neutral face lifted off the surface, and fills
-the default-control role with the accent, so only a primary button carries it. A custom `Theme` that
-leaves the default control role transparent keeps the neutral plate, and an authored `background`
+its outline edge, paints ordinary button plates as a neutral face lifted off the surface, and paints
+cards as a neutral plate stepped off the surface with a matching hairline, so a dark caption reads
+over a light card. It fills the default-control role with the accent, so only a primary button
+carries it. A custom `Theme` that leaves the default control role transparent keeps the neutral
+plate, and an authored `background`
 on a button wins over the role.
 
 A preset that fills `tab_selection_plate` paints a *vertical* strip's selection as a row and

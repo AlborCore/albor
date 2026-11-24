@@ -466,6 +466,50 @@ namespace albor
         EXPECT_FLOAT_EQ(light.palette().tab_selection_plate[state_index(ControlState::Normal)].alpha, 0.0f);
     }
 
+    TEST(ThemePresets, ADerivedCardCarriesItsCaptionInEitherScheme) {
+        // arrange light accents matching a light frame, whose caption is the dark text colour (§8.4)
+        const Accents light{.surface = Color::rgb(0.925f, 0.925f, 0.930f), .on_surface = Color::rgb(0.18f, 0.18f, 0.20f), .accent = Color::rgb(0.20f, 0.55f, 0.90f), .outline = Color::rgb(0.55f, 0.57f, 0.60f)};
+        // arrange dark accents whose caption is the light text colour (§8.4)
+        const Accents dark{.surface = Color::rgb(0.125f, 0.125f, 0.135f), .on_surface = Color::rgb(0.92f, 0.94f, 0.96f), .accent = Color::rgb(0.20f, 0.55f, 0.90f), .outline = Color::rgb(0.42f, 0.44f, 0.48f)};
+        const Theme light_theme = ThemeBuilder::light(light);
+        const Theme dark_theme = ThemeBuilder::dark(dark);
+        // assert a light card is a light plate, so the dark caption reads over it (§8.4)
+        const Color light_plate = light_theme.palette().panel_background[state_index(ControlState::Normal)];
+        EXPECT_EQ(light_plate, ThemeBuilder::control_face(light.surface, ColorScheme::Light));
+        EXPECT_GT(light_plate.red, light.on_surface.red);
+        EXPECT_GT(light_plate.green, light.on_surface.green);
+        EXPECT_GT(light_plate.blue, light.on_surface.blue);
+        // assert a dark card lifts off the surface but stays below the light caption (§8.4)
+        const Color dark_plate = dark_theme.palette().panel_background[state_index(ControlState::Normal)];
+        EXPECT_EQ(dark_plate, ThemeBuilder::control_face(dark.surface, ColorScheme::Dark));
+        EXPECT_GT(dark_plate.red, dark.surface.red);
+        EXPECT_LT(dark_plate.red, dark.on_surface.red);
+        EXPECT_LT(dark_plate.green, dark.on_surface.green);
+        EXPECT_LT(dark_plate.blue, dark.on_surface.blue);
+        // assert the builder replaced the hardcoded dark default that made the card black (§8.4)
+        EXPECT_NE(light_plate, Theme{}.palette().panel_background[state_index(ControlState::Normal)]);
+    }
+
+    TEST(ThemePresets, ADerivedCardFillsEveryPlateAndBorderState) {
+        // arrange a derived light theme, whose card roles replace the palette defaults (§8.4)
+        const Accents accents;
+        const Theme theme = ThemeBuilder::light(accents);
+        // assert every card state is an opaque plate whose hairline follows the text colour (§8.4)
+        const Color normal = theme.palette().panel_background[state_index(ControlState::Normal)];
+        EXPECT_FLOAT_EQ(normal.alpha, 1.0f);
+        for (const ControlState state : kStates) {
+            EXPECT_GT(theme.palette().panel_background[state_index(state)].alpha, 0.0f);
+            const Color border = theme.palette().panel_border[state_index(state)];
+            EXPECT_GT(border.alpha, 0.0f);
+            EXPECT_EQ(Color::rgb(border.red, border.green, border.blue), Color::rgb(accents.on_surface.red, accents.on_surface.green, accents.on_surface.blue));
+        }
+        // assert the interaction states move off the normal face and the disabled pair fades (§8.4)
+        EXPECT_NE(theme.palette().panel_background[state_index(ControlState::Hovered)], normal);
+        EXPECT_NE(theme.palette().panel_background[state_index(ControlState::Pressed)], normal);
+        EXPECT_LT(theme.palette().panel_background[state_index(ControlState::Disabled)].alpha, 1.0f);
+        EXPECT_LT(theme.palette().panel_border[state_index(ControlState::Disabled)].alpha, theme.palette().panel_border[state_index(ControlState::Normal)].alpha);
+    }
+
     TEST(ThemePresets, ADerivedThemeKeepsEveryOrdinaryStateNeutral) {
         // arrange two schemes with a distinctive accent, so a leaked accent is visible (§8.4)
         const Accents accents{.surface = Color::rgb(0.30f, 0.32f, 0.35f), .on_surface = Color::rgb(0.95f, 0.95f, 0.96f), .accent = Color::rgb(0.90f, 0.10f, 0.20f), .outline = Color::rgb(0.50f, 0.52f, 0.55f)};
