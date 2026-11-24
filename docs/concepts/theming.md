@@ -24,7 +24,7 @@ albor::Accents dark{.surface    = albor::Color::rgb(0.125f, 0.125f, 0.135f),
 | --- | --- |
 | `surface` | the window and panel background |
 | `on_surface` | text and icons drawn against the surface |
-| `accent` | the system accent — selection, focus, active states |
+| `accent` | the system accent — selection, focus, active states, primary buttons |
 | `outline` | borders, separators, the edges of controls |
 
 An application usually takes the accent from the system rather than inventing one — see
@@ -52,19 +52,20 @@ Beyond control metrics, a preset decides the surfaces a form is built from:
 | surface | token | macOS | Windows (fluent) | derived |
 | --- | --- | --- | --- | --- |
 | panel / card plate | `panel_background` + `panel_border_width` | grey group plate on a white pane, no border | fluent face with its one point line | the palette plate, unchanged |
+| button plate | `button_plate` | neutral face of the pane | neutral face of the surface | neutral face of the surface |
 | field well | `text_field_plate` | white or lifted well, hairline | white or lifted well, hairline | white or lifted well, outline edge |
 | scrollbar | `scrollbar_overlay`, `scrollbar_hover_extent`, `scrollbar_overlay_inset` | 7px overlay, 11px hovered | 12px gutter | 10px gutter |
-| default control | `button_plate_default`, `button_label_default`, `button_border_default` | accent plate, white label | accent plate, white label | empty, so the accent button plate carries it |
+| default control | `button_plate_default`, `button_label_default`, `button_border_default` | accent plate, white label | accent plate, white label | accent plate, white label |
 | vertical tab sidebar | `tab_strip_background` | near-white plate | — | — |
 | vertical tab selection | `tab_selection_plate`, `tab_selection_label`, `tab_row_inset`, `tab_row_radius` | accent row, white label | indicator | indicator |
 
 Every *new* role and metric is silent by default: a transparent role and a zero metric leave the
 widget drawing exactly what it drew before, which is how the presets shape a surface without a
 single `is_macos()` branch in a widget. The derived preset opts in explicitly to a field well and
-its outline edge, and leaves the default-control role empty, so a derived default button falls back
-to the accent plate every derived button already carries. A custom `Theme` that leaves the default
-control role transparent keeps the neutral plate, and an authored `background` on a button wins
-over the role.
+its outline edge, paints ordinary button plates as a neutral face lifted off the surface, and fills
+the default-control role with the accent, so only a primary button carries it. A custom `Theme` that
+leaves the default control role transparent keeps the neutral plate, and an authored `background`
+on a button wins over the role.
 
 A preset that fills `tab_selection_plate` paints a *vertical* strip's selection as a row and
 suppresses the 2px indicator; a top strip always keeps the indicator. A composed `TabTitle` over a

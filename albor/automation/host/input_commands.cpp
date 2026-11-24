@@ -265,7 +265,7 @@ namespace albor::automation
 
     std::vector<std::string> input_command_names() {
         // the names are fixed rather than discovered, because a host allow-lists before any tree exists (§10.3, AD-10)
-        return {std::string(FAMILY) + "type", std::string(FAMILY) + "click", std::string(FAMILY) + "pointer", std::string(FAMILY) + "key"};
+        return {std::string(FAMILY) + "type", std::string(FAMILY) + "click", std::string(FAMILY) + "pointer", std::string(FAMILY) + "key", std::string(FAMILY) + "wheel"};
     }
 
     void register_input_commands(AutomationRegistry& registry, InputRoot root) {
@@ -521,6 +521,79 @@ namespace albor::automation
             // a window closed by the press drops its release, which is not a client mistake (§4.2)
             (void)application.deliver_input(handle, up);
             // the key reports nothing, because its effect is what the client observes in the next dump (§10.3)
+            return AutomationResult::answered("");
+        });
+
+        // the wheel command delivers one normalized scroll event, which is what a viewport consumes (§8.3, §10.3)
+        registry.register_command(std::string(FAMILY) + "wheel", [root](const AutomationRequest& request) {
+            // a host that supplied no root cannot answer, which is refused rather than answered empty (§10.3)
+            if (!root)
+                return AutomationResult::refused("the host supplied no input target");
+            // the live tree is taken once, because the application may rebuild it between lines (§10.3)
+            UiNode* active = root();
+            if (active == nullptr)
+                return AutomationResult::refused("no window carries a tree");
+            // the id is required, because a wheel names the window and the default point (§10.3, AD-11)
+            const auto id = argument_at(request, 0);
+            if (!id)
+                return AutomationResult::refused("wheel needs an id");
+            // the delta is required, because a wheel without a distance would scroll nothing (§8.3)
+            const auto delta_text = argument_at(request, 1);
+            if (!delta_text)
+                return AutomationResult::refused("wheel needs a delta");
+            // a wheel call is the id, the delta and two optional pairs, so a longer call is a mistake (§10.3)
+            if (request.arguments.size() > 5)
+                return AutomationResult::refused("wheel takes an id, a delta, optional precision and optional x and y");
+            // the delta is read as a number, because the wire carries every argument as text (§10.3)
+            float delta = 0.0f;
+            if (!parse_float(*delta_text, delta))
+                return AutomationResult::refused("wheel delta is not a number");
+            // a notched wheel is the default unit, which is what a scroll container converts to a line (§8.3)
+            ScrollPrecision precision = ScrollPrecision::Line;
+            if (request.arguments.size() >= 3) {
+                // the line unit counts notches, which is the unit a physical wheel reports (§8.3)
+                if (request.arguments[2] == "line")
+                    precision = ScrollPrecision::Line;
+                // the point unit counts surface distance, which is what a trackpad reports (§8.3)
+                else if (request.arguments[2] == "point")
+                    precision = ScrollPrecision::Point;
+                // an unknown unit would change the distance without telling the client (§10.3)
+                else
+                    return AutomationResult::refused("unknown wheel precision: " + request.arguments[2]);
+            }
+            // the node is looked up by identity, which is the only selector automation offers (§18.1, AD-11)
+            UiNode* node = node_by_id(*active, *id);
+            if (node == nullptr)
+                return AutomationResult::refused("no node with id: " + *id);
+            // the window is what the wheel event reaches, because input belongs to the stage (§8.3)
+            Application& application = Application::instance();
+            WindowHandle handle{};
+            std::string error;
+            if (!resolve_window(application, *node, *id, handle, error))
+                return AutomationResult::refused(error);
+            // the point defaults to the node centre, which is the ordinary target a control offers (§8.2)
+            const Rect area = node->bounds();
+            if (request.arguments.size() < 5 && area.empty())
+                return AutomationResult::refused("the node has no area: " + *id);
+            Point point{.x = area.x + area.width * 0.5f, .y = area.y + area.height * 0.5f};
+            // an explicit pair replaces the centre, which is how a wheel lands on one part of a view (§8.3)
+            if (request.arguments.size() == 5) {
+                // both coordinates start at zero, because the parser fills them or refuses (§10.3)
+                float x = 0.0f;
+                float y = 0.0f;
+                if (!parse_float(request.arguments[3], x) || !parse_float(request.arguments[4], y))
+                    return AutomationResult::refused("the wheel coordinates are not numbers");
+                point = Point{x, y};
+            }
+            // a single coordinate is not a point, so x without y is refused rather than defaulted (§10.3)
+            else if (request.arguments.size() == 4)
+                return AutomationResult::refused("wheel takes both x and y");
+            // the delta's sign is the platform's, where positive scrolls toward the start (§8.3)
+            Event event{.kind = EventKind::Wheel, .position = point, .scroll = delta, .precision = precision};
+            // a refused event is stated, because a wheel that never arrived must not answer success (§10.3)
+            if (!application.deliver_input(handle, event))
+                return AutomationResult::refused("the window refused the input");
+            // the wheel reports nothing, because its effect is what the client observes in the next dump (§10.3)
             return AutomationResult::answered("");
         });
     }

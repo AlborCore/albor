@@ -47,6 +47,10 @@ namespace albor
         return WaylandDecorationMode::None;
     }
 
+    std::uint32_t wayland_vertical_axis_index() { return WL_POINTER_AXIS_VERTICAL_SCROLL; }
+
+    bool wayland_axis_is_vertical(std::uint32_t axis) { return axis == wayland_vertical_axis_index(); }
+
     float fractional_scale_factor(std::uint32_t preferred_scale) {
         // a compositor that named no scale leaves the identity, which the integer path also starts from (AD-27)
         if (preferred_scale == 0)
@@ -303,9 +307,6 @@ namespace albor
             // a window without shared state has no renderer presenting into it (§10.5)
             return state->native.state != nullptr && state->native.state->renderer_presenting;
         }
-
-        // the axis the vertical scroll rides, which a vertical wheel reports (§8.3)
-        constexpr std::uint32_t AXIS_VERTICAL = 1;
 
         // the keymap format the xkb library reads, which the compositor shares (§8.3)
         constexpr std::uint32_t KEYMAP_FORMAT_XKB_V1 = 1;
@@ -1135,7 +1136,7 @@ namespace albor
         }
 
         // the interface every decorated frame is built with, which carries the four events the adapter reads (§5.3)
-        constexpr libdecor_frame_interface FRAME_INTERFACE = {&on_frame_configure, &on_frame_close, &on_frame_commit, &on_frame_dismiss_popup};
+        constexpr libdecor_frame_interface FRAME_INTERFACE = {&on_frame_configure, &on_frame_close, &on_frame_commit, &on_frame_dismiss_popup, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
 
         // create the libdecor frame that owns the xdg role, which the fallback and a client-side answer share (§5.3)
         bool create_frame(WaylandWindowState* state, const WindowOptions& options) {
@@ -1240,10 +1241,10 @@ namespace albor
             if (!state->pointer_on_surface)
                 return;
             // only the vertical axis is delivered, which is what the sibling adapters carry (§8.3)
-            if (axis != AXIS_VERTICAL)
+            if (!wayland_axis_is_vertical(axis))
                 return;
             // the delta joins the batch, which the frame emits once (§8.3)
-            state->wheel[AXIS_VERTICAL].note_axis(-static_cast<float>(wl_fixed_to_double(value)));
+            state->wheel[wayland_vertical_axis_index()].note_axis(-static_cast<float>(wl_fixed_to_double(value)));
         }
 
         // the frame an axis group ends with, which emits one wheel event (§8.3)
@@ -1258,13 +1259,13 @@ namespace albor
                 return;
             }
             // the vertical batch is answered with one wheel event, which the frame grouped (§8.3)
-            if (state->wheel[AXIS_VERTICAL].pending()) {
+            if (state->wheel[wayland_vertical_axis_index()].pending()) {
                 // the wheel event carries the batch's scroll and its unit (§8.3)
                 Event message;
                 message.kind = EventKind::Wheel;
                 message.position = state->pointer_position;
-                message.scroll = state->wheel[AXIS_VERTICAL].scroll();
-                message.precision = state->wheel[AXIS_VERTICAL].precision();
+                message.scroll = state->wheel[wayland_vertical_axis_index()].scroll();
+                message.precision = state->wheel[wayland_vertical_axis_index()].precision();
                 raise_event(state.get(), message);
             }
             // both batches clear, because the next frame groups on its own (§8.3)
@@ -1290,10 +1291,10 @@ namespace albor
             if (!state->pointer_on_surface)
                 return;
             // only the vertical axis is delivered, which is what the sibling adapters carry (§8.3)
-            if (axis != AXIS_VERTICAL)
+            if (!wayland_axis_is_vertical(axis))
                 return;
             // the steps join the batch, which the frame emits once (§8.3)
-            state->wheel[AXIS_VERTICAL].note_discrete(-steps);
+            state->wheel[wayland_vertical_axis_index()].note_discrete(-steps);
         }
 
 #ifdef ALBOR_WAYLAND_POINTER_WARP
@@ -1323,10 +1324,10 @@ namespace albor
             if (!state->pointer_on_surface)
                 return;
             // only the vertical axis is delivered, which is what the sibling adapters carry (§8.3)
-            if (axis != AXIS_VERTICAL)
+            if (!wayland_axis_is_vertical(axis))
                 return;
             // the count joins the batch, which the frame emits once (§8.3)
-            state->wheel[AXIS_VERTICAL].note_value120(-value120);
+            state->wheel[wayland_vertical_axis_index()].note_value120(-value120);
         }
 #endif
 

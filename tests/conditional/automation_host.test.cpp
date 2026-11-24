@@ -14,8 +14,12 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "albor/automation/capture_commands.h"
+#include "albor/automation/command_commands.h"
 #include "albor/automation/host/automation_host.h"
 #include "albor/automation/host/host_state.h"
+#include "albor/automation/host/input_commands.h"
+#include "albor/automation/semantic_commands.h"
 #include "albor/core/dev_hook.h"
 #include "albor/core/json.h"
 #include "albor/core/paint.h"
@@ -34,6 +38,8 @@ TEST(AutomationHost, AHostStartsWhenBound) {
     EXPECT_TRUE(host.running());
     EXPECT_FALSE(host.paths().socket.empty());
     EXPECT_FALSE(host.paths().token.empty());
+    // cleanup the binding, so the next test starts from an empty host regardless of stack reuse (§10.3)
+    albor::automation::AutomationHost::instance().unbind(&dummy_root);
 }
 
 TEST(AutomationHost, AHostStopsWhenUnbound) {
@@ -276,12 +282,14 @@ TEST(AutomationHost, AScreenshotCrossesTheSocketAsAnImage) {
     const std::optional<albor::core::Json> init_reply = albor::core::Json::parse(initialized);
     ASSERT_TRUE(init_reply.has_value());
     EXPECT_EQ(init_reply->member("error"), nullptr);
-    // assert the default surface lists twenty tools, which is what the host permits (§10.3, AD-10)
+    // the host permits the four name families, so the count follows them rather than a literal (§10.3, AD-10)
+    const std::size_t expected = albor::automation::semantic_command_names().size() + albor::automation::command_command_names().size() + albor::automation::capture_command_names().size() + albor::automation::input_command_names().size();
+    // assert the default surface lists every permitted tool, which is what the host advertises (§10.3, AD-10)
     const std::optional<albor::core::Json> list_reply = albor::core::Json::parse(listing);
     ASSERT_TRUE(list_reply.has_value());
     const albor::core::Json* tools = list_reply->member("result")->member("tools");
     ASSERT_NE(tools, nullptr);
-    EXPECT_EQ(tools->as_array().size(), 20U);
+    EXPECT_EQ(tools->as_array().size(), expected);
     // assert the capture answered an image block, which is what a png is on this protocol (§10.3)
     const std::optional<albor::core::Json> call_reply = albor::core::Json::parse(answered);
     ASSERT_TRUE(call_reply.has_value());

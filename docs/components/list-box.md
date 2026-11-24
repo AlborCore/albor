@@ -77,8 +77,9 @@ is left to the application, and a disabled list claims no key at all.
 ## Pointer selection
 
 A press on a row selects it and moves the focus onto it, which is what pointing at a row
-means. A press on the empty space below the last row names no row, so the list leaves it to a
-parent. The scroll bar follows the preset's policy, as a [ScrollView](scroll-view.md) does: a
+means. The row is resolved from the point plus the current scroll offset, so a row in the
+virtualized window after the first one selects the item it actually shows. A press on the
+empty space below the last row names no row, so the list leaves it to a parent. The scroll bar follows the preset's policy, as a [ScrollView](scroll-view.md) does: a
 preset that reserves a gutter keeps a press there out of the rows, and the selection band stops at
 it, while an overlay preset leaves the trailing strip to the content, so a press there selects the
 row underneath. Assistive technology drives the same navigation through the list's semantic
@@ -112,9 +113,10 @@ list's `row_height` is the pitch virtualization divides the viewport by.
 
 ## Notes
 
-- `viewport_width` and `viewport_height` resolve independently: a positive axis takes its
-  extent and is clamped into the parent, while a zero or negative axis follows the space the
-  parent offers.
+- `viewport_width` and `viewport_height` resolve independently in the measure pass: a positive
+  axis takes its extent and is clamped into the parent, while a zero or negative axis follows
+  the space the parent offers. The bounds the parent arranges win, so a list in a stretching
+  column fills its width even when it declared a narrower viewport.
 - `selected` names a row by its position in the collection the `Repeat` walks, in item order.
 - Each row announces itself as a list item carrying its own `selected` and `focused` state,
   which is what screen readers and automation read.

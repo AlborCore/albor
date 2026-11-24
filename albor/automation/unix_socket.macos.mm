@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <optional>
 #include <string>
@@ -19,6 +20,9 @@ namespace albor::automation::platform
 {
     namespace
     {
+        // the longest request a silent client may accumulate, which bounds the memory one connection holds (§10.3, AD-10)
+        constexpr std::size_t MAX_PENDING_LINE = 1024U * 1024U;
+
         // the local transport, which is a unix domain socket and never a network one (§10.3, AD-10)
         class UnixSocketTransport final : public AutomationTransport
         {
@@ -295,6 +299,13 @@ namespace albor::automation::platform
                                 return;
                             // the loop continues, because one read may carry several lines (§10.3)
                             continue;
+                        }
+                        // a full budget drops the client, because an unfinished line must not grow forever (§10.3, AD-10)
+                        if (m_pending.size() >= MAX_PENDING_LINE) {
+                            // the client is dropped, which releases its descriptor and its partial line (§10.3)
+                            drop_client();
+                            // no answer goes to a client that exceeded the budget (§10.3)
+                            return;
                         }
                         // any other byte joins the line, which is how the request accumulates (§10.3)
                         m_pending.push_back(byte);

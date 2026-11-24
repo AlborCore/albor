@@ -300,3 +300,51 @@ TEST(AutomationTransport, ALargeReplyArrivesWholeAndTheNextOneFollowsIt) {
     EXPECT_EQ(next, "!ok text yes");
     transport->stop();
 }
+
+TEST(AutomationTransport, AClientWithAnUnfinishedLineIsDropped) {
+    // arrange a silent client whose line never ends, which must not grow the server's buffer without bound (§10.3, AD-10)
+    std::size_t runs = 0;
+    AutomationRegistry registry = registry_with_probe(&runs);
+    const std::unique_ptr<AutomationTransport> transport = create_transport(registry);
+    const std::string socket = endpoint_path("flood");
+    ASSERT_TRUE(transport->listen(AutomationEndpoint{.socket_path = socket, .token_path = {}}));
+    std::atomic<bool> done{false};
+    std::thread server([&] { pump_until(done, *transport); });
+    const int client = connect_to(socket);
+    ASSERT_NE(client, -1);
+    apply_timeout(client);
+    // a dropped peer must not kill the test process with SIGPIPE (§10.3)
+#ifdef MSG_NOSIGNAL
+    const int flags = MSG_NOSIGNAL;
+#else
+    const int ignore = 1;
+    (void)::setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &ignore, sizeof(ignore));
+    const int flags = 0;
+#endif
+    // act the client exceeds the pending budget without a newline (§10.3, AD-10)
+    const std::string flood(1024U * 1024U + 64U, 'x');
+    std::size_t sent = 0;
+    while (sent < flood.size()) {
+        const ssize_t wrote = ::send(client, flood.data() + sent, flood.size() - sent, flags);
+        if (wrote <= 0)
+            break;
+        sent += static_cast<std::size_t>(wrote);
+    }
+    // assert the server closed the conversation, which is how an unfinished line ends (§10.3, AD-10)
+    bool closed = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    char byte = 0;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (::read(client, &byte, 1) == 0) {
+            closed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(closed);
+    EXPECT_EQ(runs, 0U);
+    ::close(client);
+    done.store(true);
+    server.join();
+    transport->stop();
+}

@@ -23,6 +23,9 @@ namespace albor::automation::platform
 {
     namespace
     {
+        // the longest request a silent client may accumulate, which bounds the memory one connection holds (§10.3, AD-10)
+        constexpr std::size_t MAX_PENDING_LINE = 1024U * 1024U;
+
         // the text a windows error carries, which a host logs rather than a bare number (§10.3, AD-10)
         std::string error_text(DWORD error) {
             // the system message is allocated by the api, because its length is not known before the call (§10.3)
@@ -346,6 +349,13 @@ namespace albor::automation::platform
                                 return;
                             // the loop continues, because one read may carry several lines (§10.3)
                             continue;
+                        }
+                        // a full budget drops the client, because an unfinished line must not grow forever (§10.3, AD-10)
+                        if (m_pending.size() >= MAX_PENDING_LINE) {
+                            // the client is dropped, which releases its pipe and its partial line (§10.3)
+                            drop_client();
+                            // no answer goes to a client that exceeded the budget (§10.3)
+                            return;
                         }
                         // any other byte joins the line, which is how the request accumulates (§10.3)
                         m_pending.push_back(byte);

@@ -29,6 +29,12 @@ namespace albor
     // choose the decoration for one toplevel, preferring the compositor's native chrome over libdecor (§5.3, AD-16)
     [[nodiscard]] WaylandDecorationMode choose_decoration(bool server_side_available, bool client_side_available);
 
+    // hand out the wheel batch slot the vertical axis writes and the frame reads (§8.3)
+    [[nodiscard]] std::uint32_t wayland_vertical_axis_index();
+
+    // report whether a pointer axis event carries the vertical scroll a list consumes (§8.3)
+    [[nodiscard]] bool wayland_axis_is_vertical(std::uint32_t axis);
+
     // report the scale a compositor prefers from the one hundred twentieths the protocol carries (AD-27)
     [[nodiscard]] float fractional_scale_factor(std::uint32_t preferred_scale);
 

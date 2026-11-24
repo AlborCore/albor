@@ -15,7 +15,7 @@ namespace albor::wayland
         }
 
         // the interface every libdecor context is built with, which only the error callback is read from (§5.3)
-        constexpr libdecor_interface LIBDECOR_INTERFACE = {&on_libdecor_error};
+        constexpr libdecor_interface LIBDECOR_INTERFACE = {&on_libdecor_error, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     } // namespace
 #endif
     namespace

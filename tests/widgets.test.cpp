@@ -4026,7 +4026,7 @@ TEST(ThemeBuilderChecks, ADerivedThemeCarriesItsSurface) {
     EXPECT_FLOAT_EQ(theme.surface().red, 0.9f);
 }
 
-TEST(ThemeBuilderChecks, AChangedAccentMovesThePlate) {
+TEST(ThemeBuilderChecks, AChangedAccentMovesThePrimaryPlate) {
     // arrange two accent sets, so the derivation has something to react to (§6.1)
     Accents first;
     Accents second;
@@ -4034,9 +4034,11 @@ TEST(ThemeBuilderChecks, AChangedAccentMovesThePlate) {
     // act
     const Palette first_palette = ThemeBuilder::dark(first).palette();
     const Palette second_palette = ThemeBuilder::dark(second).palette();
-    // assert the plate followed the accent, which is the point of deriving it (§6.1)
-    EXPECT_FLOAT_EQ(first_palette.button_plate[state_index(ControlState::Normal)].red, 0.20f);
-    EXPECT_FLOAT_EQ(second_palette.button_plate[state_index(ControlState::Normal)].red, 0.9f);
+    // assert the primary plate followed the accent, which is the point of deriving it (§8.4)
+    EXPECT_FLOAT_EQ(first_palette.button_plate_default[state_index(ControlState::Normal)].red, 0.20f);
+    EXPECT_FLOAT_EQ(second_palette.button_plate_default[state_index(ControlState::Normal)].red, 0.9f);
+    // assert an ordinary plate stayed neutral, because an icon button must not inherit the accent (§8.4)
+    EXPECT_EQ(first_palette.button_plate[state_index(ControlState::Normal)], second_palette.button_plate[state_index(ControlState::Normal)]);
 }
 
 TEST(DefaultButtonChecks, ADefaultButtonPaintsThePresetDefaultRole) {
@@ -4162,8 +4164,8 @@ TEST(DefaultButtonChecks, AFluentDefaultButtonPaintsTheAccentPlate) {
     EXPECT_NE(primary_recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate[state_index(ControlState::Normal)]);
 }
 
-TEST(DefaultButtonChecks, ADerivedDefaultButtonFallsBackToTheAccentPlate) {
-    // arrange a derived theme, which leaves the default role empty because every derived button is the accent (§8.4)
+TEST(DefaultButtonChecks, ADerivedDefaultButtonPaintsTheAccentPlate) {
+    // arrange a derived theme, which fills the primary role while ordinary buttons stay neutral (§8.4)
     BindingEngine engine;
     StubTextEngine text_engine;
     const Theme theme = ThemeBuilder::light(Accents{});
@@ -4174,10 +4176,56 @@ TEST(DefaultButtonChecks, ADerivedDefaultButtonFallsBackToTheAccentPlate) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
     // act
     button.render(recorder);
-    // assert the empty role falls back to the neutral table, which a derived theme already fills with the accent (§8.4)
-    EXPECT_FLOAT_EQ(theme.palette().button_plate_default[state_index(ControlState::Normal)].alpha, 0.0f);
+    // assert the primary role is the accent, which is what the default control paints (§8.4)
+    EXPECT_EQ(theme.palette().button_plate_default[state_index(ControlState::Normal)], Accents{}.accent);
     ASSERT_FALSE(recorder.scene()->commands().empty());
-    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate[state_index(ControlState::Normal)]);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate_default[state_index(ControlState::Normal)]);
+    // assert the plain plate stays neutral, so an ordinary button never borrows the primary role (§8.4)
+    EXPECT_NE(recorder.scene()->commands()[0].paint().fill, theme.palette().button_plate[state_index(ControlState::Normal)]);
+    // assert the primary label reads white over the accent, which is what keeps the caption legible (§8.4)
+    const std::vector<DrawCommand> runs = text_commands(*recorder.scene());
+    ASSERT_EQ(runs.size(), 1u);
+    EXPECT_EQ(runs.front().paint().fill, Color::rgb(1.0f, 1.0f, 1.0f));
+}
+
+TEST(DefaultButtonChecks, APrimaryButtonKeepsTheAccentInBothDerivedSchemes) {
+    // arrange a derived light and dark theme, with one primary and one ordinary button each (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme light = ThemeBuilder::light(Accents{});
+    const Theme dark = ThemeBuilder::dark(Accents{});
+    Button primary(&engine, &text_engine, "OK");
+    primary.set_default(true);
+    Button ordinary(&engine, &text_engine, "Open");
+    apply_theme(primary, light);
+    apply_theme(ordinary, light);
+    primary.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 24.0f}));
+    ordinary.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 24.0f}));
+    SceneRecorder primary_recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    SceneRecorder ordinary_recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    primary.render(primary_recorder);
+    ordinary.render(ordinary_recorder);
+    // assert the light primary plate is the accent while the ordinary plate is the neutral face (§8.4)
+    ASSERT_FALSE(primary_recorder.scene()->commands().empty());
+    ASSERT_FALSE(ordinary_recorder.scene()->commands().empty());
+    EXPECT_EQ(primary_recorder.scene()->commands()[0].paint().fill, light.palette().button_plate_default[state_index(ControlState::Normal)]);
+    EXPECT_NE(primary_recorder.scene()->commands()[0].paint().fill, light.palette().button_plate[state_index(ControlState::Normal)]);
+    EXPECT_EQ(ordinary_recorder.scene()->commands()[0].paint().fill, light.palette().button_plate[state_index(ControlState::Normal)]);
+    EXPECT_NE(ordinary_recorder.scene()->commands()[0].paint().fill, Accents{}.accent);
+    // act the same buttons against the dark theme, which is the Linux default scheme (§8.4)
+    apply_theme(primary, dark);
+    apply_theme(ordinary, dark);
+    SceneRecorder dark_primary_recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    SceneRecorder dark_ordinary_recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    primary.render(dark_primary_recorder);
+    ordinary.render(dark_ordinary_recorder);
+    // assert the dark scheme keeps the same split with its own neutral face (§8.4)
+    ASSERT_FALSE(dark_primary_recorder.scene()->commands().empty());
+    ASSERT_FALSE(dark_ordinary_recorder.scene()->commands().empty());
+    EXPECT_EQ(dark_primary_recorder.scene()->commands()[0].paint().fill, dark.palette().button_plate_default[state_index(ControlState::Normal)]);
+    EXPECT_EQ(dark_ordinary_recorder.scene()->commands()[0].paint().fill, dark.palette().button_plate[state_index(ControlState::Normal)]);
+    EXPECT_NE(dark_ordinary_recorder.scene()->commands()[0].paint().fill, Accents{}.accent);
 }
 
 TEST(DefaultButtonChecks, AChangedDefaultFlagInvalidatesThePlate) {
@@ -4211,6 +4259,8 @@ TEST(ThemeBuilderChecks, ADerivedButtonDrawsTheDerivedPlate) {
     button.render(recorder);
     // assert the drawn plate is the derived normal state, not the palette default (§6.1)
     EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, theme.palette().button_plate[state_index(ControlState::Normal)].red);
+    // assert that normal state is the neutral face, not the accent the primary role keeps (§8.4)
+    EXPECT_NE(recorder.scene()->commands()[0].paint().fill, Accents{}.accent);
 }
 
 TEST(ThemeBuilderChecks, LightenAndDarkenMoveOppositeWays) {
@@ -5015,6 +5065,7 @@ TEST(ThemeControllerChecks, AFlipMovesToTheOtherScheme) {
     ThemeController controller{light_accents, Accents{}};
     controller.install(button, ColorScheme::Dark);
     const Color dark_plate = controller.theme().palette().button_plate[state_index(ControlState::Normal)];
+    const Color dark_primary = controller.theme().palette().button_plate_default[state_index(ControlState::Normal)];
     const Color dark_surface = controller.theme().surface();
     // act
     controller.toggle();
@@ -5024,11 +5075,13 @@ TEST(ThemeControllerChecks, AFlipMovesToTheOtherScheme) {
     EXPECT_EQ(controller.theme().palette().label_foreground[state_index(ControlState::Normal)], Color::rgba(0.10f, 0.10f, 0.12f, 1.0f));
     // assert the widget resolved the new one, because the flip reinstalls over the tree (§6.1)
     EXPECT_EQ(button.theme(), &controller.theme());
-    // assert the plate tracked the accents, which stay the same when only the surface moves (§6.1)
-    EXPECT_EQ(controller.theme().palette().button_plate[state_index(ControlState::Normal)], dark_plate);
+    // assert the ordinary plate followed the surface, because the neutral face is read off it (§8.4)
+    EXPECT_NE(controller.theme().palette().button_plate[state_index(ControlState::Normal)], dark_plate);
+    // assert the primary plate kept the accent, which a scheme flip does not change (§8.4)
+    EXPECT_EQ(controller.theme().palette().button_plate_default[state_index(ControlState::Normal)], dark_primary);
 }
 
-TEST(ThemeControllerChecks, AnAccentChangeMovesThePlateToo) {
+TEST(ThemeControllerChecks, AnAccentChangeMovesThePrimaryPlateToo) {
     // arrange a second accent set that moves the accent itself, which is the other half of a scheme (§6.1)
     Accents light_accents;
     light_accents.surface = Color::rgb(0.96f, 0.96f, 0.97f);
@@ -5039,11 +5092,12 @@ TEST(ThemeControllerChecks, AnAccentChangeMovesThePlateToo) {
     Button button(&engine, &text_engine, "Press");
     ThemeController controller{light_accents, Accents{}};
     controller.install(button, ColorScheme::Dark);
-    const Color dark_plate = controller.theme().palette().button_plate[state_index(ControlState::Normal)];
+    const Color dark_primary = controller.theme().palette().button_plate_default[state_index(ControlState::Normal)];
     // act
     controller.toggle();
-    // assert the plate moved with the accent, because a scheme chooses the colour a control is filled with (§6.1)
-    EXPECT_NE(controller.theme().palette().button_plate[state_index(ControlState::Normal)], dark_plate);
+    // assert the primary plate moved with the accent, which is the role an accent fills now (§8.4)
+    EXPECT_EQ(controller.theme().palette().button_plate_default[state_index(ControlState::Normal)], light_accents.accent);
+    EXPECT_NE(controller.theme().palette().button_plate_default[state_index(ControlState::Normal)], dark_primary);
 }
 
 TEST(ThemeControllerChecks, AToggleTwiceReturnsToTheStart) {
