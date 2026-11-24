@@ -5,11 +5,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from albor_automation.albor_application import AlborApplication, _descriptor_in, _discovery_directories, default_executable
+from albor_automation.albor_application import AlborApplication, _descriptor_in, _discovery_directories, resolve_executable
+from albor_automation.errors import ApplicationStartupError
 from albor_automation.locator import Locator
 
 
 class FakeProcess:
+
     def __init__(self, hang_on_wait: bool = False, exit_code: int | None = None) -> None:
         self._hang_on_wait = hang_on_wait
         self._exit_code = exit_code
@@ -43,6 +45,7 @@ class FakeProcess:
 
 
 class FakeMcp:
+
     def __init__(self) -> None:
         self.closed = False
 
@@ -51,6 +54,7 @@ class FakeMcp:
 
 
 class FakeClient:
+
     def __init__(self) -> None:
         self._mcp = FakeMcp()
 
@@ -62,6 +66,7 @@ class FakeClient:
 
 
 class ApplicationInstanceChecks(unittest.TestCase):
+
     def setUp(self) -> None:
         self._scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self._scratch.cleanup)
@@ -144,6 +149,7 @@ class ApplicationInstanceChecks(unittest.TestCase):
 
 
 class DiscoveryChecks(unittest.TestCase):
+
     def test_descriptor_in_finds_the_serving_line(self) -> None:
         # assert
         self.assertEqual(_descriptor_in("nothing\nalbor automation: serving /tmp/42/host.json\n"), Path("/tmp/42/host.json"))
@@ -152,11 +158,19 @@ class DiscoveryChecks(unittest.TestCase):
         # assert
         self.assertIsNone(_descriptor_in("nothing"))
 
-    def test_default_executable_uses_the_environment_override(self) -> None:
+    def test_resolve_executable_uses_the_environment_override(self) -> None:
         # arrange
         with mock.patch.dict(os.environ, {"ALBOR_TEST_APPLICATION": "/opt/my/app"}):
             # assert
-            self.assertEqual(default_executable(), "/opt/my/app")
+            self.assertEqual(resolve_executable(), "/opt/my/app")
+
+    def test_resolve_executable_requires_an_explicit_choice(self) -> None:
+        # arrange
+        with mock.patch.dict(os.environ, {}, clear=True):
+            # assert
+            with self.assertRaises(ApplicationStartupError) as context:
+                resolve_executable()
+            self.assertIn("ALBOR_TEST_APPLICATION", str(context.exception))
 
     def test_discovery_directories_cover_the_platform_layout(self) -> None:
         # act

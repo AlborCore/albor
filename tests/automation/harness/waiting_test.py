@@ -10,6 +10,7 @@ _FRAMEWORK_ROOT = os.path.dirname(os.path.abspath(albor_automation.__file__))
 
 
 class WaitingChecks(unittest.TestCase):
+
     def test_wait_for_returns_when_the_condition_holds(self) -> None:
         # act
         wait_for(lambda: True, timeout=0.2, timeout_message="should not fail")

@@ -9,6 +9,7 @@ _LOGGER = logger()
 
 
 class Locator:
+
     def __init__(self, app: Any, node_id: str) -> None:
         # app is the application whose live tree is resolved
         self._app = app

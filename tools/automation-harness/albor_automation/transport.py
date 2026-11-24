@@ -21,6 +21,7 @@ _PIPE_RETRY_INTERVAL = 0.05
 
 
 class LineTransport(Protocol):
+
     # connect to the endpoint the host published
     def connect(self) -> None:
         ...
@@ -39,6 +40,7 @@ class LineTransport(Protocol):
 
 
 class _LinePump:
+
     def __init__(self, read: Callable[[int], bytes], errors: queue.Queue[BaseException]) -> None:
         # read pulls one chunk from the underlying endpoint
         self._read = read
@@ -106,6 +108,7 @@ class _LinePump:
 
 
 class UnixSocketTransport:
+
     def __init__(self, endpoint: str) -> None:
         # endpoint is the socket path the host published in its descriptor
         self._endpoint = endpoint
@@ -163,6 +166,7 @@ class UnixSocketTransport:
 
 
 class NamedPipeTransport:
+
     def __init__(self, endpoint: str) -> None:
         # endpoint is the pipe name the host published in its descriptor
         self._endpoint = endpoint

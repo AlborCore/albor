@@ -4,6 +4,7 @@ from albor_automation.errors import AlborAssertionError, AlborTestError, Applica
 
 
 class ErrorHierarchyChecks(unittest.TestCase):
+
     def test_every_error_shares_the_root(self) -> None:
         # act
         for error in (ApplicationStartupError, McpError, LocatorError, AlborAssertionError):

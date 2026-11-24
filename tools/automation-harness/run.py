@@ -17,7 +17,7 @@ _TEST_ROOT = _ROOT / "tests" / "automation"
 def parse_arguments() -> argparse.Namespace:
     # build the command line surface of the runner
     parser = argparse.ArgumentParser(description="run the albor automation compatibility suites")
-    # the executable under test, otherwise the debug fixture app is used
+    # the caller must name the executable explicitly
     parser.add_argument("--app", help="the application executable the suites drive")
     # the discovery pattern, which keeps the default aligned with the style guide
     parser.add_argument("--pattern", default="*_test.py")
@@ -30,9 +30,13 @@ def main() -> int:
     arguments = parse_arguments()
     # the harness package must import without an install step
     sys.path.insert(0, str(_PACKAGE_ROOT))
-    # an explicit executable overrides the debug build default
+    # an explicit executable is published to the suites through the environment
     if arguments.app:
         os.environ["ALBOR_TEST_APPLICATION"] = str(Path(arguments.app).resolve())
+    # a suite cannot drive an application that the caller never named
+    if not os.environ.get("ALBOR_TEST_APPLICATION"):
+        print("error: pass --app or set ALBOR_TEST_APPLICATION", file=sys.stderr)
+        return 2
     # discover both the client unit suite and the out of process suite
     suite = unittest.defaultTestLoader.discover(str(_TEST_ROOT), pattern=arguments.pattern, top_level_dir=str(_TEST_ROOT))
     # report every test on stdout so ci logs carry the evidence

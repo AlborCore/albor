@@ -12,6 +12,7 @@ ARTIFACTS_ENVIRONMENT_VARIABLE = "ALBOR_TEST_ARTIFACTS"
 
 
 class TestSession:
+
     def __init__(self, app: AlborApplication, name: str, artifacts_root: str | None = None) -> None:
         # app is the application instance this session owns
         self._app = app

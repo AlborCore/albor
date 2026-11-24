@@ -9,6 +9,7 @@ _FIRST_ID = 1
 
 
 class FakeTransport:
+
     def __init__(self, replies: list[str] | None = None) -> None:
         self.replies = list(replies or [])
         self.sent: list[str] = []
@@ -42,6 +43,7 @@ def initialize_reply() -> str:
 
 
 class McpClientHandshakeChecks(unittest.TestCase):
+
     def test_connect_sends_the_token_in_metadata(self) -> None:
         # arrange
         transport = FakeTransport([initialize_reply()])
@@ -93,6 +95,7 @@ class McpClientHandshakeChecks(unittest.TestCase):
 
 
 class McpClientCallChecks(unittest.TestCase):
+
     def setUp(self) -> None:
         self._transport = FakeTransport([initialize_reply()])
         self._client = McpClient("/tmp/mcp.sock", "the-token", self._transport)

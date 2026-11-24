@@ -6,6 +6,7 @@ from .session import TestSession
 
 # an optional adapter for suites that prefer setUp based sessions
 class AlborTestCase(unittest.TestCase):
+
     def setUp(self) -> None:
         # enable protocol diagnostics when the environment requests them
         configure_from_environment()

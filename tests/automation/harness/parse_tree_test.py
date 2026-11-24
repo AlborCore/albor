@@ -4,6 +4,7 @@ from albor_automation import parse_tree
 
 
 class ParseTreeChecks(unittest.TestCase):
+
     def test_parses_role_id_and_name(self) -> None:
         # act
         nodes = parse_tree("button main_ok OK")

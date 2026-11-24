@@ -6,6 +6,7 @@ from albor_automation.locator import Locator, LocatorError
 
 
 class FakeClient:
+
     def __init__(self, nodes: list[dict[str, Any]]) -> None:
         self._nodes = nodes
         self.invokes: list[tuple[str, str]] = []
@@ -38,6 +39,7 @@ class FakeClient:
 
 
 class FakeApp:
+
     def __init__(self, nodes: list[dict[str, Any]]) -> None:
         self._client = FakeClient(nodes)
         self.tree_calls = 0
@@ -51,6 +53,7 @@ class FakeApp:
 
 
 class LocatorChecks(unittest.TestCase):
+
     def test_exists_reports_presence(self) -> None:
         # arrange
         app = FakeApp([{"role": "button", "id": "ok", "name": "OK"}])

@@ -8,6 +8,7 @@ from albor_automation.log import configure_from_environment, logger
 
 
 class LoggingChecks(unittest.TestCase):
+
     def setUp(self) -> None:
         self._previous = logger().level
         self.addCleanup(logger().setLevel, self._previous)

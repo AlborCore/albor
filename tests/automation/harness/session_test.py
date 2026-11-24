@@ -5,6 +5,7 @@ from albor_automation.session import TestSession
 
 
 class FakeApp:
+
     def __init__(self) -> None:
         self.closed = False
         self.artifacts = ""
@@ -18,6 +19,7 @@ class FakeApp:
 
 
 class SessionChecks(unittest.TestCase):
+
     def test_finish_closes_the_application(self) -> None:
         # arrange
         app = FakeApp()

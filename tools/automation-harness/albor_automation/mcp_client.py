@@ -18,6 +18,7 @@ _LOGGER = logger()
 
 
 class McpClient:
+
     def __init__(self, endpoint: str, token: str | None, transport: LineTransport | None = None) -> None:
         # endpoint is the socket or pipe name the host published
         self._endpoint = endpoint

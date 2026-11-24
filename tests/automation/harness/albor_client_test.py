@@ -5,6 +5,7 @@ from albor_automation.albor_client import AlborClient
 
 
 class FakeMcpClient:
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, str]]] = []
         self.replies: dict[str, Any] = {}
@@ -26,6 +27,7 @@ class FakeMcpClient:
 
 
 class AlborClientFacadeChecks(unittest.TestCase):
+
     def setUp(self) -> None:
         self._mcp = FakeMcpClient()
         self._client = AlborClient(self._mcp)

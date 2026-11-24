@@ -1177,17 +1177,18 @@ host through `host.json`, reads the per-session token, connects to the Unix sock
 named pipe, and speaks newline-delimited MCP. Every tool call goes through the automation layer;
 the harness has no second path into the application (BDG-04).
 
-Run the whole suite from the repository root:
+Run the whole suite from the repository root, naming the application explicitly:
 
 ```sh
-python3 tools/automation-harness/run.py
 python3 tools/automation-harness/run.py --app /path/to/albor-automation-reference-app
+ALBOR_TEST_APPLICATION=/path/to/albor-automation-reference-app python3 tools/automation-harness/run.py
 ```
 
 The runner can also be invoked through the CMake target `albor-automation-compatibility`, which
-passes the freshly built fixture app. `ALBOR_TEST_APPLICATION` overrides the default executable,
-`ALBOR_TEST_ARTIFACTS` sets where a failed test writes its screenshot, tree and stream artifacts,
-and `ALBOR_AUTOMATION_DEBUG=1` logs the protocol exchange.
+passes the freshly built fixture app. There is no implicit default: `launch()` raises unless the
+caller passes `executable_path` or sets `ALBOR_TEST_APPLICATION`, so a consumer never silently
+drives a framework build artifact. `ALBOR_TEST_ARTIFACTS` sets where a failed test writes its
+screenshot, tree and stream artifacts, and `ALBOR_AUTOMATION_DEBUG=1` logs the protocol exchange.
 
 Two suites run under `unittest` (STYLE-GUIDE.md):
 

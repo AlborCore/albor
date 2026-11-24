@@ -11,6 +11,7 @@ def expect(locator: Locator) -> "Expect":
 
 
 class Expect:
+
     def __init__(self, locator: Locator, negate: bool = False) -> None:
         # locator selects the node every assertion reads
         self._locator = locator

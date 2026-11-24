@@ -1,10 +1,16 @@
 import json
+import os
 import struct
 import unittest
 from pathlib import Path
 
 from albor_automation import McpClient, McpError, TestSession, expect, launch
 from albor_automation.transport import default_transport
+
+# the caller's executable wins, with this repository's built fixture for plain discovery
+_REFERENCE_APP = Path(os.environ.get("ALBOR_TEST_APPLICATION") or Path(__file__).resolve().parents[2] / ".build-debug" / "tests" / "albor-automation-reference-app")
+if os.name == "nt":
+    _REFERENCE_APP = _REFERENCE_APP.with_suffix(".exe")
 
 # the tool names the standard host permits (§10.3)
 _STANDARD_TOOLS = {"semantic.tree", "semantic.find", "semantic.value", "semantic.bounds", "semantic.read", "semantic.invoke", "semantic.actions", "semantic.set_value", "semantic.set_focused", "input.type", "input.click", "input.pointer", "input.key", "input.wheel", "command.list", "command.get", "command.invoke", "command.can_undo", "command.undo", "command.redo", "capture.screenshot"}
@@ -17,9 +23,10 @@ _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class AutomationCompatibilityChecks(unittest.TestCase):
+
     def test_discovery_and_handshake_reach_the_host(self) -> None:
         # arrange: launch the fixture application in an isolated session
-        with TestSession(launch(), self.id()) as app:
+        with TestSession(launch(str(_REFERENCE_APP)), self.id()) as app:
             # assert: the host published a descriptor with the mcp protocol
             descriptor = json.loads(app.descriptor_path().read_text())
             self.assertEqual(descriptor["protocol"], "mcp")
@@ -30,7 +37,7 @@ class AutomationCompatibilityChecks(unittest.TestCase):
 
     def test_wrong_and_missing_tokens_are_refused(self) -> None:
         # arrange: launch without a client so the one host connection is free
-        with TestSession(launch(connect=False), self.id()) as app:
+        with TestSession(launch(str(_REFERENCE_APP), connect=False), self.id()) as app:
             descriptor = json.loads(app.descriptor_path().read_text())
             endpoint = descriptor["socket"]
             self.assertTrue(Path(descriptor["token"]).is_file())
@@ -53,7 +60,7 @@ class AutomationCompatibilityChecks(unittest.TestCase):
 
     def test_a_request_before_handshake_is_refused(self) -> None:
         # arrange: launch without a client and open the transport directly
-        with TestSession(launch(connect=False), self.id()) as app:
+        with TestSession(launch(str(_REFERENCE_APP), connect=False), self.id()) as app:
             descriptor = json.loads(app.descriptor_path().read_text())
             transport = default_transport(descriptor["socket"])
             transport.connect()
@@ -67,7 +74,7 @@ class AutomationCompatibilityChecks(unittest.TestCase):
 
     def test_a_second_client_can_connect_after_the_first_closes(self) -> None:
         # arrange: launch without a client so both connections use the real host
-        with TestSession(launch(connect=False), self.id()) as app:
+        with TestSession(launch(str(_REFERENCE_APP), connect=False), self.id()) as app:
             descriptor = json.loads(app.descriptor_path().read_text())
             token = Path(descriptor["token"]).read_text().strip()
             for attempt in range(2):
@@ -80,7 +87,7 @@ class AutomationCompatibilityChecks(unittest.TestCase):
 
     def test_allow_list_limits_the_tool_surface(self) -> None:
         # arrange: launch the fixture application
-        with TestSession(launch(), self.id()) as app:
+        with TestSession(launch(str(_REFERENCE_APP)), self.id()) as app:
             # act: read the advertised tools
             tools = app.client().list_tools()
             names = {tool["name"] for tool in tools}
@@ -94,7 +101,7 @@ class AutomationCompatibilityChecks(unittest.TestCase):
 
     def test_reference_session_drives_the_sample_form(self) -> None:
         # arrange: launch the generated form through the real host
-        with TestSession(launch(), self.id()) as app:
+        with TestSession(launch(str(_REFERENCE_APP)), self.id()) as app:
             client = app.client()
             # assert: the title button is reachable by its author assigned id
             self.assertEqual(client.call_tool("semantic.find", {"id": "form_press"}), "button press me")

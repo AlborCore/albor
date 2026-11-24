@@ -10,6 +10,7 @@ _LOGGER = logger()
 
 
 class AlborClient:
+
     def __init__(self, mcp_client: Any) -> None:
         # mcp_client carries the authenticated json-rpc conversation
         self._mcp = mcp_client

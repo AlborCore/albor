@@ -7,6 +7,7 @@ from albor_automation.locator import Locator
 
 
 class FakeClient:
+
     def __init__(self, nodes: list[dict[str, Any]]) -> None:
         self._nodes = nodes
 
@@ -18,6 +19,7 @@ class FakeClient:
 
 
 class FakeApp:
+
     def __init__(self, nodes: list[dict[str, Any]]) -> None:
         self._client = FakeClient(nodes)
 
@@ -29,6 +31,7 @@ class FakeApp:
 
 
 class ExpectChecks(unittest.TestCase):
+
     def test_to_exist_passes_when_present(self) -> None:
         # arrange
         locator = Locator(FakeApp([{"role": "button", "id": "ok", "name": "OK"}]), "ok")

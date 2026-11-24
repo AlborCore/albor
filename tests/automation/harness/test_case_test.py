@@ -7,6 +7,7 @@ from albor_automation.test_case import AlborTestCase
 
 
 class FakeSessionApp:
+
     def __init__(self) -> None:
         self.artifacts: list[str] = []
         self.closed = False
@@ -23,6 +24,7 @@ class FakeSessionApp:
 
 
 class PassingCase(AlborTestCase):
+
     def setUp(self) -> None:
         super().setUp()
         self.start_session(FakeSessionApp())
@@ -32,6 +34,7 @@ class PassingCase(AlborTestCase):
 
 
 class AlborTestCaseChecks(unittest.TestCase):
+
     def setUp(self) -> None:
         self._artifacts = tempfile.TemporaryDirectory()
         self.addCleanup(self._artifacts.cleanup)
@@ -57,6 +60,7 @@ class AlborTestCaseChecks(unittest.TestCase):
     def test_failed_run_collects_artifacts_named_after_the_case(self) -> None:
         # arrange
         class FailingCase(AlborTestCase):
+
             def setUp(self) -> None:
                 super().setUp()
                 self.start_session(FakeSessionApp())

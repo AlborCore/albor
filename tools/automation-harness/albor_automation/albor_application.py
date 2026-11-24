@@ -33,6 +33,7 @@ _LOGGER = logger()
 
 
 class AlborApplication:
+
     def __init__(self, process: subprocess.Popen, client: AlborClient, descriptor_path: Path, stop_path: Path, stdout_file: BinaryIO | None, stderr_file: BinaryIO | None, config_dir: tempfile.TemporaryDirectory | None) -> None:
         # process owns the application under test
         self._process = process
@@ -178,19 +179,18 @@ class AlborApplication:
 
 def launch(executable_path: str | None = None, *, startup_timeout: float = DEFAULT_STARTUP_TIMEOUT, env: dict[str, str] | None = None, args: list[str] | None = None, config_dir: bool = True, connect: bool = True) -> AlborApplication:
     # resolve the executable before starting any process
-    path = executable_path or default_executable()
+    path = executable_path or resolve_executable()
     # one attempt owns the whole launch lifecycle
     return _launch_attempt(path, startup_timeout, env or {}, args or [], config_dir, connect)
 
 
-def default_executable() -> str:
-    # prefer the executable the caller configured
+def resolve_executable() -> str:
+    # the caller must name the executable explicitly or through the environment
     override = os.environ.get(DEFAULT_EXECUTABLE_ENVIRONMENT_VARIABLE)
     if override:
         return override
-    # fall back to the fixture app in this repository's debug build
-    root = Path(__file__).resolve().parents[3]
-    return str(root / ".build-debug" / "tests" / "albor-automation-reference-app")
+    # an implicit build path would assume a layout the consumer does not have
+    raise ApplicationStartupError(f"no application executable: pass executable_path to launch() or set {DEFAULT_EXECUTABLE_ENVIRONMENT_VARIABLE}")
 
 
 def _launch_attempt(executable_path: str, startup_timeout: float, env_overrides: dict[str, str], command_arguments: list[str], config_dir: bool, connect: bool) -> AlborApplication:

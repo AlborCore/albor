@@ -235,6 +235,7 @@ fixtures. Beyond per-file tests the architecture defines cross-cutting suites
 ([Tooling](tooling.md#what-the-test-suite-covers)): dual-engine conformance, GPU/software
 parity, LSP/compiler agreement, manifest consistency, build-scope checks, and the out-of-process
 automation compatibility suite against the form sample. The software renderer is the screenshot
-reference. Run the Python suite with `python3 tools/automation-harness/run.py` (or the
-`albor-automation-compatibility` CMake target); the three platform debug CI jobs run the same
-suite.
+reference. Run the Python suite with
+`python3 tools/automation-harness/run.py --app <application>` (or the
+`albor-automation-compatibility` CMake target); the application must be named explicitly, and the
+three platform debug CI jobs run the same suite.
