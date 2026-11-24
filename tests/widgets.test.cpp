@@ -9274,6 +9274,141 @@ TEST(ButtonIconChecks, TheIconAndLabelAreBothRecorded) {
     EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
 }
 
+TEST(ButtonIconChecks, AnIconFadesByControlState) {
+    // arrange a themed icon-only button with a visible pixel grid (§6.4, §8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[8 * 8 * 4]{255, 0, 0, 255};
+    Theme theme;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_icon(factory.create_image(8, 8, ImageFormat::RGBA8, pixels));
+    button.set_icon_size(20.0f);
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{24.0f, 24.0f}));
+    // act each state is drawn through its own recorder, because a scene is immutable once built (§6.1)
+    const auto icon_alpha = [&button] {
+        SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+        button.render(recorder);
+        const std::shared_ptr<const FrameScene> scene = recorder.scene();
+        for (const DrawCommand& command : scene->commands())
+            if (command.kind() == DrawCommandKind::Image)
+                return command.paint().fill.alpha;
+        return -1.0f;
+    };
+    const float normal = icon_alpha();
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 10.0f}};
+    button.dispatch_event(enter);
+    const float hovered = icon_alpha();
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    button.dispatch_event(press);
+    const float pressed = icon_alpha();
+    button.set_disabled(true);
+    const float disabled = icon_alpha();
+    // assert the icon brightens on hover and fades on a press and on refusal (§8.4)
+    EXPECT_FLOAT_EQ(normal, 0.85f);
+    EXPECT_FLOAT_EQ(hovered, 1.0f);
+    EXPECT_FLOAT_EQ(pressed, 0.7f);
+    EXPECT_FLOAT_EQ(disabled, 0.35f);
+}
+
+TEST(ButtonIconChecks, ADisabledIconButtonPaintsNoPlate) {
+    // arrange a themed icon-only button that refuses input (§8.3, §8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[8 * 8 * 4]{255, 0, 0, 255};
+    Theme theme;
+    Button button(&engine, &text_engine, "", "toolbar.save");
+    button.set_icon(factory.create_image(8, 8, ImageFormat::RGBA8, pixels));
+    button.set_icon_size(20.0f);
+    button.set_theme(&theme);
+    button.set_disabled(true);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{24.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    // assert the faded icon is the only cue, with no plate command behind it (§8.4)
+    EXPECT_TRUE(rect_commands(*scene).empty());
+    std::size_t images = 0;
+    for (const DrawCommand& command : scene->commands())
+        if (command.kind() == DrawCommandKind::Image)
+            images++;
+    EXPECT_EQ(images, 1u);
+}
+
+TEST(ButtonIconChecks, AFocusedIconKeepsItsRestingAlpha) {
+    // arrange a focused themed icon-only button whose ring carries the state (§8.3, §8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[8 * 8 * 4]{255, 0, 0, 255};
+    Theme theme;
+    Button button(&engine, &text_engine, "", "toolbar.focus");
+    button.set_icon(factory.create_image(8, 8, ImageFormat::RGBA8, pixels));
+    button.set_icon_size(20.0f);
+    button.set_theme(&theme);
+    button.set_focused(true);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{24.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    float alpha = -1.0f;
+    for (const DrawCommand& command : scene->commands())
+        if (command.kind() == DrawCommandKind::Image)
+            alpha = command.paint().fill.alpha;
+    // assert focus leaves the icon at its resting strength, because the ring is the cue (§8.4)
+    EXPECT_FLOAT_EQ(alpha, 0.85f);
+}
+
+TEST(ButtonIconChecks, AnAuthoredBackgroundKeepsTheDisabledPlate) {
+    // arrange a themed icon-only button with an authored plate that refuses input (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[8 * 8 * 4]{255, 0, 0, 255};
+    Theme theme;
+    Button button(&engine, &text_engine, "", "toolbar.save");
+    button.set_icon(factory.create_image(8, 8, ImageFormat::RGBA8, pixels));
+    button.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    button.set_theme(&theme);
+    button.set_disabled(true);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{24.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    float plate_alpha = -1.0f;
+    for (const DrawCommand& command : scene->commands())
+        if (command.kind() == DrawCommandKind::Rect || command.kind() == DrawCommandKind::RoundedRect)
+            plate_alpha = command.paint().fill.alpha;
+    // assert the authored plate survives and fades, because an author's fill wins over the role (§8.4)
+    EXPECT_FLOAT_EQ(plate_alpha, 0.45f);
+}
+
+TEST(ButtonIconChecks, ADisabledLabelledIconButtonKeepsItsPlate) {
+    // arrange a themed button with both an icon and a label that refuses input (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[8 * 8 * 4]{255, 0, 0, 255};
+    Theme theme;
+    Button button(&engine, &text_engine, "Go");
+    button.set_icon(factory.create_image(8, 8, ImageFormat::RGBA8, pixels));
+    button.set_icon_size(20.0f);
+    button.set_theme(&theme);
+    button.set_disabled(true);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    // assert a caption still gets its plate, because dropping it was scoped to icon-only controls (§8.4)
+    EXPECT_EQ(rect_commands(*scene).size(), 1u);
+}
+
 TEST(ButtonIconChecks, AnEndAlignedGroupEndsAtTheTrailingEdge) {
     // arrange an icon and label aligned to the trailing edge, where the group moves as one (§8.2)
     BindingEngine engine;
