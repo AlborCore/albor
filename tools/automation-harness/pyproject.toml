@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "albor-automation"
+dynamic = ["version"]
+description = "Out-of-process Python compatibility harness for the Albor automation layer"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = []
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing"
+]
+
+[project.urls]
+Homepage = "https://github.com/AlborCore/albor"
+Source = "https://github.com/AlborCore/albor/tree/main/tools/automation-harness"
+Issues = "https://github.com/AlborCore/albor/issues"
+
+[tool.setuptools]
+packages = ["albor_automation"]
+
+[tool.setuptools_scm]
+root = "../.."

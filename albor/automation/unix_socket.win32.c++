@@ -229,17 +229,17 @@ namespace albor::automation::platform
 
             // accept the client that is waiting, without waiting for one that is not (§10.3)
             [[nodiscard]] bool connect_client() {
-                // the pipe is connected, where the client arrived before this call (§10.3)
-                if (!::ConnectNamedPipe(m_pipe, nullptr)) {
-                    const DWORD error = ::GetLastError();
-                    // an already connected pipe is the successful race, which the call reports as an error (§10.3)
-                    if (error != ERROR_PIPE_CONNECTED) {
-                        // no client is the normal case between frames, which is not a listener failure (§6.1, §10.3)
-                        if (error == ERROR_NO_DATA || error == ERROR_PIPE_LISTENING)
-                            return true;
-                        // any other failure leaves the listener intact, so the caller may serve again (§10.3)
-                        return fail("ConnectNamedPipe: " + error_text(error));
-                    }
+                // a nonblocking connect reports an available pipe with success, before any client arrived (§10.3)
+                if (::ConnectNamedPipe(m_pipe, nullptr))
+                    return true;
+                const DWORD error = ::GetLastError();
+                // only an already connected pipe carries a client that this frame may serve (§10.3)
+                if (error != ERROR_PIPE_CONNECTED) {
+                    // no client is the normal case between frames, which is not a listener failure (§6.1, §10.3)
+                    if (error == ERROR_NO_DATA || error == ERROR_PIPE_LISTENING)
+                        return true;
+                    // any other failure leaves the listener intact, so the caller may serve again (§10.3)
+                    return fail("ConnectNamedPipe: " + error_text(error));
                 }
                 // a peer that is not this user is refused before any byte is read (§10.3, AD-10)
                 if (!same_user()) {

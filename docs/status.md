@@ -1,9 +1,9 @@
 # Status
 
-Albor's five implementation phases delivered their runtime surfaces. One Phase 5 tooling
-deliverable, the Python automation compatibility harness (GAP-01, #25), is still open, so this
-page distinguishes what a pre-release consumer can use from what a stable tag requires. The
-authoritative architecture and acceptance contract is [`framework-design.md`](framework-design.md).
+Albor's five implementation phases delivered their runtime surfaces, including the Phase 5
+Python automation compatibility harness (GAP-01, #25). This page distinguishes what a
+pre-release consumer can use from what a stable tag requires. The authoritative architecture
+and acceptance contract is [`framework-design.md`](framework-design.md).
 
 ## Pre-release scope
 
@@ -13,7 +13,6 @@ limitation of the pre-release, not a defect that may be raised by a change.
 
 | Contract gap | Pre-release | Rationale |
 | --- | --- | --- |
-| GAP-01 (#25) automation compatibility harness | blocks stable | §13.2 names the suite; Phase 5 deliverable 2 is not delivered |
 | GAP-02 (#98, #99) RTL mirroring and bidi | blocks stable | i18n is described as shipped; the limitation must be closed before a stable claim |
 | GAP-03 out-of-process dev service | accepted | Dev-only reload path, independent of the shipped application |
 | GAP-04 full LSP component-aware completion | accepted | Dev tooling; standard definition, symbols and tokens ship |
@@ -208,6 +207,7 @@ under OpenCppCoverage and uploads a Cobertura report with the `windows` Codecov 
 | Dev runtime extension, IR loader, hot swap | `devrt/` | Dev only |
 | LSP, preview host, inspector | `language-server/`, `preview/`, `inspector/` | Dev/Test only |
 | Automation core, MCP server | `automation/` | Dev/Test only — unix socket on macOS and Linux, named pipe on Windows; layout bounds, pointer/key/wheel input and typed value, state and range reads |
+| Python automation compatibility harness | `tools/automation-harness/`, `tests/automation/` | delivered — out-of-process client and reference suite on all three platforms, distributed as the `albor-automation` release wheel |
 | Platform accessibility adapters | `accessibility/` | shipped on all three platforms — NSAccessibility, UI Automation and AT-SPI; the shared semantic tree is the single source of truth (§10.2, BDG-10) |
 
 ## Language coverage
@@ -230,8 +230,14 @@ component composition and inheritance with `@children` — see
 
 ## Testing
 
-The suite is self-contained — Google Test for C++, no external fixtures. Beyond per-file
-tests the architecture defines cross-cutting suites
+The suite is self-contained — Google Test for C++, `unittest` for Python, no external
+fixtures. Beyond per-file tests the architecture defines cross-cutting suites
 ([Tooling](tooling.md#what-the-test-suite-covers)): dual-engine conformance, GPU/software
-parity, LSP/compiler agreement, manifest consistency, build-scope checks, and the automation
-reference test against the form sample. The software renderer is the screenshot reference.
+parity, LSP/compiler agreement, manifest consistency, build-scope checks, and the out-of-process
+automation compatibility suite against the form sample. The software renderer is the screenshot
+reference. Run the Python suite with
+`python3 tools/automation-harness/run.py --app <application>` (or the
+`albor-automation-compatibility` CMake target); the application must be named explicitly, and the
+three platform debug CI jobs run the same suite. Consumers install the `albor-automation` wheel
+attached to a stable release and import `albor_automation` without a path setup;
+`python-package.yml` verifies that wheel from a clean virtual environment before upload.

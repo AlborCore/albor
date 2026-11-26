@@ -1,5 +1,8 @@
 .build-*/
 .vcpkg-cache/
+__pycache__
+tools/automation-harness/dist/
+tools/automation-harness/*.egg-info/
 .cache/
 compile_commands.json
 build/vcpkg_installed/

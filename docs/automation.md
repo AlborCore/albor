@@ -56,7 +56,9 @@ It contains three files:
 | `mcp.sock` (Unix) | the local socket the client connects to |
 
 On Windows the endpoint is a named pipe named by the descriptor, for example
-`\\.\pipe\albor-mcp-<session>-<pid>`. There is no `mcp.sock` file there.
+`\\.\pipe\albor-mcp-<session>-<pid>`. There is no `mcp.sock` file there. The host polls the
+nonblocking pipe each frame and accepts a client only when `ConnectNamedPipe` reports
+`ERROR_PIPE_CONNECTED`; a successful poll means the instance is available and no client has arrived.
 
 A descriptor looks like this:
 
@@ -1169,6 +1171,70 @@ A refusal carries the layer's reason:
 ```json
 {"jsonrpc":"2.0","id":17,"error":{"code":-32000,"message":"no node with id: form_missing"}}
 ```
+
+## Python compatibility harness
+
+An out-of-process client lives in `tools/automation-harness/albor_automation/`. It discovers a
+host through `host.json`, reads the per-session token, connects to the Unix socket or Windows
+named pipe, and speaks newline-delimited MCP. Every tool call goes through the automation layer;
+the harness has no second path into the application (BDG-04). On Windows the client bounds a pipe
+write and cancels pending pipe io before closing its handle, so a host that stops reading fails with
+a bounded MCP error instead of blocking the suite.
+
+### Distributing the client to consumers
+
+The client is also published as a regular Python package. `tools/automation-harness/pyproject.toml`
+builds an `albor-automation` wheel and source archive; each stable release attaches both to its
+GitHub release, and the package has no third-party dependencies (Python 3.10 or newer). A consumer
+installs the wheel attached to a release:
+
+```sh
+pip install https://github.com/AlborCore/albor/releases/download/v0.0.1/albor_automation-0.0.1-py3-none-any.whl
+```
+
+Substitute the tag and version of the release you want. The wheel needs no `sys.path` setup:
+
+```python
+from albor_automation import TestSession, expect, launch
+```
+
+`python-package.yml` builds both artifacts, installs the wheel into a clean virtual environment,
+runs the self-contained client suite against the installed copy, and uploads the artifacts with
+`gh release upload`. The wheel version follows the release tag, so the artifact attached to `vX.Y.Z`
+reports version `X.Y.Z`. The package carries the client only: the application under test still has
+to be built with `ALBOR_AUTOMATION` and named explicitly.
+
+Run the whole suite from the repository root, naming the application explicitly:
+
+```sh
+python3 tools/automation-harness/run.py --app /path/to/albor-automation-reference-app
+ALBOR_TEST_APPLICATION=/path/to/albor-automation-reference-app python3 tools/automation-harness/run.py
+```
+
+The runner can also be invoked through the CMake target `albor-automation-compatibility`, which
+passes the freshly built fixture app. There is no implicit default: `launch()` raises unless the
+caller passes `executable_path` or sets `ALBOR_TEST_APPLICATION`, so a consumer never silently
+drives a framework build artifact. `ALBOR_TEST_ARTIFACTS` sets where a failed test writes its
+screenshot, tree and stream artifacts, and `ALBOR_AUTOMATION_DEBUG=1` logs the protocol exchange.
+
+The three platform debug jobs run the compatibility step with unbuffered output and protocol logging
+enabled, and bound it to five minutes. A host that stops answering therefore leaves its last protocol
+exchange in the job log instead of leaving the job without progress. The runner dumps every Python
+thread stack after four minutes, so the blocking call is visible before the step timeout.
+
+Two suites run under `unittest` (STYLE-GUIDE.md):
+
+- `tests/automation/harness/` — self-contained client tests with fake transports and fakes for
+  the tool facade, locators, polling assertions and launch lifecycle.
+- `tests/automation/reference_compatibility_test.py` — drives the headless form fixture app
+  through the real host: discovery and handshake, token refusal, the allow-listed tool surface,
+  and the documented session of [A complete session](#a-complete-session) through typed reads,
+  input and capture.
+
+The fixture app (`tests/automation/albor_automation_reference_app.cpp`) builds the same generated
+form as the in-process reference suite on the headless platform, so no window server is needed.
+The same Python suite runs in the debug CI jobs on macOS, Windows and Linux; the client selects
+the named-pipe transport on Windows and the Unix socket transport elsewhere.
 
 ## The raw automation wire
 

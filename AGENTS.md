@@ -187,5 +187,5 @@ C++ uses Google Test; Python uses `unittest` (see `STYLE-GUIDE.md`). Beyond per-
 
 ## Implementation Phasing
 
-The five implementation phases delivered their runtime surfaces; one Phase 5 tooling deliverable, the Python automation compatibility harness (GAP-01, #25), remains open, and the stable-tag blockers are recorded in [`docs/status.md`](docs/status.md#pre-release-scope). The current architecture is described in [`docs/framework-design.md`](docs/framework-design.md). Phase 0 exploratory prototyping is concluded; all Phase 0 code is preserved on the `prototypes` git branch for reference.
+The five implementation phases delivered their runtime surfaces, including the Phase 5 Python automation compatibility harness (GAP-01, #25), and the remaining stable-tag blockers are recorded in [`docs/status.md`](docs/status.md#pre-release-scope). The current architecture is described in [`docs/framework-design.md`](docs/framework-design.md). Phase 0 exploratory prototyping is concluded; all Phase 0 code is preserved on the `prototypes` git branch for reference.
 The implementation codebase branched from `main` is clean: only production modules, runtime libraries, tooling, and unit tests exist.
