@@ -1175,7 +1175,9 @@ A refusal carries the layer's reason:
 An out-of-process client lives in `tools/automation-harness/albor_automation/`. It discovers a
 host through `host.json`, reads the per-session token, connects to the Unix socket or Windows
 named pipe, and speaks newline-delimited MCP. Every tool call goes through the automation layer;
-the harness has no second path into the application (BDG-04).
+the harness has no second path into the application (BDG-04). On Windows the client cancels a
+pending pipe read before closing its handle, so a host that stops answering fails with a bounded
+MCP error instead of blocking teardown.
 
 ### Distributing the client to consumers
 

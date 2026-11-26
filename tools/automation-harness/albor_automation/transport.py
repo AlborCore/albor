@@ -1,8 +1,10 @@
+import ctypes
 import os
 import queue
 import socket
 import threading
 import time
+from ctypes import wintypes
 from typing import BinaryIO, Callable, Protocol
 
 from .errors import McpError
@@ -18,6 +20,25 @@ _ERROR_PIPE_BUSY = 231
 
 # the pause between two attempts to open a busy pipe
 _PIPE_RETRY_INTERVAL = 0.05
+
+# the access a thread must grant before its pending synchronous io can be cancelled
+_THREAD_ACCESS = 0x1F01FF
+
+# the windows api is loaded only where named pipes exist
+_KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True) if os.name == "nt" else None
+if _KERNEL32 is not None:
+    # the identifier and the boolean are narrow on every windows build
+    _KERNEL32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    # a handle is pointer sized, so the default integer return would truncate it
+    _KERNEL32.OpenThread.restype = wintypes.HANDLE
+    # cancellation takes the handle of the thread with the pending read
+    _KERNEL32.CancelSynchronousIo.argtypes = [wintypes.HANDLE]
+    # cancellation reports whether the request reached that thread
+    _KERNEL32.CancelSynchronousIo.restype = wintypes.BOOL
+    # the thread handle is released after the attempt
+    _KERNEL32.CloseHandle.argtypes = [wintypes.HANDLE]
+    # closing reports whether the handle was released
+    _KERNEL32.CloseHandle.restype = wintypes.BOOL
 
 
 class LineTransport(Protocol):
@@ -52,6 +73,8 @@ class _LinePump:
         self._lines: queue.Queue[str] = queue.Queue()
         # thread is the reader that turns chunks into lines
         self._thread: threading.Thread | None = None
+        # native_id identifies the reader to windows when its read must be cancelled
+        self._native_id: int | None = None
 
     def start(self) -> None:
         # the reader runs beside the caller so a blocked read has a bounded wait
@@ -65,6 +88,21 @@ class _LinePump:
         # join briefly so a close cannot race the last read
         if self._thread is not None:
             self._thread.join(timeout=1.0)
+
+    def cancel(self) -> None:
+        # a synchronous read on windows keeps the pipe handle open until it is cancelled
+        if os.name != "nt" or _KERNEL32 is None or self._native_id is None:
+            return
+        # the reader thread is opened with the access cancellation requires
+        handle = _KERNEL32.OpenThread(_THREAD_ACCESS, False, self._native_id)
+        if not handle:
+            return
+        try:
+            # cancelling the pending read lets the thread finish before the handle closes
+            _KERNEL32.CancelSynchronousIo(handle)
+        finally:
+            # the thread handle is released after the attempt
+            _KERNEL32.CloseHandle(handle)
 
     def read_line(self, timeout: float) -> str:
         # surface a reader failure before waiting for another line
@@ -85,6 +123,8 @@ class _LinePump:
     def _run(self) -> None:
         # bytes received but not yet terminated by a newline
         buffer = b""
+        # the native identifier lets a later close cancel a read blocked in this thread
+        self._native_id = threading.get_native_id()
         while not self._stop.is_set():
             # one read from the endpoint, which may return any number of bytes
             try:
@@ -218,7 +258,9 @@ class NamedPipeTransport:
         return self._pump.read_line(timeout)
 
     def close(self) -> None:
-        # release the pipe first, which unblocks a reader waiting on it
+        # cancel a pending read before closing the handle it holds on windows
+        self._pump.cancel()
+        # release the pipe after the reader no longer holds a pending read
         if self._pipe is not None:
             self._pipe.close()
             self._pipe = None
