@@ -207,7 +207,7 @@ under OpenCppCoverage and uploads a Cobertura report with the `windows` Codecov 
 | Dev runtime extension, IR loader, hot swap | `devrt/` | Dev only |
 | LSP, preview host, inspector | `language-server/`, `preview/`, `inspector/` | Dev/Test only |
 | Automation core, MCP server | `automation/` | Dev/Test only — unix socket on macOS and Linux, named pipe on Windows; layout bounds, pointer/key/wheel input and typed value, state and range reads |
-| Python automation compatibility harness | `tools/automation-harness/`, `tests/automation/` | delivered — out-of-process client and reference suite on all three platforms |
+| Python automation compatibility harness | `tools/automation-harness/`, `tests/automation/` | delivered — out-of-process client and reference suite on all three platforms, distributed as the `albor-automation` release wheel |
 | Platform accessibility adapters | `accessibility/` | shipped on all three platforms — NSAccessibility, UI Automation and AT-SPI; the shared semantic tree is the single source of truth (§10.2, BDG-10) |
 
 ## Language coverage
@@ -238,4 +238,6 @@ automation compatibility suite against the form sample. The software renderer is
 reference. Run the Python suite with
 `python3 tools/automation-harness/run.py --app <application>` (or the
 `albor-automation-compatibility` CMake target); the application must be named explicitly, and the
-three platform debug CI jobs run the same suite.
+three platform debug CI jobs run the same suite. Consumers install the `albor-automation` wheel
+attached to a stable release and import `albor_automation` without a path setup;
+`python-package.yml` verifies that wheel from a clean virtual environment before upload.

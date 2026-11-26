@@ -1,0 +1,89 @@
+name: python-package
+
+# the python harness ships as a wheel and source archive attached to stable releases; every build is
+# verified against the installed package before an asset is uploaded (AD-19)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/automation-harness/**'
+      - 'tests/automation/harness/**'
+      - '.github/workflows/python-package.yml'
+  pull_request:
+    paths:
+      - 'tools/automation-harness/**'
+      - 'tests/automation/harness/**'
+      - '.github/workflows/python-package.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: an existing release tag, for example v0.0.1
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: python-package-${{ github.event.release.tag_name || inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: the published tag is stable semver
+        id: release
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          tag="$RELEASE_TAG"
+          if ! printf '%s\n' "$tag" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "the release tag '$tag' is not a stable semver form like v0.0.1"; exit 1
+          fi
+          echo "tag=v${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: build the wheel and the source archive
+        working-directory: tools/automation-harness
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          python -m pip install --upgrade pip build
+          if [ -n "$VERSION" ]; then
+            export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_ALBOR_AUTOMATION="$VERSION"
+          fi
+          python -m build
+
+      - name: verify the installed package
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          python -m venv /tmp/albor-automation-verify
+          verify=/tmp/albor-automation-verify/bin/python
+          "$verify" -m pip install tools/automation-harness/dist/*.whl
+          cd /tmp
+          "$verify" -c "from albor_automation import AlborApplication, AlborClient, AlborTestCase, Locator, McpClient, TestSession, expect, launch, parse_tree"
+          "$verify" -m unittest discover -s "$WORKSPACE/tests/automation/harness" -p '*_test.py'
+
+      - name: upload the distributions to the release
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: gh release upload "$TAG" tools/automation-harness/dist/* --clobber

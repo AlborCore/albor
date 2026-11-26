@@ -194,7 +194,9 @@ command, its arguments, refusals and request/response examples — is on
 [Automation and MCP](automation.md). That page also documents host discovery, the
 MCP handshake, content blocks, the raw automation wire and the Python compatibility
 harness under `tools/automation-harness/`, whose out-of-process suite is part of the
-automation compatibility conformance suite (§13.2).
+automation compatibility conformance suite (§13.2). The harness is packaged as
+`albor-automation`: `python-package.yml` builds a wheel and source archive, verifies the
+wheel from a clean virtual environment and attaches both artifacts to each stable release.
 
 ## What the test suite covers
 

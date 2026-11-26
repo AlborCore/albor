@@ -1177,6 +1177,29 @@ host through `host.json`, reads the per-session token, connects to the Unix sock
 named pipe, and speaks newline-delimited MCP. Every tool call goes through the automation layer;
 the harness has no second path into the application (BDG-04).
 
+### Distributing the client to consumers
+
+The client is also published as a regular Python package. `tools/automation-harness/pyproject.toml`
+builds an `albor-automation` wheel and source archive; each stable release attaches both to its
+GitHub release, and the package has no third-party dependencies (Python 3.10 or newer). A consumer
+installs the wheel attached to a release:
+
+```sh
+pip install https://github.com/AlborCore/albor/releases/download/v0.0.1/albor_automation-0.0.1-py3-none-any.whl
+```
+
+Substitute the tag and version of the release you want. The wheel needs no `sys.path` setup:
+
+```python
+from albor_automation import TestSession, expect, launch
+```
+
+`python-package.yml` builds both artifacts, installs the wheel into a clean virtual environment,
+runs the self-contained client suite against the installed copy, and uploads the artifacts with
+`gh release upload`. The wheel version follows the release tag, so the artifact attached to `vX.Y.Z`
+reports version `X.Y.Z`. The package carries the client only: the application under test still has
+to be built with `ALBOR_AUTOMATION` and named explicitly.
+
 Run the whole suite from the repository root, naming the application explicitly:
 
 ```sh
