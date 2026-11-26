@@ -1217,7 +1217,8 @@ screenshot, tree and stream artifacts, and `ALBOR_AUTOMATION_DEBUG=1` logs the p
 
 The three platform debug jobs run the compatibility step with unbuffered output and protocol logging
 enabled, and bound it to five minutes. A host that stops answering therefore leaves its last protocol
-exchange in the job log instead of leaving the job without progress.
+exchange in the job log instead of leaving the job without progress. The runner dumps every Python
+thread stack after four minutes, so the blocking call is visible before the step timeout.
 
 Two suites run under `unittest` (STYLE-GUIDE.md):
 

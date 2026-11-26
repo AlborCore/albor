@@ -1,4 +1,5 @@
 import argparse
+import faulthandler
 import os
 import sys
 import unittest
@@ -12,6 +13,9 @@ _PACKAGE_ROOT = _ROOT / "tools" / "automation-harness"
 
 # the directory that holds the python suites
 _TEST_ROOT = _ROOT / "tests" / "automation"
+
+# the delay before a stalled suite dumps its thread stacks, below the ci step timeout
+_STACK_DUMP_DELAY = 240.0
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -28,21 +32,27 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> int:
     # read the command line before any path is resolved
     arguments = parse_arguments()
-    # the harness package must import without an install step
-    sys.path.insert(0, str(_PACKAGE_ROOT))
-    # an explicit executable is published to the suites through the environment
-    if arguments.app:
-        os.environ["ALBOR_TEST_APPLICATION"] = str(Path(arguments.app).resolve())
-    # a suite cannot drive an application that the caller never named
-    if not os.environ.get("ALBOR_TEST_APPLICATION"):
-        print("error: pass --app or set ALBOR_TEST_APPLICATION", file=sys.stderr)
-        return 2
-    # discover both the client unit suite and the out of process suite
-    suite = unittest.defaultTestLoader.discover(str(_TEST_ROOT), pattern=arguments.pattern, top_level_dir=str(_TEST_ROOT))
-    # report every test on stdout so ci logs carry the evidence
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
-    # a failing or errored test makes the runner fail
-    return 0 if result.wasSuccessful() else 1
+    # a watchdog records where a suite stops answering before the ci step kills it
+    faulthandler.dump_traceback_later(_STACK_DUMP_DELAY)
+    try:
+        # the harness package must import without an install step
+        sys.path.insert(0, str(_PACKAGE_ROOT))
+        # an explicit executable is published to the suites through the environment
+        if arguments.app:
+            os.environ["ALBOR_TEST_APPLICATION"] = str(Path(arguments.app).resolve())
+        # a suite cannot drive an application that the caller never named
+        if not os.environ.get("ALBOR_TEST_APPLICATION"):
+            print("error: pass --app or set ALBOR_TEST_APPLICATION", file=sys.stderr)
+            return 2
+        # discover both the client unit suite and the out of process suite
+        suite = unittest.defaultTestLoader.discover(str(_TEST_ROOT), pattern=arguments.pattern, top_level_dir=str(_TEST_ROOT))
+        # report every test on stdout so ci logs carry the evidence
+        result = unittest.TextTestRunner(verbosity=2).run(suite)
+        # a failing or errored test makes the runner fail
+        return 0 if result.wasSuccessful() else 1
+    finally:
+        # the watchdog is cancelled once the suite has finished
+        faulthandler.cancel_dump_traceback_later()
 
 
 if __name__ == "__main__":
