@@ -56,7 +56,9 @@ It contains three files:
 | `mcp.sock` (Unix) | the local socket the client connects to |
 
 On Windows the endpoint is a named pipe named by the descriptor, for example
-`\\.\pipe\albor-mcp-<session>-<pid>`. There is no `mcp.sock` file there.
+`\\.\pipe\albor-mcp-<session>-<pid>`. There is no `mcp.sock` file there. The host polls the
+nonblocking pipe each frame and accepts a client only when `ConnectNamedPipe` reports
+`ERROR_PIPE_CONNECTED`; a successful poll means the instance is available and no client has arrived.
 
 A descriptor looks like this:
 
