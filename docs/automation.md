@@ -1213,6 +1213,10 @@ caller passes `executable_path` or sets `ALBOR_TEST_APPLICATION`, so a consumer 
 drives a framework build artifact. `ALBOR_TEST_ARTIFACTS` sets where a failed test writes its
 screenshot, tree and stream artifacts, and `ALBOR_AUTOMATION_DEBUG=1` logs the protocol exchange.
 
+The three platform debug jobs run the compatibility step with unbuffered output and protocol logging
+enabled, and bound it to five minutes. A host that stops answering therefore leaves its last protocol
+exchange in the job log instead of leaving the job without progress.
+
 Two suites run under `unittest` (STYLE-GUIDE.md):
 
 - `tests/automation/harness/` — self-contained client tests with fake transports and fakes for

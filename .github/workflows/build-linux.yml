@@ -124,7 +124,10 @@ jobs:
 
       - name: python automation compatibility
         if: matrix.enable && matrix.preset == 'debug'
-        run: python3 tools/automation-harness/run.py --app .build-debug/tests/albor-automation-reference-app
+        timeout-minutes: 5
+        env:
+          ALBOR_AUTOMATION_DEBUG: '1'
+        run: python3 -u tools/automation-harness/run.py --app .build-debug/tests/albor-automation-reference-app
 
       - name: link boundary (release)
         if: matrix.enable && matrix.preset == 'release'
