@@ -77,9 +77,12 @@ jobs:
           python -m venv /tmp/albor-automation-verify
           verify=/tmp/albor-automation-verify/bin/python
           "$verify" -m pip install tools/automation-harness/dist/*.whl
+          # the runner is a repo tool, not part of the wheel, so the runner test imports it from a separate path
+          mkdir -p /tmp/albor-automation-runner
+          cp tools/automation-harness/run.py /tmp/albor-automation-runner/
           cd /tmp
           "$verify" -c "from albor_automation import AlborApplication, AlborClient, AlborTestCase, Locator, McpClient, TestSession, expect, launch, parse_tree"
-          "$verify" -m unittest discover -s "$WORKSPACE/tests/automation/harness" -p '*_test.py'
+          PYTHONPATH=/tmp/albor-automation-runner "$verify" -m unittest discover -s "$WORKSPACE/tests/automation/harness" -p '*_test.py'
 
       - name: upload the distributions to the release
         if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
