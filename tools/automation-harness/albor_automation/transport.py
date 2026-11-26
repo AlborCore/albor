@@ -21,6 +21,9 @@ _ERROR_PIPE_BUSY = 231
 # the pause between two attempts to open a busy pipe
 _PIPE_RETRY_INTERVAL = 0.05
 
+# how long a request write may wait for a reader before the conversation fails
+_PIPE_WRITE_TIMEOUT = 5.0
+
 # the access a thread must grant before its pending synchronous io can be cancelled
 _THREAD_ACCESS = 0x1F01FF
 
@@ -60,6 +63,22 @@ class LineTransport(Protocol):
         ...
 
 
+def _cancel_thread(native_id: int | None) -> None:
+    # a synchronous read or write on windows holds its handle until it is cancelled
+    if os.name != "nt" or _KERNEL32 is None or native_id is None:
+        return
+    # the thread is opened with the access cancellation requires
+    handle = _KERNEL32.OpenThread(_THREAD_ACCESS, False, native_id)
+    if not handle:
+        return
+    try:
+        # cancelling the pending io lets the thread finish before the handle closes
+        _KERNEL32.CancelSynchronousIo(handle)
+    finally:
+        # the thread handle is released after the attempt
+        _KERNEL32.CloseHandle(handle)
+
+
 class _LinePump:
 
     def __init__(self, read: Callable[[int], bytes], errors: queue.Queue[BaseException]) -> None:
@@ -90,19 +109,8 @@ class _LinePump:
             self._thread.join(timeout=1.0)
 
     def cancel(self) -> None:
-        # a synchronous read on windows keeps the pipe handle open until it is cancelled
-        if os.name != "nt" or _KERNEL32 is None or self._native_id is None:
-            return
-        # the reader thread is opened with the access cancellation requires
-        handle = _KERNEL32.OpenThread(_THREAD_ACCESS, False, self._native_id)
-        if not handle:
-            return
-        try:
-            # cancelling the pending read lets the thread finish before the handle closes
-            _KERNEL32.CancelSynchronousIo(handle)
-        finally:
-            # the thread handle is released after the attempt
-            _KERNEL32.CloseHandle(handle)
+        # the reader holds the read that a close must release on windows
+        _cancel_thread(self._native_id)
 
     def read_line(self, timeout: float) -> str:
         # surface a reader failure before waiting for another line
@@ -214,6 +222,8 @@ class NamedPipeTransport:
         self._pipe: BinaryIO | None = None
         # pump turns the pipe's bytes into complete reply lines
         self._pump = _LinePump(self._read, self._errors)
+        # write_native_id identifies a write that close must cancel on windows
+        self._write_native_id: int | None = None
 
     @property
     def _errors(self) -> queue.Queue[BaseException]:
@@ -247,20 +257,41 @@ class NamedPipeTransport:
         self._pump.start()
 
     def send_line(self, line: str) -> None:
-        # the newline completes one json-rpc request
+        # a write runs off thread because a pipe with no reader can block forever
+        written: queue.Queue[BaseException | None] = queue.Queue()
+        worker = threading.Thread(target=self._write_line, args=(line, written), daemon=True)
+        self._write_thread = worker
+        # the caller waits only as long as one request may take
+        worker.start()
         try:
-            self._pipe.write((line + "\n").encode("utf-8"))
-        except OSError as error:
+            error = written.get(timeout=_PIPE_WRITE_TIMEOUT)
+        except queue.Empty as empty:
+            raise McpError(f"the pipe did not accept a request within {_PIPE_WRITE_TIMEOUT} seconds") from empty
+        # a failed write ends the conversation with the transport's reason
+        if error is not None:
             raise McpError(f"the connection dropped before the request: {error}") from error
+
+    def _write_line(self, line: str, written: queue.Queue[BaseException | None]) -> None:
+        # the native id lets close cancel a write that still waits for a reader
+        self._write_native_id = threading.get_native_id()
+        try:
+            # one line and its newline make the request the host expects
+            self._pipe.write((line + "\n").encode("utf-8"))
+            # a completed write releases the waiting caller
+            written.put(None)
+        except BaseException as error:
+            # a failed write is reported to the waiting caller
+            written.put(error)
 
     def read_line(self, timeout: float) -> str:
         # take one reply from the reader's queue
         return self._pump.read_line(timeout)
 
     def close(self) -> None:
-        # cancel a pending read before closing the handle it holds on windows
+        # cancel a pending read and write before closing the handle they hold on windows
         self._pump.cancel()
-        # release the pipe after the reader no longer holds a pending read
+        _cancel_thread(self._write_native_id)
+        # release the pipe after the pending io was cancelled
         if self._pipe is not None:
             self._pipe.close()
             self._pipe = None

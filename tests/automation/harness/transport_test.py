@@ -1,7 +1,9 @@
+import threading
 import unittest
 from unittest import mock
 
 from albor_automation import transport as transport_module
+from albor_automation.errors import McpError
 from albor_automation.transport import NamedPipeTransport, _LinePump
 
 
@@ -41,6 +43,20 @@ class LinePumpCancelChecks(unittest.TestCase):
 
 
 class NamedPipeCloseChecks(unittest.TestCase):
+
+    def test_send_line_times_out_when_the_pipe_has_no_reader(self) -> None:
+        blocked = threading.Event()
+        transport = NamedPipeTransport("pipe")
+        try:
+            with mock.patch.object(transport_module, "_PIPE_WRITE_TIMEOUT", 0.1), mock.patch.object(transport, "_write_line", side_effect=lambda line, written: blocked.wait(2)):
+                # act
+                with self.assertRaises(McpError) as context:
+                    transport.send_line("hello")
+            # assert
+            self.assertIn("did not accept a request", str(context.exception))
+        finally:
+            # the blocked worker is released so the suite can finish
+            blocked.set()
 
     def test_close_cancels_the_reader_before_releasing_the_pipe(self) -> None:
         pipe = mock.MagicMock()
